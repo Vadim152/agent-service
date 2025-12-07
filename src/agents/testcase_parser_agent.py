@@ -27,11 +27,9 @@ class TestcaseParserAgent:
                 " сценарий с шагами, ожидаемым результатом и тегами."
             ),
         )
-        self.assistant.register_function(
-            self.parse_testcase,
-            name="parse_testcase",
-            description="Парсит текст тесткейса в структуру Scenario",
-        )
+        self.assistant.register_function({
+            "parse_testcase": self.parse_testcase,
+        })
 
     def parse_testcase(self, testcase_text: str) -> dict[str, Any]:
         """Разобрать текст тесткейса в Scenario и вернуть сериализуемый словарь."""

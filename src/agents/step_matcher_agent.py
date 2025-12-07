@@ -37,11 +37,9 @@ class StepMatcherAgent:
                 " Используй сохранённый индекс шагов и возвращай степень уверенности."
             ),
         )
-        self.assistant.register_function(
-            self.match_testcase_steps,
-            name="match_testcase_steps",
-            description="Сопоставляет шаги сценария с определениями cucumber",
-        )
+        self.assistant.register_function({
+            "match_testcase_steps": self.match_testcase_steps,
+        })
 
     def match_testcase_steps(self, project_root: str, scenario_dict: dict[str, Any]) -> dict[str, Any]:
         """Матчит шаги сценария по сохранённому индексу."""
