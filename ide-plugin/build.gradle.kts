@@ -4,7 +4,7 @@ plugins {
 }
 
 intellij {
-    version.set("2023.3")
+    version.set("2024.2")
     plugins.set(listOf("com.intellij.java"))
 }
 
@@ -21,6 +21,7 @@ dependencies {
 
 tasks {
     patchPluginXml {
+        sinceBuild.set("242")
         changeNotes.set("Initial skeleton for AI Cucumber Assistant plugin.")
     }
 }
