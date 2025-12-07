@@ -1,0 +1,159 @@
+"""Роуты, связанные с генерацией и применением .feature файлов."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Iterable
+
+from fastapi import APIRouter, HTTPException, Request, status
+
+from agents.orchestrator import Orchestrator
+from api.schemas import (
+    ApplyFeatureRequest,
+    ApplyFeatureResponse,
+    GenerateFeatureRequest,
+    GenerateFeatureResponse,
+    StepDefinitionDto,
+    UnmappedStepDto,
+)
+from domain.enums import MatchStatus
+from domain.models import MatchedStep
+
+router = APIRouter(prefix="/feature", tags=["feature-generation"])
+logger = logging.getLogger(__name__)
+
+
+def _get_orchestrator(request: Request) -> Orchestrator:
+    orchestrator: Orchestrator | None = getattr(request.app.state, "orchestrator", None)
+    if not orchestrator:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator is not initialized",
+        )
+    return orchestrator
+
+
+def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> list[StepDefinitionDto]:
+    seen: dict[str, StepDefinitionDto] = {}
+    for entry in matched:
+        if isinstance(entry, dict):
+            step_def = entry.get("step_definition")
+            status_value = entry.get("status")
+        else:
+            step_def = entry.step_definition
+            status_value = entry.status.value
+
+        if not step_def or status_value == MatchStatus.UNMATCHED.value:
+            continue
+
+        step_id = step_def["id"] if isinstance(step_def, dict) else step_def.id
+        if step_id in seen:
+            continue
+
+        keyword = step_def["keyword"] if isinstance(step_def, dict) else step_def.keyword.value
+        pattern = step_def["pattern"] if isinstance(step_def, dict) else step_def.pattern
+        code_ref = step_def["code_ref"] if isinstance(step_def, dict) else step_def.code_ref
+        tags = step_def.get("tags") if isinstance(step_def, dict) else step_def.tags
+
+        seen[step_id] = StepDefinitionDto(
+            id=step_id,
+            keyword=str(keyword),
+            pattern=pattern,
+            code_ref=code_ref,
+            tags=tags or None,
+        )
+    return list(seen.values())
+
+
+@router.post(
+    "/generate-feature",
+    response_model=GenerateFeatureResponse,
+    summary="Сгенерировать Gherkin-файл по тесткейсу",
+)
+async def generate_feature(request_model: GenerateFeatureRequest, request: Request) -> GenerateFeatureResponse:
+    """Генерирует .feature текст и, опционально, сохраняет его на диск."""
+
+    orchestrator = _get_orchestrator(request)
+    project_root = request_model.project_root
+    path_obj = Path(project_root).expanduser()
+    if not path_obj.exists():
+        logger.warning("Проект не найден: %s", project_root)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project root not found: {project_root}",
+        )
+
+    options = request_model.options or None
+    logger.info(
+        "API: генерация feature (len=%s) для %s", len(request_model.test_case_text), project_root
+    )
+    result = orchestrator.generate_feature(
+        project_root,
+        request_model.test_case_text,
+        request_model.target_path,
+        create_file=bool(options.create_file) if options else False,
+        overwrite_existing=bool(options.overwrite_existing) if options else False,
+        language=options.language if options else None,
+    )
+
+    feature_payload = result.get("feature", {})
+    match_payload = result.get("matchResult", {})
+    feature_text = feature_payload.get("featureText", "")
+    unmapped_steps = [
+        UnmappedStepDto(text=step_text, reason="not matched")
+        for step_text in feature_payload.get("unmappedSteps", [])
+    ]
+    used_steps = _dedup_used_steps(match_payload.get("matched", []))
+
+    logger.info(
+        "API: генерация завершена, unmapped=%s, used_steps=%s",
+        len(unmapped_steps),
+        len(used_steps),
+    )
+    return GenerateFeatureResponse(
+        feature_text=feature_text,
+        unmapped_steps=unmapped_steps,
+        used_steps=used_steps,
+        meta=feature_payload.get("meta"),
+    )
+
+
+@router.post(
+    "/apply-feature",
+    response_model=ApplyFeatureResponse,
+    summary="Сохранить .feature файл на диске",
+)
+async def apply_feature(request_model: ApplyFeatureRequest, request: Request) -> ApplyFeatureResponse:
+    """Записывает переданный .feature текст в проект."""
+
+    orchestrator = _get_orchestrator(request)
+    project_root = request_model.project_root
+    path_obj = Path(project_root).expanduser()
+    if not path_obj.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project root not found: {project_root}",
+        )
+
+    logger.info(
+        "API: сохранение feature для %s -> %s", project_root, request_model.target_path
+    )
+    result = orchestrator.apply_feature(
+        project_root,
+        request_model.target_path,
+        request_model.feature_text,
+        overwrite_existing=request_model.overwrite_existing,
+    )
+
+    status_value = result.get("status", "created")
+    message_value = result.get("message")
+    logger.info(
+        "API: сохранение завершено %s, статус=%s", request_model.target_path, status_value
+    )
+    return ApplyFeatureResponse(
+        project_root=result.get("projectRoot", project_root),
+        target_path=result.get("targetPath", request_model.target_path),
+        status=status_value,
+        message=message_value,
+    )

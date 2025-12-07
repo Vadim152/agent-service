@@ -1,0 +1,158 @@
+"""Агенты и фабрики для работы с сервисом."""
+from __future__ import annotations
+
+import logging
+from dataclasses import asdict
+from typing import Any
+
+from app.config import Settings, get_settings
+from domain.enums import MatchStatus, StepKeyword
+from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario, StepDefinition, TestStep
+from infrastructure.embeddings_store import EmbeddingsStore
+from infrastructure.llm_client import LLMClient
+from infrastructure.step_index_store import StepIndexStore
+from tools.feature_generator import FeatureGenerator
+
+logger = logging.getLogger(__name__)
+
+
+def _serialize_step_definition(step: StepDefinition) -> dict[str, Any]:
+    data = asdict(step)
+    data["keyword"] = step.keyword.value
+    return data
+
+
+def _serialize_test_step(test_step: TestStep) -> dict[str, Any]:
+    return asdict(test_step)
+
+
+def _serialize_scenario(scenario: Scenario) -> dict[str, Any]:
+    return {
+        "name": scenario.name,
+        "description": scenario.description,
+        "preconditions": [_serialize_test_step(step) for step in scenario.preconditions],
+        "steps": [_serialize_test_step(step) for step in scenario.steps],
+        "expected_result": scenario.expected_result,
+        "tags": list(scenario.tags),
+    }
+
+
+def _serialize_matched_step(matched: MatchedStep) -> dict[str, Any]:
+    return {
+        "test_step": _serialize_test_step(matched.test_step),
+        "status": matched.status.value,
+        "step_definition": _serialize_step_definition(matched.step_definition)
+        if matched.step_definition
+        else None,
+        "confidence": matched.confidence,
+        "generated_gherkin_line": matched.generated_gherkin_line,
+        "notes": matched.notes,
+    }
+
+
+def _deserialize_test_step(data: dict[str, Any]) -> TestStep:
+    return TestStep(
+        order=int(data.get("order", 0)),
+        text=data.get("text", ""),
+        section=data.get("section"),
+    )
+
+
+def _deserialize_scenario(data: dict[str, Any]) -> Scenario:
+    return Scenario(
+        name=data.get("name", ""),
+        description=data.get("description"),
+        preconditions=[_deserialize_test_step(step) for step in data.get("preconditions", [])],
+        steps=[_deserialize_test_step(step) for step in data.get("steps", [])],
+        expected_result=data.get("expected_result"),
+        tags=list(data.get("tags", []) or []),
+    )
+
+
+def _deserialize_step_definition(data: dict[str, Any]) -> StepDefinition:
+    return StepDefinition(
+        id=data.get("id", ""),
+        keyword=StepKeyword(data.get("keyword", StepKeyword.GIVEN.value)),
+        pattern=data.get("pattern", ""),
+        regex=data.get("regex"),
+        code_ref=data.get("code_ref", ""),
+        parameters=list(data.get("parameters", []) or []),
+        tags=list(data.get("tags", []) or []),
+        language=data.get("language"),
+    )
+
+
+def _deserialize_matched_step(data: dict[str, Any]) -> MatchedStep:
+    return MatchedStep(
+        test_step=_deserialize_test_step(data.get("test_step", {})),
+        status=MatchStatus(data.get("status", MatchStatus.UNMATCHED.value)),
+        step_definition=_deserialize_step_definition(data["step_definition"])
+        if data.get("step_definition")
+        else None,
+        confidence=data.get("confidence"),
+        generated_gherkin_line=data.get("generated_gherkin_line"),
+        notes=data.get("notes"),
+    )
+
+
+def _serialize_feature(feature: FeatureFile, rendered_text: str | None = None) -> dict[str, Any]:
+    return {
+        "name": feature.name,
+        "description": feature.description,
+        "language": feature.language,
+        "tags": list(feature.tags),
+        "background_steps": list(feature.background_steps),
+        "scenarios": [asdict(scenario) for scenario in feature.scenarios],
+        "rendered": rendered_text,
+    }
+
+
+def create_orchestrator(settings: Settings | None = None):
+    """Создаёт собранный оркестратор со всеми зависимостями."""
+
+    from agents.feature_builder_agent import FeatureBuilderAgent
+    from agents.orchestrator import Orchestrator
+    from agents.repo_scanner_agent import RepoScannerAgent
+    from agents.step_matcher_agent import StepMatcherAgent
+    from agents.testcase_parser_agent import TestcaseParserAgent
+
+    resolved_settings = settings or get_settings()
+    llm_client = LLMClient(
+        endpoint=resolved_settings.llm_endpoint,
+        api_key=resolved_settings.llm_api_key,
+        model_name=resolved_settings.llm_model,
+    )
+    step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
+    embeddings_store = EmbeddingsStore()
+
+    logger.debug("LLMClient и хранилища инициализированы")
+
+    repo_scanner = RepoScannerAgent(step_index_store, embeddings_store, llm_client)
+    testcase_parser = TestcaseParserAgent(llm_client)
+    step_matcher = StepMatcherAgent(step_index_store, embeddings_store, llm_client)
+    feature_generator = FeatureBuilderAgent(llm_client)
+
+    orchestrator = Orchestrator(
+        repo_scanner_agent=repo_scanner,
+        testcase_parser_agent=testcase_parser,
+        step_matcher_agent=step_matcher,
+        feature_builder_agent=feature_generator,
+        step_index_store=step_index_store,
+        embeddings_store=embeddings_store,
+        llm_client=llm_client,
+    )
+    return orchestrator
+
+
+__all__ = [
+    "create_orchestrator",
+    "_serialize_feature",
+    "_serialize_matched_step",
+    "_serialize_scenario",
+    "_serialize_step_definition",
+    "_serialize_test_step",
+    "_deserialize_matched_step",
+    "_deserialize_scenario",
+    "_deserialize_step_definition",
+    "_deserialize_test_step",
+]

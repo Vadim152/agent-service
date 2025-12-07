@@ -1,0 +1,11 @@
+"""Маршруты HTTP API."""
+from fastapi import APIRouter
+
+from .routes_generate import router as generate_router
+from .routes_steps import router as steps_router
+
+router = APIRouter()
+router.include_router(steps_router)
+router.include_router(generate_router)
+
+__all__ = ["router"]

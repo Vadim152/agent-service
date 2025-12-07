@@ -1,0 +1,37 @@
+<idea-plugin>
+    <id>ru.sber.ai-cucumber-assistant</id>
+    <name>AI Cucumber Assistant</name>
+    <vendor email="ai-platform@sber.ru">Sber</vendor>
+    <description>
+        <![CDATA[
+        Skeleton plugin that integrates with the agent-service backend to scan Cucumber steps
+        and generate feature files from test cases.
+        ]]>
+    </description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow factoryClass="ru.sber.aitestplugin.ui.toolwindow.AiToolWindowFactory"
+                    id="AI Cucumber Assistant"
+                    anchor="right"
+                    icon="/META-INF/pluginIcon.svg" />
+    </extensions>
+
+    <actions>
+        <action id="ru.sber.aitestplugin.actions.ScanStepsAction"
+                class="ru.sber.aitestplugin.actions.ScanStepsAction"
+                text="Scan Cucumber Steps"
+                description="Scan project for Cucumber step definitions via backend" />
+        <action id="ru.sber.aitestplugin.actions.GenerateFeatureFromSelectionAction"
+                class="ru.sber.aitestplugin.actions.GenerateFeatureFromSelectionAction"
+                text="Generate Feature from Test Case"
+                description="Generate Gherkin feature using selected testcase text">
+            <add-to-group group-id="EditorPopupMenu" anchor="first" />
+        </action>
+        <action id="ru.sber.aitestplugin.actions.ApplyFeatureAction"
+                class="ru.sber.aitestplugin.actions.ApplyFeatureAction"
+                text="Apply Feature"
+                description="Send current feature file to backend for application" />
+    </actions>
+</idea-plugin>
