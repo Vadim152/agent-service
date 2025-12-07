@@ -5,7 +5,7 @@ import logging
 from fastapi import FastAPI
 
 from app.config import get_settings
-from app.logging_config import get_logger, init_logging
+from app.logging_config import LOG_LEVEL, get_logger, init_logging
 from api import router as api_router
 from agents import create_orchestrator
 
@@ -56,7 +56,7 @@ def main() -> None:
         host=settings.host,
         port=settings.port,
         reload=False,
-        log_level=logging.getLevelName(logger.level).lower(),
+        log_level=logging.getLevelName(LOG_LEVEL).lower(),
     )
 
 

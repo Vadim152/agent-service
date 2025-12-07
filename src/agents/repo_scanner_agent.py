@@ -44,11 +44,9 @@ class RepoScannerAgent:
                 " и формирования индекса."
             ),
         )
-        self.assistant.register_function(
-            self.scan_repository,
-            name="scan_repository",
-            description="Сканирует исходники и сохраняет индекс шагов для проекта",
-        )
+        self.assistant.register_function({
+            "scan_repository": self.scan_repository,
+        })
 
     def scan_repository(self, project_root: str) -> dict[str, Any]:
         """Проходит по репозиторию, извлекает шаги и обновляет хранилища."""

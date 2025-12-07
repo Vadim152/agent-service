@@ -28,11 +28,9 @@ class FeatureBuilderAgent:
                 " и сопоставленных шагов."
             ),
         )
-        self.assistant.register_function(
-            self.build_feature_from_matches,
-            name="build_feature_from_matches",
-            description="Генерирует feature-файл на основе результатов матчинга",
-        )
+        self.assistant.register_function({
+            "build_feature_from_matches": self.build_feature_from_matches,
+        })
 
     def build_feature_from_matches(
         self,
