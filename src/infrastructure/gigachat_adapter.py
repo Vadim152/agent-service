@@ -12,7 +12,12 @@ from typing import Any, Iterable, List
 
 from gigachat import GigaChat
 from gigachat.exceptions import GigaChatException
-from gigachat.models import ChatCompletion, Embeddings
+
+try:  # SDK 0.2.x and newer
+    from gigachat.models import ChatCompletion, Embeddings
+except ImportError:  # pragma: no cover - совместимость со старыми версиями SDK
+    from gigachat.models import ChatCompletionResponse as ChatCompletion  # type: ignore
+    from gigachat.models import EmbeddingsResponse as Embeddings  # type: ignore
 
 from infrastructure.llm_client import LLMClient
 
