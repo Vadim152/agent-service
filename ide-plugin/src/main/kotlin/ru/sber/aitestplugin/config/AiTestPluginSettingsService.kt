@@ -13,7 +13,7 @@ class AiTestPluginSettingsService : PersistentStateComponent<AiTestPluginSetting
 
     private var stateData: AiTestPluginSettings = AiTestPluginSettings()
 
-    val state: AiTestPluginSettings
+    val settings: AiTestPluginSettings
         get() = stateData
 
     override fun getState(): AiTestPluginSettings = stateData
