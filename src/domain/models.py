@@ -81,8 +81,38 @@ class FeatureFile:
         self.scenarios.append(scenario)
 
     def to_gherkin(self) -> str:
-        """Формирует текстовое представление Gherkin.
+        """Формирует текстовое представление Gherkin."""
 
-        Будет реализовано позже, когда появится полноценная генерация.
-        """
-        raise NotImplementedError("Метод to_gherkin будет реализован позже")
+        lines: list[str] = []
+        if self.language:
+            lines.append(f"# language: {self.language}")
+
+        if self.tags:
+            lines.append(" ".join(f"@{tag}" for tag in self.tags))
+
+        lines.append(f"Feature: {self.name}")
+
+        if self.description:
+            lines.append("")
+            lines.append(self.description)
+
+        if self.background_steps:
+            lines.append("")
+            lines.append("  Background:")
+            for step in self.background_steps:
+                lines.append(f"    {step}")
+
+        for scenario in self.scenarios:
+            lines.append("")
+            if scenario.tags:
+                lines.append(" ".join(f"@{tag}" for tag in scenario.tags))
+            scenario_type = "Scenario Outline" if scenario.is_outline else "Scenario"
+            lines.append(f"  {scenario_type}: {scenario.name}")
+            for step in scenario.steps:
+                lines.append(f"    {step}")
+            if scenario.is_outline and scenario.examples:
+                lines.append("    Examples:")
+                for example in scenario.examples:
+                    lines.append("      | " + " | ".join(str(value) for value in example.values()) + " |")
+
+        return "\n".join(lines).rstrip() + "\n"
