@@ -1,12 +1,18 @@
 package ru.sber.aitestplugin.ui.toolwindow
 
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.model.StepDefinitionDto
+import ru.sber.aitestplugin.services.BackendClient
+import ru.sber.aitestplugin.services.HttpBackendClient
 import java.awt.BorderLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
@@ -17,7 +23,10 @@ import javax.swing.JPanel
 /**
  * Основная панель Tool Window с кнопкой сканирования и таблицей шагов.
  */
-class AiToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
+class AiToolWindowPanel(
+    private val project: Project,
+    private val backendClient: BackendClient = HttpBackendClient()
+) : JPanel(BorderLayout()) {
     private val scanButton = JButton("Scan steps")
     private val projectRootField = JBTextField(project.basePath ?: "")
     private val stepsList = JBList<StepDefinitionDto>()
@@ -45,8 +54,41 @@ class AiToolWindowPanel(private val project: Project) : JPanel(BorderLayout()) {
         add(splitter, BorderLayout.CENTER)
 
         scanButton.addActionListener {
-            // TODO: запуск фоновой задачи scanSteps через BackendClient
-            statusLabel.text = "Scanning..."
+            runScanSteps()
         }
+    }
+
+    private fun runScanSteps() {
+        val projectRoot = projectRootField.text.trim()
+        if (projectRoot.isBlank()) {
+            statusLabel.text = "Project root is empty"
+            Messages.showWarningDialog(project, "Укажите путь к корню проекта", "Scan steps")
+            return
+        }
+
+        statusLabel.text = "Scanning..."
+
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Scanning Cucumber steps", true) {
+            private var responseSteps = emptyList<StepDefinitionDto>()
+            private var statusMessage: String = ""
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Calling backend..."
+                val response = backendClient.scanSteps(projectRoot)
+                responseSteps = response.sampleSteps.orEmpty()
+                statusMessage = "Found ${response.stepsCount} steps. Updated at ${response.updatedAt}"
+            }
+
+            override fun onSuccess() {
+                stepsList.setListData(responseSteps.toTypedArray())
+                statusLabel.text = statusMessage
+            }
+
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Unexpected error"
+                statusLabel.text = "Scan failed: $message"
+                Messages.showErrorDialog(project, message, "Scan steps failed")
+            }
+        })
     }
 }
