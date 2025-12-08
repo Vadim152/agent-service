@@ -54,7 +54,7 @@ class ApplyFeatureAction : AnAction() {
             }
         }
 
-        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().state)
+        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().settings)
         val dialogDefaults = stateStorage.loadApplyOptions(defaultTargetPath)
         val dialog = ApplyFeatureDialog(project, dialogDefaults)
         if (!dialog.showAndGet()) return

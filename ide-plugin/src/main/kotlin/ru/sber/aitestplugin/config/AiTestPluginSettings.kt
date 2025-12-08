@@ -21,6 +21,6 @@ data class AiTestPluginSettings(
         /**
          * Возвращает текущие настройки, сохранённые в PersistentStateComponent.
          */
-        fun current(): AiTestPluginSettings = AiTestPluginSettingsService.getInstance().state
+        fun current(): AiTestPluginSettings = AiTestPluginSettingsService.getInstance().settings
     }
 }

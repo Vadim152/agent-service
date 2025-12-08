@@ -23,18 +23,18 @@ class AiTestPluginSettingsConfigurable : com.intellij.openapi.options.Configurab
     override fun createComponent(): JComponent = rootPanel
 
     override fun isModified(): Boolean {
-        val savedState = settingsService.state
+        val savedState = settingsService.settings
         return backendUrlField.text.trim() != savedState.backendUrl
     }
 
     override fun apply() {
         val backendUrl = backendUrlField.text.trim()
         validateBackendUrl(backendUrl)
-        settingsService.state.backendUrl = backendUrl
+        settingsService.settings.backendUrl = backendUrl
     }
 
     override fun reset() {
-        val savedState = settingsService.state
+        val savedState = settingsService.settings
         backendUrlField.text = savedState.backendUrl
     }
 

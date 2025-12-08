@@ -59,7 +59,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         }
         val projectRoot = project.basePath ?: ""
 
-        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().state)
+        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().settings)
         val dialog = GenerateFeatureDialog(project, stateStorage.loadGenerateOptions())
         if (!dialog.showAndGet()) {
             return
