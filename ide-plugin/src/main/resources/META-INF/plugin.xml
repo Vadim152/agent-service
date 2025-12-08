@@ -16,6 +16,7 @@
                     id="AI Cucumber Assistant"
                     anchor="right"
                     icon="/META-INF/pluginIcon.svg" />
+        <notificationGroup id="AI Cucumber Assistant" displayType="BALLOON" isLogByDefault="true" />
     </extensions>
 
     <actions>
