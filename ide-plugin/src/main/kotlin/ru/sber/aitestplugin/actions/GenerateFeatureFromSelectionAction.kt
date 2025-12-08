@@ -8,7 +8,7 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.colors.TextAttributesKey
-import com.intellij.openapi.editor.ex.util.DocumentMarkupModel
+import com.intellij.codeInsight.daemon.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
@@ -194,7 +194,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         return TextAttributes()
             .also {
                 it.foregroundColor = JBColor.RED
-                it.effectColor = JBColor(Color(0xD1, 0x39, 0x39))
+                it.effectColor = JBColor(Color(0xD1, 0x39, 0x39), Color(0xD1, 0x39, 0x39))
                 it.effectType = EffectType.WAVE_UNDERSCORE
                 it.backgroundColor = globalScheme.defaultBackground
             }
