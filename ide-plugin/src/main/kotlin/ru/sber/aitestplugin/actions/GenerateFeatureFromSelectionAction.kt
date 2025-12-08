@@ -179,8 +179,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                     HighlighterLayer.WARNING,
                     HighlighterTargetArea.EXACT_RANGE
                 )
-                highlighter.textAttributes = textAttributes
-                highlighter.errorStripeMarkColor = JBColor.RED
+                highlighter.setTextAttributes(textAttributes)
+                highlighter.setErrorStripeMarkColor(JBColor.RED)
                 highlighter.errorStripeTooltip = step.reason ?: "Unmapped step"
                 highlighter.putUserData(unmappedHighlightKey, true)
 
