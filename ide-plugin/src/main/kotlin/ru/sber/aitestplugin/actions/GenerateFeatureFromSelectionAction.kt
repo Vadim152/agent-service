@@ -3,10 +3,35 @@ package ru.sber.aitestplugin.actions
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.openapi.command.WriteCommandAction
+import com.intellij.openapi.editor.colors.EditorColorsManager
+import com.intellij.openapi.editor.colors.TextAttributesKey
+import com.intellij.openapi.editor.ex.DocumentMarkupModel
+import com.intellij.openapi.editor.markup.EffectType
+import com.intellij.openapi.editor.markup.HighlighterLayer
+import com.intellij.openapi.editor.markup.HighlighterTargetArea
+import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.Key
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.testFramework.LightVirtualFile
+import com.intellij.util.ui.JBColor
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
+import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
+import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialog
+import java.awt.Color
+import java.nio.file.Path
+import java.nio.file.Paths
 import javax.swing.JOptionPane
 
 /**
@@ -14,6 +39,7 @@ import javax.swing.JOptionPane
  */
 class GenerateFeatureFromSelectionAction : AnAction() {
     private val backendClient = HttpBackendClient()
+    private val unmappedHighlightKey = Key.create<Boolean>("ru.sber.aitestplugin.unmapped.step")
 
     override fun actionPerformed(e: AnActionEvent) {
         val editor = e.getData(CommonDataKeys.EDITOR)
@@ -29,26 +55,151 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         }
         val projectRoot = project.basePath ?: ""
 
-        // TODO: вывести диалог с targetPath/createFile/overwriteExisting
+        val dialog = GenerateFeatureDialog(project, null)
+        if (!dialog.showAndGet()) {
+            return
+        }
+
         val request = GenerateFeatureRequestDto(
             projectRoot = projectRoot,
             testCaseText = selectedText,
-            targetPath = null,
-            options = GenerateFeatureOptionsDto()
+            targetPath = dialog.targetPath(),
+            options = GenerateFeatureOptionsDto(
+                createFile = dialog.shouldCreateFile(),
+                overwriteExisting = dialog.shouldOverwriteExisting(),
+                language = dialog.language()
+            )
         )
+
+        var response: GenerateFeatureResponseDto? = null
+        var error: Throwable? = null
 
         ProgressManager.getInstance().runProcessWithProgressSynchronously(
             {
                 try {
-                    val response = backendClient.generateFeature(request)
-                    // TODO: открыть редактор с featureText и подсветить unmapped steps
+                    response = backendClient.generateFeature(request)
                 } catch (ex: Exception) {
-                    JOptionPane.showMessageDialog(null, "Generation failed: ${ex.message}")
+                    error = ex
                 }
             },
             "Generating feature",
             true,
             project
         )
+
+        if (error != null) {
+            val message = error?.message ?: "Unexpected error"
+            notify(project, "Feature generation failed: $message", NotificationType.ERROR)
+            return
+        }
+
+        val responseData = response ?: return
+        val file = createOrUpdateFeatureFile(project, projectRoot, request.targetPath, request.options, responseData.featureText)
+        FileEditorManager.getInstance(project).openFile(file, true)
+        highlightUnmappedSteps(project, file, responseData.unmappedSteps)
+        notify(
+            project,
+            "Feature generated${if (responseData.unmappedSteps.isNotEmpty()) ": ${responseData.unmappedSteps.size} unmapped steps" else ""}",
+            NotificationType.INFORMATION
+        )
+    }
+
+    private fun createOrUpdateFeatureFile(
+        project: Project,
+        projectRoot: String,
+        targetPath: String?,
+        options: GenerateFeatureOptionsDto?,
+        featureText: String
+    ): VirtualFile {
+        val normalizedTarget = targetPath?.takeIf { it.isNotBlank() }
+        val filePath = normalizedTarget?.let { toAbsolutePath(projectRoot, it) }
+        val shouldCreateFile = options?.createFile == true
+        val shouldOverwrite = options?.overwriteExisting == true
+
+        if (filePath != null) {
+            val existing = LocalFileSystem.getInstance().refreshAndFindFileByPath(filePath.toString())
+            if (existing != null) {
+                if (shouldOverwrite) {
+                    WriteCommandAction.runWriteCommandAction(project) {
+                        VfsUtil.saveText(existing, featureText)
+                    }
+                    return existing
+                }
+                return LightVirtualFile(filePath.fileName.toString(), featureText)
+            }
+
+            if (shouldCreateFile) {
+                var createdFile: VirtualFile? = null
+                WriteCommandAction.runWriteCommandAction(project) {
+                    val parent = filePath.parent ?: throw IllegalArgumentException("Target path must include file name")
+                    val parentDir = VfsUtil.createDirectories(parent.toString())
+                    val fileName = filePath.fileName.toString()
+                    val file = parentDir.createChildData(this, fileName)
+                    VfsUtil.saveText(file, featureText)
+                    createdFile = file
+                }
+                return createdFile ?: throw IllegalStateException("Failed to create feature file")
+            }
+        }
+
+        val previewName = filePath?.fileName?.toString() ?: "generated.feature"
+        return LightVirtualFile(previewName, featureText)
+    }
+
+    private fun toAbsolutePath(projectRoot: String, targetPath: String): Path {
+        val path = Paths.get(targetPath)
+        return if (path.isAbsolute) path else Paths.get(projectRoot).resolve(path).normalize()
+    }
+
+    private fun highlightUnmappedSteps(project: Project, virtualFile: VirtualFile, unmappedSteps: List<UnmappedStepDto>) {
+        if (unmappedSteps.isEmpty()) return
+
+        val document = FileDocumentManager.getInstance().getDocument(virtualFile) ?: return
+        val markupModel = DocumentMarkupModel.forDocument(document, project, true)
+
+        markupModel.allHighlighters
+            .filter { it.getUserData(unmappedHighlightKey) == true }
+            .forEach { markupModel.removeHighlighter(it) }
+
+        val textAttributes = buildUnmappedAttributes()
+
+        unmappedSteps.forEach { step ->
+            val text = step.text
+            var startIndex = document.text.indexOf(text)
+            while (startIndex >= 0) {
+                val endIndex = startIndex + text.length
+                val highlighter = markupModel.addRangeHighlighter(
+                    TextAttributesKey.createTextAttributesKey("AITestPluginUnmappedStep"),
+                    startIndex,
+                    endIndex,
+                    HighlighterLayer.WARNING,
+                    HighlighterTargetArea.EXACT_RANGE
+                )
+                highlighter.textAttributes = textAttributes
+                highlighter.errorStripeMarkColor = JBColor.RED
+                highlighter.errorStripeTooltip = step.reason ?: "Unmapped step"
+                highlighter.putUserData(unmappedHighlightKey, true)
+
+                startIndex = document.text.indexOf(text, endIndex)
+            }
+        }
+    }
+
+    private fun buildUnmappedAttributes(): TextAttributes {
+        val globalScheme = EditorColorsManager.getInstance().globalScheme
+        return TextAttributes()
+            .also {
+                it.foregroundColor = JBColor.RED
+                it.effectColor = JBColor(Color(0xD1, 0x39, 0x39))
+                it.effectType = EffectType.WAVE_UNDERSCORE
+                it.backgroundColor = globalScheme.defaultBackground
+            }
+    }
+
+    private fun notify(project: Project, message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("AI Cucumber Assistant")
+            .createNotification(message, type)
+            .notify(project)
     }
 }
