@@ -7,29 +7,148 @@ EmbeddingsStore будет отвечать за построение и пои�
 
 from __future__ import annotations
 
-from typing import List
+import hashlib
+import math
+import re
+from collections import Counter
+from pathlib import Path
+from typing import Iterable, List
 
+import chromadb
+
+from domain.enums import StepKeyword
 from domain.models import StepDefinition
 
 
 class EmbeddingsStore:
     """Слой работы с векторным хранилищем."""
 
+    def __init__(self, persist_directory: str | Path = ".chroma") -> None:
+        self.persist_directory = Path(persist_directory)
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        self._client = chromadb.PersistentClient(path=str(self.persist_directory))
+        self._embedding_function = _LocalEmbeddingFunction()
+
+    def _project_collection_name(self, project_root: str) -> str:
+        project_hash = hashlib.sha1(project_root.encode("utf-8")).hexdigest()
+        return f"steps_{project_hash}"
+
+    def _get_collection(self, project_root: str):
+        name = self._project_collection_name(project_root)
+        return self._client.get_or_create_collection(
+            name=name,
+            metadata={"project_root": project_root},
+            embedding_function=self._embedding_function,
+        )
+
+    def _collection_exists(self, project_root: str) -> bool:
+        name = self._project_collection_name(project_root)
+        return any(collection.name == name for collection in self._client.list_collections())
+
+    def _build_document(self, step: StepDefinition) -> str:
+        parts = [step.keyword.value, step.pattern]
+        if step.regex:
+            parts.append(step.regex)
+        if step.parameters:
+            parts.extend(step.parameters)
+        if step.tags:
+            parts.extend(step.tags)
+        parts.append(step.code_ref)
+        if step.language:
+            parts.append(step.language)
+        return " \n".join(parts)
+
+    def _step_from_metadata(self, metadata: dict) -> StepDefinition:
+        return StepDefinition(
+            id=metadata["id"],
+            keyword=StepKeyword(metadata["keyword"]),
+            pattern=metadata["pattern"],
+            regex=metadata.get("regex") or None,
+            code_ref=metadata["code_ref"],
+            parameters=(metadata.get("parameters") or "").split(",")
+            if metadata.get("parameters")
+            else [],
+            tags=(metadata.get("tags") or "").split(",") if metadata.get("tags") else [],
+            language=metadata.get("language") or None,
+        )
+
     def index_steps(self, project_root: str, steps: list[StepDefinition]) -> None:
         """Построить или обновить индекс эмбеддингов для проекта."""
+        if not steps:
+            return None
 
-        # TODO: интегрировать конкретный движок векторного поиска
+        collection = self._get_collection(project_root)
+        documents = [self._build_document(step) for step in steps]
+        metadata = [
+            {
+                "id": step.id,
+                "keyword": step.keyword.value,
+                "pattern": step.pattern,
+                "regex": step.regex or "",
+                "code_ref": step.code_ref,
+                "parameters": ",".join(step.parameters),
+                "tags": ",".join(step.tags),
+                "language": step.language or "",
+            }
+            for step in steps
+        ]
+        ids = [f"{self._project_collection_name(project_root)}:{step.id}" for step in steps]
+
+        collection.upsert(ids=ids, documents=documents, metadatas=metadata)
+
         return None
 
     def search_similar(self, project_root: str, query: str, top_k: int = 5) -> List[StepDefinition]:
         """Возвращает наиболее похожие шаги по текстовому запросу."""
+        if top_k <= 0:
+            return []
 
-        # TODO: добавить семантический поиск по эмбеддингам
-        return []
+        if not self._collection_exists(project_root):
+            return []
+
+        collection = self._get_collection(project_root)
+        results = collection.query(query_texts=[query], n_results=top_k)
+
+        metadatas: list[list[dict]] | None = results.get("metadatas")
+        if not metadatas or not metadatas[0]:
+            return []
+
+        return [self._step_from_metadata(metadata) for metadata in metadatas[0]]
 
     def clear(self, project_root: str) -> None:
         """Очищает индекс эмбеддингов для указанного проекта."""
+        name = self._project_collection_name(project_root)
+        if self._collection_exists(project_root):
+            self._client.delete_collection(name)
 
-        # TODO: реализовать удаление данных из выбранного хранилища
         return None
+
+
+class _LocalEmbeddingFunction:
+    """Простая детерминированная функция эмбеддингов без внешних моделей."""
+
+    def __init__(self, dimension: int = 64) -> None:
+        self.dimension = dimension
+
+    def __call__(self, input: Iterable[str]) -> list[list[float]]:
+        return [self._embed(text) for text in input]
+
+    def _embed(self, text: str) -> list[float]:
+        tokens = _tokenize(text)
+        counts = Counter(tokens)
+        vector = [0.0 for _ in range(self.dimension)]
+        for token, count in counts.items():
+            token_hash = int(hashlib.sha256(token.encode("utf-8")).hexdigest(), 16)
+            idx = token_hash % self.dimension
+            vector[idx] += float(count)
+
+        norm = math.sqrt(sum(value * value for value in vector))
+        if norm > 0:
+            vector = [value / norm for value in vector]
+        return vector
+
+
+def _tokenize(text: str) -> list[str]:
+    tokens = re.findall(r"\w+", text.lower())
+    return tokens
 
