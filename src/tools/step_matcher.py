@@ -32,7 +32,18 @@ class StepMatcher:
         for test_step in test_steps:
             best_def, score = self._find_best_match(test_step.text, step_definitions)
             status = self._derive_status(score)
-            gherkin_line = self._build_gherkin_line(best_def, test_step) if best_def else self._unmatched_comment(test_step)
+            gherkin_line: str | None = None
+            notes: dict[str, str] | None = None
+
+            if status is MatchStatus.UNMATCHED:
+                notes = {
+                    "reason": "no_definition_found",
+                    "original_text": test_step.text,
+                    "closest_pattern": best_def.pattern if best_def else None,
+                    "confidence": f"{score:.2f}",
+                }
+            else:
+                gherkin_line = self._build_gherkin_line(best_def, test_step)
 
             matches.append(
                 MatchedStep(
@@ -41,7 +52,7 @@ class StepMatcher:
                     step_definition=best_def if status is not MatchStatus.UNMATCHED else None,
                     confidence=score if best_def else None,
                     generated_gherkin_line=gherkin_line,
-                    notes=None if status is not MatchStatus.UNMATCHED else "Не найдено подходящее определение",
+                    notes=notes,
                 )
             )
         return matches
@@ -84,10 +95,4 @@ class StepMatcher:
         """Формирует строку Gherkin для найденного определения."""
 
         keyword = definition.keyword.value if isinstance(definition.keyword, StepKeyword) else str(definition.keyword)
-        return f"{keyword} {definition.pattern}" if definition else self._unmatched_comment(test_step)
-
-    @staticmethod
-    def _unmatched_comment(test_step: TestStep) -> str:
-        """Создает комментарий для не сопоставленного шага."""
-
-        return f"# TODO: не найден шаг для: \"{test_step.text}\""
+        return f"{keyword} {definition.pattern}" if definition else ""

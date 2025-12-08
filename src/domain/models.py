@@ -51,7 +51,7 @@ class MatchedStep:
     step_definition: StepDefinition | None = None
     confidence: float | None = None
     generated_gherkin_line: str | None = None
-    notes: str | None = None
+    notes: Dict[str, str] | None = None
 
 
 @dataclass
