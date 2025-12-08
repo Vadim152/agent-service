@@ -10,8 +10,9 @@ from __future__ import annotations
 from base64 import b64encode
 from typing import Any, Iterable, List
 
-from gigachat import GigaChat, GigaChatException
-from gigachat.models import ChatCompletionResponse, EmbeddingsResponse
+from gigachat import GigaChat
+from gigachat.exceptions import GigaChatException
+from gigachat.models import ChatCompletion, Embeddings
 
 from infrastructure.llm_client import LLMClient
 
@@ -85,7 +86,7 @@ class GigaChatAdapter(LLMClient):
             model=self.model_name,
         )
 
-    def _extract_embeddings(self, response: EmbeddingsResponse) -> List[List[float]]:
+    def _extract_embeddings(self, response: Embeddings) -> List[List[float]]:
         return [item.embedding for item in response.data]
 
     def embed_text(self, text: str) -> List[float]:
@@ -116,7 +117,7 @@ class GigaChatAdapter(LLMClient):
 
         try:
             with self._create_client() as client:
-                response: ChatCompletionResponse = client.chat(prompt, **kwargs)
+                response: ChatCompletion = client.chat(prompt, **kwargs)
         except GigaChatException as exc:  # pragma: no cover - внешний SDK
             raise RuntimeError("Ошибка генерации текста через GigaChat") from exc
 
