@@ -9,7 +9,7 @@ from app.config import Settings, get_settings
 from domain.enums import MatchStatus, StepKeyword
 from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario, StepDefinition, TestStep
 from infrastructure.embeddings_store import EmbeddingsStore
-from infrastructure.llm_client import LLMClient
+from infrastructure.gigachat_adapter import GigaChatAdapter
 from infrastructure.step_index_store import StepIndexStore
 from tools.feature_generator import FeatureGenerator
 
@@ -117,10 +117,15 @@ def create_orchestrator(settings: Settings | None = None):
     from agents.testcase_parser_agent import TestcaseParserAgent
 
     resolved_settings = settings or get_settings()
-    llm_client = LLMClient(
-        endpoint=resolved_settings.llm_endpoint,
-        api_key=resolved_settings.llm_api_key,
-        model_name=resolved_settings.llm_model,
+    llm_client = GigaChatAdapter(
+        base_url=resolved_settings.gigachat_api_url,
+        auth_url=resolved_settings.gigachat_auth_url,
+        credentials=resolved_settings.llm_api_key,
+        client_id=resolved_settings.gigachat_client_id,
+        client_secret=resolved_settings.gigachat_client_secret,
+        model_name=resolved_settings.llm_model or "GigaChat",
+        scope=resolved_settings.gigachat_scope,
+        verify_ssl_certs=resolved_settings.gigachat_verify_ssl,
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
     embeddings_store = EmbeddingsStore()
