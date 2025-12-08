@@ -13,8 +13,8 @@ data class AiTestPluginSettings(
         const val DEFAULT_TIMEOUT_MS: Int = 30_000
 
         /**
-         * Возвращает текущие настройки (пока заглушка, позже будет читать из state service).
+         * Возвращает текущие настройки, сохранённые в PersistentStateComponent.
          */
-        fun current(): AiTestPluginSettings = AiTestPluginSettings()
+        fun current(): AiTestPluginSettings = AiTestPluginSettingsService.getInstance().state
     }
 }
