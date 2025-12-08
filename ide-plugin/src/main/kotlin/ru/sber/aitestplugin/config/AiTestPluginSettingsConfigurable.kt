@@ -1,8 +1,11 @@
 package ru.sber.aitestplugin.config
 
+import com.intellij.openapi.options.ConfigurationException
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTextField
+import java.net.MalformedURLException
+import java.net.URL
 
 /**
  * Панель настроек плагина (Settings/Preferences → "AI Test Agent").
@@ -10,6 +13,7 @@ import javax.swing.JTextField
  */
 class AiTestPluginSettingsConfigurable : com.intellij.openapi.options.Configurable {
     private val backendUrlField = JTextField(AiTestPluginSettings.DEFAULT_BACKEND_URL)
+    private val settingsService = AiTestPluginSettingsService.getInstance()
     private val rootPanel: JPanel = JPanel().apply {
         add(backendUrlField)
     }
@@ -19,15 +23,35 @@ class AiTestPluginSettingsConfigurable : com.intellij.openapi.options.Configurab
     override fun createComponent(): JComponent = rootPanel
 
     override fun isModified(): Boolean {
-        // TODO: сравнить текущее значение с сохранённым состоянием
-        return true
+        val savedState = settingsService.state
+        return backendUrlField.text.trim() != savedState.backendUrl
     }
 
     override fun apply() {
-        // TODO: сохранить настройки через PersistentStateComponent
+        val backendUrl = backendUrlField.text.trim()
+        validateBackendUrl(backendUrl)
+        settingsService.state.backendUrl = backendUrl
     }
 
     override fun reset() {
-        // TODO: сбрасывать поля к сохранённому состоянию
+        val savedState = settingsService.state
+        backendUrlField.text = savedState.backendUrl
+    }
+
+    private fun validateBackendUrl(url: String) {
+        if (url.isBlank()) {
+            throw ConfigurationException("Backend URL must not be empty")
+        }
+
+        val parsedUrl = try {
+            URL(url)
+        } catch (ex: MalformedURLException) {
+            throw ConfigurationException("Invalid backend URL: ${ex.message}")
+        }
+
+        val protocol = parsedUrl.protocol?.lowercase()
+        if (protocol != "http" && protocol != "https") {
+            throw ConfigurationException("Backend URL must start with http:// or https://")
+        }
     }
 }
