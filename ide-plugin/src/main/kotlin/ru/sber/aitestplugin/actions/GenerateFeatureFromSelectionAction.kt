@@ -23,11 +23,13 @@ import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.ui.JBColor
+import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
 import ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialog
 import java.awt.Color
 import java.nio.file.Path
@@ -55,18 +57,22 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         }
         val projectRoot = project.basePath ?: ""
 
-        val dialog = GenerateFeatureDialog(project, null)
+        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().state)
+        val dialog = GenerateFeatureDialog(project, stateStorage.loadGenerateOptions())
         if (!dialog.showAndGet()) {
             return
         }
 
+        val dialogOptions = dialog.selectedOptions()
+        stateStorage.saveGenerateOptions(dialogOptions)
+
         val request = GenerateFeatureRequestDto(
             projectRoot = projectRoot,
             testCaseText = selectedText,
-            targetPath = dialog.targetPath(),
+            targetPath = dialogOptions.targetPath,
             options = GenerateFeatureOptionsDto(
-                createFile = dialog.shouldCreateFile(),
-                overwriteExisting = dialog.shouldOverwriteExisting(),
+                createFile = dialogOptions.createFile,
+                overwriteExisting = dialogOptions.overwriteExisting,
                 language = dialog.language()
             )
         )

@@ -14,9 +14,10 @@ import javax.swing.JPanel
 /**
  * Диалог ввода параметров применения feature-файла.
  */
-class ApplyFeatureDialog(project: Project, defaultTargetPath: String? = null) : DialogWrapper(project) {
-    private val targetPathField = JBTextField(defaultTargetPath ?: "")
-    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", false)
+class ApplyFeatureDialog(project: Project, defaults: ApplyFeatureDialogOptions) : DialogWrapper(project) {
+    private val targetPathField = JBTextField(defaults.targetPath ?: "")
+    private val createFileCheckbox = JBCheckBox("Create file if missing", defaults.createFile)
+    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", defaults.overwriteExisting)
 
     init {
         title = "Apply Feature"
@@ -42,6 +43,9 @@ class ApplyFeatureDialog(project: Project, defaultTargetPath: String? = null) : 
         panel.add(targetPathField, gbc)
 
         gbc.gridy++
+        panel.add(createFileCheckbox, gbc)
+
+        gbc.gridy++
         panel.add(overwriteCheckbox, gbc)
 
         return panel
@@ -49,5 +53,13 @@ class ApplyFeatureDialog(project: Project, defaultTargetPath: String? = null) : 
 
     fun targetPath(): String? = targetPathField.text.trim().takeIf { it.isNotEmpty() }
 
+    fun shouldCreateFile(): Boolean = createFileCheckbox.isSelected
+
     fun shouldOverwriteExisting(): Boolean = overwriteCheckbox.isSelected
+
+    fun selectedOptions(): ApplyFeatureDialogOptions = ApplyFeatureDialogOptions(
+        targetPath = targetPath(),
+        createFile = shouldCreateFile(),
+        overwriteExisting = shouldOverwriteExisting()
+    )
 }

@@ -6,7 +6,13 @@ package ru.sber.aitestplugin.config
  */
 data class AiTestPluginSettings(
     var backendUrl: String = DEFAULT_BACKEND_URL,
-    var requestTimeoutMs: Int = DEFAULT_TIMEOUT_MS
+    var requestTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
+    var lastGenerateFeatureTargetPath: String? = null,
+    var lastGenerateFeatureCreateFile: Boolean = true,
+    var lastGenerateFeatureOverwriteExisting: Boolean = false,
+    var lastApplyFeatureTargetPath: String? = null,
+    var lastApplyFeatureCreateFile: Boolean = true,
+    var lastApplyFeatureOverwriteExisting: Boolean = false
 ) {
     companion object {
         const val DEFAULT_BACKEND_URL: String = "http://localhost:8000/api/v1"

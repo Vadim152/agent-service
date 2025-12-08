@@ -5,6 +5,7 @@ data class ApplyFeatureRequestDto(
     val projectRoot: String,
     val targetPath: String,
     val featureText: String,
+    val createFile: Boolean = true,
     val overwriteExisting: Boolean = false
 )
 
