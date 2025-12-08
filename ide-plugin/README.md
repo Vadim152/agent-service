@@ -27,12 +27,12 @@
 
 ### Генерация feature из выделенного тесткейса
 1. Пользователь выделяет текст тесткейса в редакторе и запускает action "Generate Feature from Test Case".
-2. Открывается диалог с targetPath/createFile/overwriteExisting (пока TODO).
+2. Открывается диалог с targetPath/createFile/overwriteExisting. Последние выбранные значения сохраняются в настройках плагина и подставляются при следующем вызове.
 3. Плагин формирует `GenerateFeatureRequestDto` и вызывает `BackendClient.generateFeature` → `/feature/generate-feature`.
 4. Backend парсит, матчит шаги, формирует featureText и опционально сохраняет файл.
 5. Плагин открывает featureText в редакторе/показывает результат, unmapped steps отображаются позже (TODO).
 
 ### Применение feature-файла
 1. Пользователь редактирует/просматривает feature-текст в редакторе.
-2. Action "Apply Feature" собирает текст и targetPath (TODO диалог) и вызывает `/feature/apply-feature` через `BackendClient.applyFeature`.
+2. Action "Apply Feature" открывает диалог с targetPath/createFile/overwriteExisting (значения также запоминаются) и вызывает `/feature/apply-feature` через `BackendClient.applyFeature`.
 3. Backend создаёт/перезаписывает файл и возвращает статус (created/overwritten/skipped), который показывается в IDE.

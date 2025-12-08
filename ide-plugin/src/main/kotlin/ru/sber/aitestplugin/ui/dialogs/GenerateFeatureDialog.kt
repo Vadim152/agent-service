@@ -14,10 +14,10 @@ import javax.swing.JPanel
 /**
  * Диалог ввода опций генерации feature.
  */
-class GenerateFeatureDialog(project: Project, defaultTargetPath: String? = null) : DialogWrapper(project) {
-    private val targetPathField = JBTextField(defaultTargetPath ?: "")
-    private val createFileCheckbox = JBCheckBox("Create file if missing", true)
-    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", false)
+class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOptions) : DialogWrapper(project) {
+    private val targetPathField = JBTextField(defaults.targetPath ?: "")
+    private val createFileCheckbox = JBCheckBox("Create file if missing", defaults.createFile)
+    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", defaults.overwriteExisting)
     private val languageField = JBTextField()
 
     init {
@@ -62,6 +62,12 @@ class GenerateFeatureDialog(project: Project, defaultTargetPath: String? = null)
     fun shouldCreateFile(): Boolean = createFileCheckbox.isSelected
 
     fun shouldOverwriteExisting(): Boolean = overwriteCheckbox.isSelected
+
+    fun selectedOptions(): GenerateFeatureDialogOptions = GenerateFeatureDialogOptions(
+        targetPath = targetPath(),
+        createFile = shouldCreateFile(),
+        overwriteExisting = shouldOverwriteExisting()
+    )
 
     fun language(): String? = languageField.text.trim().takeIf { it.isNotEmpty() }
 }

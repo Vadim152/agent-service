@@ -7,10 +7,12 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.project.Project
-import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
+import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.ApplyFeatureDialog
+import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
 import java.nio.file.Paths
 import javax.swing.JOptionPane
 
@@ -50,20 +52,25 @@ class ApplyFeatureAction : AnAction() {
             }
         }
 
-        val dialog = ApplyFeatureDialog(project, defaultTargetPath)
+        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().state)
+        val dialogDefaults = stateStorage.loadApplyOptions(defaultTargetPath)
+        val dialog = ApplyFeatureDialog(project, dialogDefaults)
         if (!dialog.showAndGet()) return
 
-        val targetPath = dialog.targetPath()
-        if (targetPath.isNullOrBlank()) {
+        val dialogOptions = dialog.selectedOptions()
+        if (dialogOptions.targetPath.isNullOrBlank()) {
             JOptionPane.showMessageDialog(null, "Укажите путь к feature-файлу")
             return
         }
 
+        stateStorage.saveApplyOptions(dialogOptions)
+
         val request = ApplyFeatureRequestDto(
             projectRoot = projectRoot,
-            targetPath = targetPath,
+            targetPath = dialogOptions.targetPath,
             featureText = featureText,
-            overwriteExisting = dialog.shouldOverwriteExisting()
+            createFile = dialogOptions.createFile,
+            overwriteExisting = dialogOptions.overwriteExisting
         )
 
         var response: ApplyFeatureResponseDto? = null
