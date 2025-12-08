@@ -6,6 +6,8 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
@@ -73,36 +75,30 @@ class ApplyFeatureAction : AnAction() {
             overwriteExisting = dialogOptions.overwriteExisting
         )
 
-        var response: ApplyFeatureResponseDto? = null
-        var error: Throwable? = null
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Applying feature", true) {
+            private var response: ApplyFeatureResponseDto? = null
 
-        ProgressManager.getInstance().runProcessWithProgressSynchronously(
-            {
-                try {
-                    response = backendClient.applyFeature(request)
-                } catch (ex: Exception) {
-                    error = ex
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Sending feature to backend..."
+                response = backendClient.applyFeature(request)
+            }
+
+            override fun onSuccess() {
+                val responseData = response ?: return
+                val status = responseData.status.lowercase()
+                val message = when (status) {
+                    "overwritten" -> "Feature overwritten at ${responseData.targetPath}"
+                    else -> "Feature created at ${responseData.targetPath}"
                 }
-            },
-            "Applying feature",
-            true,
-            project
-        )
+                val fullMessage = listOfNotNull(message, responseData.message).joinToString(": ")
+                notify(project, fullMessage, NotificationType.INFORMATION)
+            }
 
-        if (error != null) {
-            val message = error?.message ?: "Unexpected error"
-            notify(project, "Feature apply failed: $message", NotificationType.ERROR)
-            return
-        }
-
-        val responseData = response ?: return
-        val status = responseData.status.lowercase()
-        val message = when (status) {
-            "overwritten" -> "Feature overwritten at ${responseData.targetPath}"
-            else -> "Feature created at ${responseData.targetPath}"
-        }
-        val fullMessage = listOfNotNull(message, responseData.message).joinToString(": ")
-        notify(project, fullMessage, NotificationType.INFORMATION)
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Unexpected error"
+                notify(project, "Feature apply failed: $message", NotificationType.ERROR)
+            }
+        })
     }
 
     private fun notify(project: Project, message: String, type: NotificationType) {

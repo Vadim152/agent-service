@@ -11,6 +11,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.services.BackendClient
@@ -18,9 +19,11 @@ import ru.sber.aitestplugin.services.HttpBackendClient
 import java.awt.BorderLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.Component
 import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.DefaultListCellRenderer
 
 /**
  * Основная панель Tool Window с кнопкой сканирования и таблицей шагов.
@@ -32,6 +35,7 @@ class AiToolWindowPanel(
     private val scanButton = JButton("Scan steps")
     private val projectRootField = JBTextField(project.basePath ?: "")
     private val stepsList = JBList<StepDefinitionDto>()
+    private val unmappedList = JBList<UnmappedStepDto>()
     private val statusLabel = JLabel("Index not yet built")
 
     init {
@@ -46,14 +50,40 @@ class AiToolWindowPanel(
         topPanel.add(projectRootField, gbc)
         topPanel.add(scanButton, gbc)
 
-        val listWrapper = JBScrollPane(stepsList)
-        val splitter = JBSplitter(true, 0.8f).apply {
-            firstComponent = listWrapper
-            secondComponent = statusLabel
+        stepsList.emptyText.text = "No sample steps yet"
+        unmappedList.emptyText.text = "No unmapped steps"
+        unmappedList.cellRenderer = object : DefaultListCellRenderer() {
+            override fun getListCellRendererComponent(
+                list: javax.swing.JList<*>,
+                value: Any?,
+                index: Int,
+                isSelected: Boolean,
+                cellHasFocus: Boolean
+            ): Component {
+                val unmapped = value as? UnmappedStepDto
+                val reason = unmapped?.reason?.let { " — $it" } ?: ""
+                return super.getListCellRendererComponent(list, "${unmapped?.text ?: ""}$reason", index, isSelected, cellHasFocus)
+            }
+        }
+
+        val stepsPanel = JPanel(BorderLayout()).apply {
+            add(JLabel("Sample steps"), BorderLayout.NORTH)
+            add(JBScrollPane(stepsList), BorderLayout.CENTER)
+        }
+
+        val unmappedPanel = JPanel(BorderLayout()).apply {
+            add(JLabel("Unmapped steps"), BorderLayout.NORTH)
+            add(JBScrollPane(unmappedList), BorderLayout.CENTER)
+        }
+
+        val listsSplitter = JBSplitter(false, 0.5f).apply {
+            firstComponent = stepsPanel
+            secondComponent = unmappedPanel
         }
 
         add(topPanel, BorderLayout.NORTH)
-        add(splitter, BorderLayout.CENTER)
+        add(listsSplitter, BorderLayout.CENTER)
+        add(statusLabel, BorderLayout.SOUTH)
 
         scanButton.addActionListener {
             runScanSteps()
@@ -62,7 +92,13 @@ class AiToolWindowPanel(
 
     fun showScanResult(response: ScanStepsResponseDto) {
         stepsList.setListData(response.sampleSteps.orEmpty().toTypedArray())
+        unmappedList.setListData(emptyArray())
         statusLabel.text = "Found ${response.stepsCount} steps. Updated at ${response.updatedAt}"
+    }
+
+    fun showUnmappedSteps(unmappedSteps: List<UnmappedStepDto>) {
+        unmappedList.setListData(unmappedSteps.toTypedArray())
+        statusLabel.text = if (unmappedSteps.isEmpty()) "No unmapped steps" else "Unmapped steps: ${unmappedSteps.size}"
     }
 
     private fun runScanSteps() {
