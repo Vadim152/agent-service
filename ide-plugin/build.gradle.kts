@@ -16,7 +16,8 @@ repositories {
 }
 
 dependencies {
-    // Additional dependencies for HTTP client or JSON can be added here.
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.17.1")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.17.1")
 }
 
 tasks {
