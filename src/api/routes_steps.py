@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import Body, APIRouter, HTTPException, Request, status
 
 from agents.orchestrator import Orchestrator
 from api.schemas import ScanStepsRequest, ScanStepsResponse, StepDefinitionDto
@@ -41,11 +41,23 @@ def _to_step_dto(step_definitions: Iterable[StepDefinition]) -> list[StepDefinit
 
 
 @router.post("/scan-steps", response_model=ScanStepsResponse, summary="Сканировать проект на Cucumber шаги")
-async def scan_steps(request_model: ScanStepsRequest, request: Request) -> ScanStepsResponse:
+async def scan_steps(
+    request: Request,
+    request_model: ScanStepsRequest | None = Body(
+        default=None, description="Тело запроса со свойством projectRoot"
+    ),
+) -> ScanStepsResponse:
     """Запускает сканирование проекта и возвращает краткую статистику."""
 
     orchestrator = _get_orchestrator(request)
-    project_root = request_model.project_root
+    project_root = request_model.project_root if request_model else None
+    if not project_root:
+        project_root = request.query_params.get("projectRoot")
+    if not project_root:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="projectRoot is required in request body or query string",
+        )
     path_obj = Path(project_root).expanduser()
     if not path_obj.exists():
         logger.warning("Путь проекта не найден: %s", project_root)
