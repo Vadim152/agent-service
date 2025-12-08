@@ -4,7 +4,9 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
 import ru.sber.aitestplugin.services.HttpBackendClient
@@ -25,41 +27,35 @@ class ScanStepsAction : AnAction() {
             return
         }
 
-        var response: ScanStepsResponseDto? = null
-        var error: Throwable? = null
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Scanning Cucumber steps", true) {
+            private var response: ScanStepsResponseDto? = null
 
-        ProgressManager.getInstance().runProcessWithProgressSynchronously(
-            {
-                try {
-                    response = backendClient.scanSteps(projectRoot)
-                } catch (ex: Exception) {
-                    error = ex
-                }
-            },
-            "Scanning Cucumber steps",
-            true,
-            project
-        )
-
-        if (error != null) {
-            val message = error?.message ?: "Unexpected error"
-            notify(project, "Scan failed: $message", NotificationType.ERROR)
-            return
-        }
-
-        val responseData = response ?: return
-        updateToolWindow(project, responseData)
-
-        val summary = buildString {
-            append("Found ${responseData.stepsCount} steps")
-            val sampleCount = responseData.sampleSteps?.size ?: 0
-            if (sampleCount > 0) {
-                append(", sample: $sampleCount")
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Calling backend..."
+                response = backendClient.scanSteps(projectRoot)
             }
-            append(". Updated at ${responseData.updatedAt}.")
-        }
 
-        notify(project, summary, NotificationType.INFORMATION)
+            override fun onSuccess() {
+                val responseData = response ?: return
+                updateToolWindow(project, responseData)
+
+                val summary = buildString {
+                    append("Found ${responseData.stepsCount} steps")
+                    val sampleCount = responseData.sampleSteps?.size ?: 0
+                    if (sampleCount > 0) {
+                        append(", sample: $sampleCount")
+                    }
+                    append(". Updated at ${responseData.updatedAt}.")
+                }
+
+                notify(project, summary, NotificationType.INFORMATION)
+            }
+
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Unexpected error"
+                notify(project, "Scan failed: $message", NotificationType.ERROR)
+            }
+        })
     }
 
     private fun notify(project: Project, message: String, type: NotificationType) {

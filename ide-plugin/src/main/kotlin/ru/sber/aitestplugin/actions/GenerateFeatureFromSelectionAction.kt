@@ -16,6 +16,8 @@ import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
+import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -23,6 +25,7 @@ import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.util.ui.JBColor
+import com.intellij.openapi.wm.ToolWindowManager
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
@@ -77,37 +80,32 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             )
         )
 
-        var response: GenerateFeatureResponseDto? = null
-        var error: Throwable? = null
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Generating feature", true) {
+            private var response: GenerateFeatureResponseDto? = null
 
-        ProgressManager.getInstance().runProcessWithProgressSynchronously(
-            {
-                try {
-                    response = backendClient.generateFeature(request)
-                } catch (ex: Exception) {
-                    error = ex
-                }
-            },
-            "Generating feature",
-            true,
-            project
-        )
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Sending test case to backend..."
+                response = backendClient.generateFeature(request)
+            }
 
-        if (error != null) {
-            val message = error?.message ?: "Unexpected error"
-            notify(project, "Feature generation failed: $message", NotificationType.ERROR)
-            return
-        }
+            override fun onSuccess() {
+                val responseData = response ?: return
+                val file = createOrUpdateFeatureFile(project, projectRoot, request.targetPath, request.options, responseData.featureText)
+                FileEditorManager.getInstance(project).openFile(file, true)
+                highlightUnmappedSteps(project, file, responseData.unmappedSteps)
+                updateToolWindowUnmapped(project, responseData.unmappedSteps)
+                notify(
+                    project,
+                    "Feature generated${if (responseData.unmappedSteps.isNotEmpty()) ": ${responseData.unmappedSteps.size} unmapped steps" else ""}",
+                    NotificationType.INFORMATION
+                )
+            }
 
-        val responseData = response ?: return
-        val file = createOrUpdateFeatureFile(project, projectRoot, request.targetPath, request.options, responseData.featureText)
-        FileEditorManager.getInstance(project).openFile(file, true)
-        highlightUnmappedSteps(project, file, responseData.unmappedSteps)
-        notify(
-            project,
-            "Feature generated${if (responseData.unmappedSteps.isNotEmpty()) ": ${responseData.unmappedSteps.size} unmapped steps" else ""}",
-            NotificationType.INFORMATION
-        )
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Unexpected error"
+                notify(project, "Feature generation failed: $message", NotificationType.ERROR)
+            }
+        })
     }
 
     private fun createOrUpdateFeatureFile(
@@ -207,5 +205,13 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             .getNotificationGroup("AI Cucumber Assistant")
             .createNotification(message, type)
             .notify(project)
+    }
+
+    private fun updateToolWindowUnmapped(project: Project, unmappedSteps: List<UnmappedStepDto>) {
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("AI Cucumber Assistant")
+        val panel = toolWindow?.contentManager?.contents
+            ?.mapNotNull { it.component as? ru.sber.aitestplugin.ui.toolwindow.AiToolWindowPanel }
+            ?.firstOrNull()
+        panel?.showUnmappedSteps(unmappedSteps)
     }
 }
