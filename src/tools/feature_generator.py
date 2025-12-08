@@ -69,11 +69,15 @@ class FeatureGenerator:
         """Преобразует MatchedStep в строку Gherkin."""
 
         if matched_step.status.value == "unmatched" or not matched_step.step_definition:
-            return matched_step.generated_gherkin_line or self._unmatched_comment(matched_step.test_step.text)
+            reason = None
+            if isinstance(matched_step.notes, dict):
+                reason = matched_step.notes.get("reason")
+            marker = reason or "unmatched"
+            return f"{StepKeyword.WHEN.as_text()} <{marker}: {matched_step.test_step.text}>"
 
         keyword = self._select_keyword(matched_step)
         body = matched_step.generated_gherkin_line or matched_step.step_definition.pattern
-        return f"{keyword} {body}" if body else self._unmatched_comment(matched_step.test_step.text)
+        return f"{keyword} {body}" if body else f"{keyword} <missing-body: {matched_step.test_step.text}>"
 
     def _select_keyword(self, matched_step: MatchedStep) -> str:
         """Выбирает ключевое слово для шага."""
@@ -82,9 +86,3 @@ class FeatureGenerator:
         if definition and isinstance(definition.keyword, StepKeyword):
             return definition.keyword.as_text()
         return StepKeyword.WHEN.as_text()
-
-    @staticmethod
-    def _unmatched_comment(step_text: str) -> str:
-        """Создает комментарий для шага без сопоставления."""
-
-        return f"# TODO: не найден шаг для: \"{step_text}\""
