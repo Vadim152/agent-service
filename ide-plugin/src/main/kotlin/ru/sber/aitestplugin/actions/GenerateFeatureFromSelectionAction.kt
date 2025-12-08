@@ -7,7 +7,6 @@ import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.colors.EditorColorsManager
-import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterLayer
@@ -173,14 +172,13 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             while (startIndex >= 0) {
                 val endIndex = startIndex + text.length
                 val highlighter = markupModel.addRangeHighlighter(
-                    TextAttributesKey.createTextAttributesKey("AITestPluginUnmappedStep"),
                     startIndex,
                     endIndex,
                     HighlighterLayer.WARNING,
+                    textAttributes,
                     HighlighterTargetArea.EXACT_RANGE
                 )
-                highlighter.textAttributes = textAttributes
-                highlighter.errorStripeMarkColor = JBColor.RED
+                highlighter.setErrorStripeMarkColor(JBColor.RED)
                 highlighter.errorStripeTooltip = step.reason ?: "Unmapped step"
                 highlighter.putUserData(unmappedHighlightKey, true)
 
