@@ -10,7 +10,13 @@ from domain.models import StepDefinition
 from infrastructure.fs_repo import FsRepository
 
 
-_ANNOTATION_RE = re.compile(r"@\s*(Given|When|Then|And|But)\s*\(\s*([\"\'])(.+?)\2\s*\)")
+_SUPPORTED_KEYWORDS_PATTERN = "|".join(
+    re.escape(keyword) for keyword in sorted(StepKeyword.supported_keywords(), key=len, reverse=True)
+)
+_ANNOTATION_RE = re.compile(
+    rf"@\s*({_SUPPORTED_KEYWORDS_PATTERN})\s*\(\s*([\"\'])(.+?)\2\s*\)",
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -83,7 +89,7 @@ class StepExtractor:
             if not match:
                 continue
             raw_keyword, _, pattern = match.groups()
-            keyword = StepKeyword(raw_keyword.capitalize())
+            keyword = StepKeyword.from_string(raw_keyword)
             yield ExtractedAnnotation(keyword=keyword, pattern=pattern, line_number=idx)
 
     @staticmethod
