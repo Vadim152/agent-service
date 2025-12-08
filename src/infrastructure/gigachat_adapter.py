@@ -10,7 +10,8 @@ from __future__ import annotations
 from base64 import b64encode
 from typing import Any, Iterable, List
 
-from gigachat import GigaChat, GigaChatException
+from gigachat import GigaChat
+from gigachat.exceptions import GigaChatException
 from gigachat.models import ChatCompletionResponse, EmbeddingsResponse
 
 from infrastructure.llm_client import LLMClient
