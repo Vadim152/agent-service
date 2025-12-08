@@ -4,12 +4,14 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.Messages
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
@@ -58,11 +60,16 @@ class AiToolWindowPanel(
         }
     }
 
+    fun showScanResult(response: ScanStepsResponseDto) {
+        stepsList.setListData(response.sampleSteps.orEmpty().toTypedArray())
+        statusLabel.text = "Found ${response.stepsCount} steps. Updated at ${response.updatedAt}"
+    }
+
     private fun runScanSteps() {
         val projectRoot = projectRootField.text.trim()
         if (projectRoot.isBlank()) {
             statusLabel.text = "Project root is empty"
-            Messages.showWarningDialog(project, "Укажите путь к корню проекта", "Scan steps")
+            notify("Укажите путь к корню проекта", NotificationType.WARNING)
             return
         }
 
@@ -87,8 +94,15 @@ class AiToolWindowPanel(
             override fun onThrowable(error: Throwable) {
                 val message = error.message ?: "Unexpected error"
                 statusLabel.text = "Scan failed: $message"
-                Messages.showErrorDialog(project, message, "Scan steps failed")
+                notify(message, NotificationType.ERROR)
             }
         })
+    }
+
+    private fun notify(message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("AI Cucumber Assistant")
+            .createNotification(message, type)
+            .notify(project)
     }
 }
