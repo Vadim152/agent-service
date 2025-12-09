@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import Body, APIRouter, HTTPException, Request, status
 
 from agents.orchestrator import Orchestrator
 from api.schemas import ScanStepsRequest, ScanStepsResponse, StepDefinitionDto
