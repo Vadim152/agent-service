@@ -92,8 +92,9 @@ class AiToolWindowPanel(
 
     fun showScanResult(response: ScanStepsResponseDto) {
         stepsList.setListData(response.sampleSteps.orEmpty().toTypedArray())
-        unmappedList.setListData(emptyArray())
-        statusLabel.text = "Found ${response.stepsCount} steps. Updated at ${response.updatedAt}"
+        unmappedList.setListData(response.unmappedSteps.toTypedArray())
+        val unmappedMessage = if (response.unmappedSteps.isEmpty()) "" else ", unmapped: ${response.unmappedSteps.size}"
+        statusLabel.text = "Found ${response.stepsCount} steps$unmappedMessage. Updated at ${response.updatedAt}"
     }
 
     fun showUnmappedSteps(unmappedSteps: List<UnmappedStepDto>) {
@@ -113,17 +114,21 @@ class AiToolWindowPanel(
 
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Scanning Cucumber steps", true) {
             private var responseSteps = emptyList<StepDefinitionDto>()
+            private var responseUnmapped = emptyList<UnmappedStepDto>()
             private var statusMessage: String = ""
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Calling backend..."
                 val response = backendClient.scanSteps(projectRoot)
                 responseSteps = response.sampleSteps.orEmpty()
-                statusMessage = "Found ${response.stepsCount} steps. Updated at ${response.updatedAt}"
+                responseUnmapped = response.unmappedSteps
+                val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", unmapped: ${responseUnmapped.size}"
+                statusMessage = "Found ${response.stepsCount} steps$unmappedMessage. Updated at ${response.updatedAt}"
             }
 
             override fun onSuccess() {
                 stepsList.setListData(responseSteps.toTypedArray())
+                unmappedList.setListData(responseUnmapped.toTypedArray())
                 statusLabel.text = statusMessage
             }
 

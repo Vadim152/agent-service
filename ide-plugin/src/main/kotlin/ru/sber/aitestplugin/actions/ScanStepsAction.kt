@@ -45,6 +45,9 @@ class ScanStepsAction : AnAction() {
                     if (sampleCount > 0) {
                         append(", sample: $sampleCount")
                     }
+                    if (responseData.unmappedSteps.isNotEmpty()) {
+                        append(", unmapped: ${responseData.unmappedSteps.size}")
+                    }
                     append(". Updated at ${responseData.updatedAt}.")
                 }
 
