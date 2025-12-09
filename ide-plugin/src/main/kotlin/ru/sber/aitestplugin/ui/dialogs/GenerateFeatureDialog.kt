@@ -18,7 +18,7 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
     private val targetPathField = JBTextField(defaults.targetPath ?: "")
     private val createFileCheckbox = JBCheckBox("Create file if missing", defaults.createFile)
     private val overwriteCheckbox = JBCheckBox("Overwrite existing file", defaults.overwriteExisting)
-    private val languageField = JBTextField()
+    private val languageField = JBTextField(defaults.language ?: "")
 
     init {
         title = "Generate Feature"
@@ -66,7 +66,8 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
     fun selectedOptions(): GenerateFeatureDialogOptions = GenerateFeatureDialogOptions(
         targetPath = targetPath(),
         createFile = shouldCreateFile(),
-        overwriteExisting = shouldOverwriteExisting()
+        overwriteExisting = shouldOverwriteExisting(),
+        language = language()
     )
 
     fun language(): String? = languageField.text.trim().takeIf { it.isNotEmpty() }
