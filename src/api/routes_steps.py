@@ -96,14 +96,30 @@ async def _extract_project_root(
 @router.post("/scan-steps", response_model=ScanStepsResponse, summary="Сканировать проект на Cucumber шаги")
 async def scan_steps(
     request: Request,
-    request_model: ScanStepsRequest | None = Body(
-        default=None, description="Тело запроса со свойством projectRoot"
-    ),
 ) -> ScanStepsResponse:
     """Запускает сканирование проекта и возвращает краткую статистику."""
 
     orchestrator = _get_orchestrator(request)
-    project_root = await _extract_project_root(request, request_model)
+
+    # Читаем тело вручную, чтобы избежать 422 при не-JSON или пустом body
+    try:
+        raw_body = await request.body()
+    except Exception:
+        raw_body = b""
+
+    parsed_model: ScanStepsRequest | None = None
+    if raw_body:
+        try:
+            parsed_json = json.loads(raw_body)
+        except json.JSONDecodeError:
+            parsed_json = None
+        if isinstance(parsed_json, dict):
+            try:
+                parsed_model = ScanStepsRequest(**parsed_json)
+            except Exception:
+                parsed_model = None
+
+    project_root = await _extract_project_root(request, parsed_model)
     if not project_root:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
