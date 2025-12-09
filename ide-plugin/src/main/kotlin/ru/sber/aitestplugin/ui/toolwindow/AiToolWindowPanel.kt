@@ -8,7 +8,6 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.components.JBCheckBox
-import com.intellij.ui.components.JBEditorPane
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -52,7 +51,11 @@ class AiToolWindowPanel(
     private val overwriteCheckbox = JBCheckBox("Overwrite existing file", generateDefaults.overwriteExisting)
     private val languageField = JBTextField(generateDefaults.language ?: "")
     private val generateButton = JButton("Generate")
-    private val featureTextPane = JBEditorPane("text/plain", "").apply { isEditable = false }
+    private val featureTextPane = JBTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+    }
     private val usedStepsList = JBList<StepDefinitionDto>()
     private val generatedUnmappedList = JBList<UnmappedStepDto>()
     private val statusLabel = JLabel("Index not yet built")
