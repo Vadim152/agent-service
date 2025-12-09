@@ -75,7 +75,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             options = GenerateFeatureOptionsDto(
                 createFile = dialogOptions.createFile,
                 overwriteExisting = dialogOptions.overwriteExisting,
-                language = dialog.language()
+                language = dialogOptions.language
             )
         )
 

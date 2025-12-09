@@ -10,6 +10,7 @@ data class AiTestPluginSettings(
     var lastGenerateFeatureTargetPath: String? = null,
     var lastGenerateFeatureCreateFile: Boolean = true,
     var lastGenerateFeatureOverwriteExisting: Boolean = false,
+    var lastGenerateFeatureLanguage: String? = null,
     var lastApplyFeatureTargetPath: String? = null,
     var lastApplyFeatureCreateFile: Boolean = true,
     var lastApplyFeatureOverwriteExisting: Boolean = false

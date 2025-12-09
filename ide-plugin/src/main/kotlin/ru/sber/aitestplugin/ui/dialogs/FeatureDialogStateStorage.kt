@@ -5,7 +5,8 @@ import ru.sber.aitestplugin.config.AiTestPluginSettings
 data class GenerateFeatureDialogOptions(
     val targetPath: String?,
     val createFile: Boolean,
-    val overwriteExisting: Boolean
+    val overwriteExisting: Boolean,
+    val language: String?
 )
 
 data class ApplyFeatureDialogOptions(
@@ -20,13 +21,15 @@ class FeatureDialogStateStorage(private val settings: AiTestPluginSettings) {
         GenerateFeatureDialogOptions(
             targetPath = settings.lastGenerateFeatureTargetPath ?: fallbackTargetPath,
             createFile = settings.lastGenerateFeatureCreateFile,
-            overwriteExisting = settings.lastGenerateFeatureOverwriteExisting
+            overwriteExisting = settings.lastGenerateFeatureOverwriteExisting,
+            language = settings.lastGenerateFeatureLanguage
         )
 
     fun saveGenerateOptions(options: GenerateFeatureDialogOptions) {
         settings.lastGenerateFeatureTargetPath = options.targetPath
         settings.lastGenerateFeatureCreateFile = options.createFile
         settings.lastGenerateFeatureOverwriteExisting = options.overwriteExisting
+        settings.lastGenerateFeatureLanguage = options.language
     }
 
     fun loadApplyOptions(fallbackTargetPath: String? = null): ApplyFeatureDialogOptions =
