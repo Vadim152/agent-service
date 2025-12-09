@@ -13,9 +13,11 @@ import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import java.net.URI
+import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
 import java.time.Duration
 
 /**
@@ -32,7 +34,8 @@ class HttpBackendClient(
 
     override fun scanSteps(projectRoot: String): ScanStepsResponseDto {
         val request = ScanStepsRequestDto(projectRoot)
-        return post("/steps/scan-steps", request)
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return post("/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
     }
 
     override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto =
