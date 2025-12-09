@@ -152,15 +152,42 @@ async def scan_steps(
     project_root, extraction_details = await _extract_project_root(
         request, parsed_model, raw_body, parsed_json
     )
+    content_length_header = request.headers.get("content-length")
+    body_length = len(raw_body or b"")
+
     if not project_root:
+        header_snapshot = {
+            key: value
+            for key, value in request.headers.items()
+            if key.lower()
+            in {"content-type", "content-length", "transfer-encoding", "user-agent"}
+        }
+        mismatch_note = None
+        try:
+            if content_length_header is not None:
+                expected = int(content_length_header)
+                if expected != body_length:
+                    mismatch_note = (
+                        f"content-length header is {expected} but received {body_length} bytes"
+                    )
+        except ValueError:
+            mismatch_note = f"invalid content-length header: {content_length_header!r}"
+
         logger.warning(
-            "API: projectRoot is missing for scan-steps. Details: %s, body_preview=%s",
+            "API: projectRoot is missing for scan-steps. Details: %s, headers=%s, body_preview=%s, mismatch=%s",
             extraction_details,
+            header_snapshot,
             _preview_body(raw_body),
+            mismatch_note,
         )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="projectRoot is required in request body or query string",
+            detail=(
+                "projectRoot is required in request body or query string"
+                if not mismatch_note
+                else "projectRoot is missing; "
+                + mismatch_note
+            ),
         )
     path_obj = Path(project_root).expanduser()
     if not path_obj.exists():
