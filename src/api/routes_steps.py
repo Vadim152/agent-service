@@ -204,7 +204,7 @@ async def scan_steps(
         _preview_body(raw_body),
     )
     result = orchestrator.scan_steps(project_root)
-    sample_steps = orchestrator.step_index_store.load_steps(project_root)[:5]
+    sample_steps = orchestrator.step_index_store.load_steps(project_root)
 
     updated_at = result.get("updatedAt")
     updated_at_dt = datetime.fromisoformat(updated_at) if updated_at else datetime.utcnow()
