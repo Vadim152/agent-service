@@ -11,7 +11,12 @@ from typing import Iterable
 from fastapi import Body, APIRouter, HTTPException, Request, status
 
 from agents.orchestrator import Orchestrator
-from api.schemas import ScanStepsRequest, ScanStepsResponse, StepDefinitionDto
+from api.schemas import (
+    ScanStepsRequest,
+    ScanStepsResponse,
+    StepDefinitionDto,
+    UnmappedStepDto,
+)
 from domain.models import StepDefinition
 
 router = APIRouter(prefix="/steps", tags=["steps"])
@@ -206,6 +211,17 @@ async def scan_steps(
     result = orchestrator.scan_steps(project_root)
     sample_steps = orchestrator.step_index_store.load_steps(project_root)
 
+    unmapped_steps_payload = result.get("unmappedSteps") or result.get("unmatched") or []
+    unmapped_steps = []
+    for entry in unmapped_steps_payload:
+        if isinstance(entry, dict):
+            text = str(entry.get("text") or entry.get("step") or entry)
+            reason = entry.get("reason")
+        else:
+            text = str(entry)
+            reason = None
+        unmapped_steps.append(UnmappedStepDto(text=text, reason=reason))
+
     updated_at = result.get("updatedAt")
     updated_at_dt = datetime.fromisoformat(updated_at) if updated_at else datetime.utcnow()
 
@@ -214,9 +230,13 @@ async def scan_steps(
         steps_count=int(result.get("stepsCount", 0)),
         updated_at=updated_at_dt,
         sample_steps=_to_step_dto(sample_steps) or None,
+        unmapped_steps=unmapped_steps,
     )
     logger.info(
-        "API: сканирование завершено для %s, шагов: %s", response.project_root, response.steps_count
+        "API: сканирование завершено для %s, шагов: %s, unmapped: %s",
+        response.project_root,
+        response.steps_count,
+        len(response.unmapped_steps),
     )
     return response
 

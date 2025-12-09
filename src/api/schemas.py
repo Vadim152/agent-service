@@ -59,6 +59,11 @@ class ScanStepsResponse(ApiBaseModel):
         alias="sampleSteps",
         description="Первые найденные шаги для предпросмотра",
     )
+    unmapped_steps: list[UnmappedStepDto] = Field(
+        default_factory=list,
+        alias="unmappedSteps",
+        description="Шаги тесткейса без сопоставления",
+    )
 
 
 class GenerateFeatureOptions(ApiBaseModel):

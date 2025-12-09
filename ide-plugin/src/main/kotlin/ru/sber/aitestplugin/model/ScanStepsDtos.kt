@@ -12,5 +12,6 @@ data class ScanStepsResponseDto(
     val projectRoot: String,
     val stepsCount: Int,
     val updatedAt: Instant,
-    val sampleSteps: List<StepDefinitionDto>? = emptyList()
+    val sampleSteps: List<StepDefinitionDto>? = emptyList(),
+    val unmappedSteps: List<UnmappedStepDto> = emptyList()
 )
