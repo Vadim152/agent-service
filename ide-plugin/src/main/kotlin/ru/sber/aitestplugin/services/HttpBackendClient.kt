@@ -17,6 +17,7 @@ import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import com.fasterxml.jackson.databind.JsonNode
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 
@@ -38,8 +39,22 @@ class HttpBackendClient(
         return post("/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
     }
 
-    override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto =
-        post("/feature/generate-feature", request)
+    override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto {
+        val sanitizedRequest = request.copy(
+            projectRoot = request.projectRoot.trim(),
+            testCaseText = request.testCaseText.trim()
+        )
+
+        if (sanitizedRequest.projectRoot.isBlank()) {
+            throw BackendException("Project root must not be empty")
+        }
+
+        if (sanitizedRequest.testCaseText.isBlank()) {
+            throw BackendException("Test case text must not be empty")
+        }
+
+        return post("/feature/generate-feature", sanitizedRequest)
+    }
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
         post("/feature/apply-feature", request)
@@ -66,8 +81,10 @@ class HttpBackendClient(
         }
 
         if (response.statusCode() !in 200..299) {
-            val message = response.body().takeIf { it.isNotBlank() }
-                ?: "HTTP ${response.statusCode()}"
+            val message = when (response.statusCode()) {
+                422 -> parseValidationError(response.body())
+                else -> response.body().takeIf { it.isNotBlank() } ?: "HTTP ${response.statusCode()}"
+            }
             throw BackendException("Backend $url responded with ${response.statusCode()}: $message")
         }
 
@@ -75,6 +92,27 @@ class HttpBackendClient(
             mapper.readValue(response.body())
         } catch (ex: Exception) {
             throw BackendException("Failed to parse response from $url: ${ex.message}", ex)
+        }
+    }
+
+    private fun parseValidationError(body: String): String {
+        if (body.isBlank()) return "Validation failed with empty response"
+
+        return try {
+            val root = mapper.readValue<JsonNode>(body)
+            val detail = root.get("detail")
+            when {
+                detail == null -> body
+                detail.isTextual -> detail.asText()
+                detail.isArray -> detail.joinToString("; ") { node ->
+                    val path = node.get("loc")?.joinToString(".") { it.asText() }
+                    val message = node.get("msg")?.asText() ?: node.get("type")?.asText()
+                    listOfNotNull(path, message).joinToString(": ")
+                }.ifBlank { body }
+                else -> detail.toString()
+            }
+        } catch (_: Exception) {
+            body
         }
     }
 }
