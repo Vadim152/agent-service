@@ -53,11 +53,19 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             return
         }
         val selectionModel = editor.selectionModel
-        val selectedText = selectionModel.selectedText ?: run {
+        val selectedText = selectionModel.selectedText?.trim() ?: run {
             JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
             return
         }
-        val projectRoot = project.basePath ?: ""
+        if (selectedText.isBlank()) {
+            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
+            return
+        }
+        val projectRoot = project.basePath?.trim().orEmpty()
+        if (projectRoot.isBlank()) {
+            JOptionPane.showMessageDialog(null, "Не удалось определить корень проекта")
+            return
+        }
 
         val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().settings)
         val dialog = GenerateFeatureDialog(project, stateStorage.loadGenerateOptions())
