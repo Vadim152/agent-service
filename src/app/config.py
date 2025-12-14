@@ -57,7 +57,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("GIGACHAT_API_URL", "AGENT_SERVICE_GIGACHAT_API_URL"),
     )
     gigachat_verify_ssl: bool = Field(
-        default=True,
+        default=False,
         description="Проверять ли SSL сертификаты для GigaChat",
         validation_alias=AliasChoices("GIGACHAT_VERIFY_SSL", "AGENT_SERVICE_GIGACHAT_VERIFY_SSL"),
     )
