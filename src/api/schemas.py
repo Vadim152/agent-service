@@ -140,9 +140,29 @@ class ApplyFeatureResponse(ApiBaseModel):
     message: str | None = Field(default=None, description="Дополнительное пояснение")
 
 
+class LlmTestRequest(ApiBaseModel):
+    """Запрос на тестовый вызов LLM."""
+
+    prompt: str = Field(
+        default="Ping from agent-service: please confirm connectivity.",
+        description="Промпт, который будет отправлен в LLM",
+    )
+
+
+class LlmTestResponse(ApiBaseModel):
+    """Ответ на тестовый вызов LLM."""
+
+    prompt: str = Field(..., description="Отправленный промпт")
+    reply: str = Field(..., description="Ответ LLM на тестовый запрос")
+    provider: str | None = Field(default=None, description="Имя провайдера LLM")
+    model: str | None = Field(default=None, description="Используемая модель LLM")
+
+
 __all__ = [
     "ApplyFeatureRequest",
     "ApplyFeatureResponse",
+    "LlmTestRequest",
+    "LlmTestResponse",
     "GenerateFeatureOptions",
     "GenerateFeatureRequest",
     "GenerateFeatureResponse",
