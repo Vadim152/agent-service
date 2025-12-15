@@ -22,6 +22,8 @@ from domain.models import StepDefinition, StepImplementation, StepParameter
 class StepIndexStore:
     """Хранение индекса шагов в файловой системе (формат JSON)."""
 
+    SCHEMA_VERSION = 2
+
     def __init__(self, index_dir: str) -> None:
         self._index_dir = Path(index_dir).expanduser().resolve()
         self._index_dir.mkdir(parents=True, exist_ok=True)
@@ -32,6 +34,7 @@ class StepIndexStore:
         target_dir = self._project_dir(project_root)
         target_dir.mkdir(parents=True, exist_ok=True)
         payload = {
+            "schema_version": self.SCHEMA_VERSION,
             "updated_at": datetime.utcnow().isoformat(),
             "steps": [self._serialize_step(step) for step in steps],
         }
@@ -47,7 +50,8 @@ class StepIndexStore:
             return []
 
         data = json.loads(steps_file.read_text(encoding="utf-8"))
-        return [self._deserialize_step(entry) for entry in data.get("steps", [])]
+        steps_payload = self._extract_steps_payload(data)
+        return [self._deserialize_step(entry) for entry in steps_payload]
 
     def get_last_updated_at(self, project_root: str) -> datetime | None:
         """Возвращает время последнего обновления индекса либо None."""
@@ -91,6 +95,19 @@ class StepIndexStore:
         return self._index_dir / project_key
 
     @staticmethod
+    def _extract_steps_payload(data: dict[str, Any] | list[Any]) -> list[dict[str, Any]]:
+        if isinstance(data, list):
+            return [entry for entry in data if isinstance(entry, dict)]
+
+        if not isinstance(data, dict):
+            return []
+
+        if "steps" in data:
+            return [entry for entry in data.get("steps", []) if isinstance(entry, dict)]
+
+        return []
+
+    @staticmethod
     def _serialize_step(step: StepDefinition) -> dict[str, Any]:
         data = asdict(step)
         data["keyword"] = step.keyword.value
@@ -112,13 +129,17 @@ class StepIndexStore:
             pattern_type=StepPatternType(
                 data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
             ),
-            parameters=[StepParameter(**param) for param in data.get("parameters", [])],
+            parameters=[
+                StepParameter(**param) if isinstance(param, dict) else StepParameter(name=str(param))
+                for param in data.get("parameters", [])
+            ],
             tags=list(data.get("tags", []) or []),
             language=data.get("language"),
             implementation=StepImplementation(**data["implementation"])
             if data.get("implementation")
             else None,
             summary=data.get("summary"),
+            doc_summary=data.get("doc_summary"),
             examples=list(data.get("examples", []) or []),
         )
 
