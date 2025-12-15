@@ -2,9 +2,11 @@ package ru.sber.aitestplugin.ui.dialogs
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JComponent
@@ -16,11 +18,17 @@ import javax.swing.JPanel
  */
 class ApplyFeatureDialog(project: Project, defaults: ApplyFeatureDialogOptions) : DialogWrapper(project) {
     private val targetPathField = JBTextField(defaults.targetPath ?: "")
-    private val createFileCheckbox = JBCheckBox("Create file if missing", defaults.createFile)
-    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", defaults.overwriteExisting)
+    private val createFileCheckbox = JBCheckBox("Создать файл, если отсутствует", defaults.createFile).apply {
+        toolTipText = "Если файла нет, он будет создан автоматически"
+        border = JBUI.Borders.emptyLeft(2)
+    }
+    private val overwriteCheckbox = JBCheckBox("Перезаписать существующий файл", defaults.overwriteExisting).apply {
+        toolTipText = "Перезапишет существующий feature по указанному пути"
+        border = JBUI.Borders.emptyLeft(2)
+    }
 
     init {
-        title = "Apply Feature"
+        title = "Применить feature"
         init()
     }
 
@@ -36,11 +44,15 @@ class ApplyFeatureDialog(project: Project, defaults: ApplyFeatureDialogOptions) 
             weightx = 1.0
             ipadx = 4
             ipady = 4
+            insets = JBUI.insetsBottom(8)
         }
 
-        panel.add(JLabel("Target path (relative to project root):"), gbc)
+        panel.add(JLabel("Целевой путь (относительно корня проекта)"), gbc)
         gbc.gridy++
         panel.add(targetPathField, gbc)
+
+        gbc.gridy++
+        panel.add(hintLabel("Путь, куда будет сохранён feature-файл"), gbc)
 
         gbc.gridy++
         panel.add(createFileCheckbox, gbc)
@@ -60,6 +72,12 @@ class ApplyFeatureDialog(project: Project, defaults: ApplyFeatureDialogOptions) 
     fun selectedOptions(): ApplyFeatureDialogOptions = ApplyFeatureDialogOptions(
         targetPath = targetPath(),
         createFile = shouldCreateFile(),
-        overwriteExisting = shouldOverwriteExisting()
+        overwriteExisting = shouldOverwriteExisting(),
     )
+
+    private fun hintLabel(text: String): JLabel = JLabel(text).apply {
+        font = font.deriveFont(Font.PLAIN, font.size2D - 1)
+        foreground = JBColor.GRAY
+        border = JBUI.Borders.emptyLeft(2)
+    }
 }
