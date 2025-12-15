@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 from domain.enums import MatchStatus, StepKeyword
 from domain.models import MatchedStep, StepDefinition, TestStep
@@ -32,20 +32,28 @@ class StepMatcher:
 
         matches: list[MatchedStep] = []
         for test_step in test_steps:
-            best_def, score = self._find_best_match(
+            best_def, score, confidence_sources, llm_reranked = self._find_best_match(
                 test_step.text, step_definitions, project_root=project_root
             )
             status = self._derive_status(score)
             gherkin_line: str | None = None
-            notes: dict[str, str] | None = None
+            notes: dict[str, Any] = {
+                "confidence_sources": confidence_sources,
+                "final_score": score,
+            }
+
+            if llm_reranked:
+                notes["llm_reranked"] = True
 
             if status is MatchStatus.UNMATCHED:
-                notes = {
-                    "reason": "no_definition_found",
-                    "original_text": test_step.text,
-                    "closest_pattern": best_def.pattern if best_def else None,
-                    "confidence": f"{score:.2f}",
-                }
+                notes.update(
+                    {
+                        "reason": "no_definition_found",
+                        "original_text": test_step.text,
+                        "closest_pattern": best_def.pattern if best_def else None,
+                        "confidence": f"{score:.2f}",
+                    }
+                )
             else:
                 gherkin_line = self._build_gherkin_line(best_def, test_step)
 
@@ -66,7 +74,7 @@ class StepMatcher:
         test_text: str,
         step_definitions: Iterable[StepDefinition],
         project_root: str | None = None,
-    ) -> tuple[StepDefinition | None, float]:
+    ) -> tuple[StepDefinition | None, float, dict[str, float], bool]:
         """Находит наиболее похожее определение шага с учётом эмбеддингов и LLM."""
 
         normalized_test = self._normalize(test_text)
@@ -93,7 +101,11 @@ class StepMatcher:
                 candidates = list(step_definitions)
 
         if not candidates:
-            return None, 0.0
+            return None, 0.0, {
+                "sequence": 0.0,
+                "embedding": 0.0,
+                "llm": 0.0,
+            }, False
 
         best_def: StepDefinition | None = None
         best_score = 0.0
@@ -108,8 +120,9 @@ class StepMatcher:
                 best_score = combined
                 best_def = definition
 
+        llm_reranked = False
         if self.llm_client and best_def:
-            best_def, best_score = self._rerank_with_llm(
+            best_def, best_score, llm_reranked = self._rerank_with_llm(
                 test_text,
                 candidates,
                 similarity_scores,
@@ -118,7 +131,17 @@ class StepMatcher:
                 best_score,
             )
 
-        return best_def, best_score
+        sequence_score = (
+            similarity_scores.get(best_def.id, 0.0) if best_def else 0.0
+        )
+        embedding_score = embedding_scores.get(best_def.id, 0.0) if best_def else 0.0
+        confidence_sources = {
+            "sequence": sequence_score,
+            "embedding": embedding_score,
+            "llm": 1.0 if llm_reranked else 0.0,
+        }
+
+        return best_def, best_score, confidence_sources, llm_reranked
 
     @staticmethod
     def _normalize(text: str) -> str:
@@ -196,7 +219,7 @@ class StepMatcher:
         embedding_scores: dict[str, float],
         current_best: StepDefinition,
         current_score: float,
-    ) -> tuple[StepDefinition, float]:
+    ) -> tuple[StepDefinition, float, bool]:
         """Использует LLM для подтверждения/выбора лучшего кандидата."""
 
         short_list = sorted(
@@ -210,9 +233,10 @@ class StepMatcher:
         prompt = self._build_llm_prompt(test_text, short_list)
         response = self.llm_client.generate(prompt)
         chosen = self._extract_llm_choice(response, short_list)
+        llm_reranked = bool(chosen)
 
         if not chosen:
-            return current_best, current_score
+            return current_best, current_score, False
 
         if chosen.id == current_best.id:
             boosted = self._combine_score(
@@ -220,14 +244,14 @@ class StepMatcher:
                 embedding_scores.get(chosen.id),
                 llm_confirmed=True,
             )
-            return chosen, boosted
+            return chosen, boosted, llm_reranked
 
         combined = self._combine_score(
             similarity_scores.get(chosen.id, 0.0),
             embedding_scores.get(chosen.id),
             llm_confirmed=True,
         )
-        return chosen, combined
+        return chosen, combined, llm_reranked
 
     @staticmethod
     def _build_llm_prompt(test_text: str, candidates: list[StepDefinition]) -> str:
