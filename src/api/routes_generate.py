@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Body, HTTPException, Request, status
 
 from agents.orchestrator import Orchestrator
 from api.schemas import (
@@ -64,8 +64,29 @@ def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> lis
     response_model=GenerateFeatureResponse,
     summary="Сгенерировать Gherkin-файл по тесткейсу",
 )
-async def generate_feature(request_model: GenerateFeatureRequest, request: Request) -> GenerateFeatureResponse:
+async def generate_feature(
+    request_model: GenerateFeatureRequest | None = Body(None), request: Request
+) -> GenerateFeatureResponse:
     """Генерирует .feature текст и, опционально, сохраняет его на диск."""
+
+    if request_model is None:
+        body = await request.body()
+        content_length = request.headers.get("content-length")
+        content_type = request.headers.get("content-type")
+        body_len = len(body) if body else 0
+
+        logger.warning(
+            "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s)",
+            body_len,
+            content_length,
+            content_type,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Request body is empty; ensure Content-Type: application/json and non-empty payload"
+            ),
+        )
 
     orchestrator = _get_orchestrator(request)
     project_root = request_model.project_root
