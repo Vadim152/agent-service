@@ -70,6 +70,8 @@ class HttpBackendClient(
             .build()
 
         val body = mapper.writeValueAsString(payload)
+        val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
+        val contentLength = bodyBytes.size
         val contentType = "application/json"
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -81,17 +83,28 @@ class HttpBackendClient(
         if (logger.isDebugEnabled) {
             val preview = body.take(500)
             logger.debug(
-                "Sending POST to $url with Content-Type=$contentType, body size=${body.length} chars, preview=\"$preview\""
+                "Sending POST to $url with Content-Type=$contentType, Content-Length=$contentLength, body size=$contentLength bytes, preview=\"$preview\""
             )
         }
 
         val response = try {
             client.send(request, HttpResponse.BodyHandlers.ofString())
         } catch (ex: Exception) {
+            if (logger.isDebugEnabled) {
+                logger.debug(
+                    "Failed to send POST to $url with Content-Length=$contentLength (body size=$contentLength bytes)",
+                    ex
+                )
+            }
             throw BackendException("Failed to call $url: ${ex.message}", ex)
         }
 
         if (response.statusCode() !in 200..299) {
+            if (logger.isDebugEnabled) {
+                logger.debug(
+                    "Received non-2xx from $url: status=${response.statusCode()}, headers=${response.headers().map()}, body=\"${response.body()}\""
+                )
+            }
             val message = when (response.statusCode()) {
                 422 -> {
                     if (logger.isDebugEnabled) {
