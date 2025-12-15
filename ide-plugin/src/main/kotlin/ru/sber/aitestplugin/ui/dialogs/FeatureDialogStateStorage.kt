@@ -19,29 +19,29 @@ class FeatureDialogStateStorage(private val settings: AiTestPluginSettings) {
 
     fun loadGenerateOptions(fallbackTargetPath: String? = null): GenerateFeatureDialogOptions =
         GenerateFeatureDialogOptions(
-            targetPath = settings.lastGenerateFeatureTargetPath ?: fallbackTargetPath,
-            createFile = settings.lastGenerateFeatureCreateFile,
-            overwriteExisting = settings.lastGenerateFeatureOverwriteExisting,
-            language = settings.lastGenerateFeatureLanguage
+            targetPath = settings.generateFeatureTargetPath ?: fallbackTargetPath,
+            createFile = settings.generateFeatureCreateFile,
+            overwriteExisting = settings.generateFeatureOverwriteExisting,
+            language = settings.generateFeatureLanguage
         )
 
     fun saveGenerateOptions(options: GenerateFeatureDialogOptions) {
-        settings.lastGenerateFeatureTargetPath = options.targetPath
-        settings.lastGenerateFeatureCreateFile = options.createFile
-        settings.lastGenerateFeatureOverwriteExisting = options.overwriteExisting
-        settings.lastGenerateFeatureLanguage = options.language
+        settings.generateFeatureTargetPath = options.targetPath
+        settings.generateFeatureCreateFile = options.createFile
+        settings.generateFeatureOverwriteExisting = options.overwriteExisting
+        settings.generateFeatureLanguage = options.language
     }
 
     fun loadApplyOptions(fallbackTargetPath: String? = null): ApplyFeatureDialogOptions =
         ApplyFeatureDialogOptions(
-            targetPath = settings.lastApplyFeatureTargetPath ?: fallbackTargetPath,
-            createFile = settings.lastApplyFeatureCreateFile,
-            overwriteExisting = settings.lastApplyFeatureOverwriteExisting
+            targetPath = settings.applyFeatureTargetPath ?: fallbackTargetPath,
+            createFile = settings.applyFeatureCreateFile,
+            overwriteExisting = settings.applyFeatureOverwriteExisting
         )
 
     fun saveApplyOptions(options: ApplyFeatureDialogOptions) {
-        settings.lastApplyFeatureTargetPath = options.targetPath
-        settings.lastApplyFeatureCreateFile = options.createFile
-        settings.lastApplyFeatureOverwriteExisting = options.overwriteExisting
+        settings.applyFeatureTargetPath = options.targetPath
+        settings.applyFeatureCreateFile = options.createFile
+        settings.applyFeatureOverwriteExisting = options.overwriteExisting
     }
 }

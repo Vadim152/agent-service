@@ -11,9 +11,9 @@ class FeatureDialogStateStorageTest {
     @Test
     fun `loads generate defaults from settings with fallback`() {
         val settings = AiTestPluginSettings(
-            lastGenerateFeatureTargetPath = "stored/path.feature",
-            lastGenerateFeatureCreateFile = false,
-            lastGenerateFeatureOverwriteExisting = true
+            generateFeatureTargetPath = "stored/path.feature",
+            generateFeatureCreateFile = false,
+            generateFeatureOverwriteExisting = true
         )
 
         val storage = FeatureDialogStateStorage(settings)
@@ -57,12 +57,12 @@ class FeatureDialogStateStorageTest {
             )
         )
 
-        assertEquals("new/generate.feature", settings.lastGenerateFeatureTargetPath)
-        assertFalse(settings.lastGenerateFeatureCreateFile)
-        assertTrue(settings.lastGenerateFeatureOverwriteExisting)
+        assertEquals("new/generate.feature", settings.generateFeatureTargetPath)
+        assertFalse(settings.generateFeatureCreateFile)
+        assertTrue(settings.generateFeatureOverwriteExisting)
 
-        assertEquals("apply/path.feature", settings.lastApplyFeatureTargetPath)
-        assertFalse(settings.lastApplyFeatureCreateFile)
-        assertTrue(settings.lastApplyFeatureOverwriteExisting)
+        assertEquals("apply/path.feature", settings.applyFeatureTargetPath)
+        assertFalse(settings.applyFeatureCreateFile)
+        assertTrue(settings.applyFeatureOverwriteExisting)
     }
 }
