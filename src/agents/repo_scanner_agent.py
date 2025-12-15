@@ -70,6 +70,9 @@ class RepoScannerAgent:
             "projectRoot": project_root,
             "stepsCount": len(steps),
             "updatedAt": updated_at,
+            # Небольшая выборка шагов для мгновенного отображения в UI без
+            # повторного чтения с диска
+            "sampleSteps": steps[:50],
         }
         logger.info(
             "[RepoScannerAgent] Завершено сканирование %s. Шагов: %s", project_root, len(steps)
