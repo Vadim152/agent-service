@@ -69,27 +69,29 @@ async def generate_feature(
 ) -> GenerateFeatureResponse:
     """Генерирует .feature текст и, опционально, сохраняет его на диск."""
 
+    body = await request.body()
+    content_length = request.headers.get("content-length")
+    content_type = request.headers.get("content-type")
+    body_len = len(body) if body else 0
+    body_preview = body.decode("utf-8", errors="replace")[:500] if body else ""
+    body_hex_preview = body[:128].hex() if body else ""
+
+    logger.debug(
+        (
+            "API: generate-feature raw body; client=%s, method=%s %s, content-length=%s, "
+            "read_len=%s, hex_preview=%s, utf8_preview=%r"
+        ),
+        request.client,
+        request.method,
+        request.url.path,
+        content_length,
+        body_len,
+        body_hex_preview,
+        body_preview,
+    )
+
     if request_model is None:
-        body = await request.body()
-        content_length = request.headers.get("content-length")
-        content_type = request.headers.get("content-type")
-        body_len = len(body) if body else 0
-        body_preview = body.decode("utf-8", errors="replace")[:500] if body else ""
-        body_hex_preview = body[:128].hex() if body else ""
-        logger.debug(
-            (
-                "API: request body missing; client=%s, method=%s %s, content-length=%s, "
-                "read_len=%s, hex_preview=%s, utf8_preview=%r, headers=%s"
-            ),
-            request.client,
-            request.method,
-            request.url.path,
-            content_length,
-            body_len,
-            body_hex_preview,
-            body_preview,
-            dict(request.headers),
-        )
+        logger.debug("API: request headers snapshot=%s", dict(request.headers))
         if content_length not in (None, str(body_len)):
             logger.debug(
                 "API: Content-Length mismatch: header=%s, read=%s", content_length, body_len
@@ -117,6 +119,20 @@ async def generate_feature(
                 f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
             ),
         )
+
+    if content_length not in (None, str(body_len)):
+        logger.info(
+            "API: Body read length differs from Content-Length: header=%s, read=%s",
+            content_length,
+            body_len,
+        )
+
+    logger.info(
+        "API: generate-feature payload accepted (len=%s, content-type=%s, content-length=%s)",
+        body_len,
+        content_type,
+        content_length,
+    )
 
     orchestrator = _get_orchestrator(request)
     project_root = request_model.project_root
