@@ -51,6 +51,11 @@ class FeatureBuilderAgent:
         unmapped_steps = [
             match.test_step.text for match in matched_steps if match.status == MatchStatus.UNMATCHED
         ]
+        steps_summary = {
+            "exact": sum(1 for match in matched_steps if match.status == MatchStatus.EXACT),
+            "fuzzy": sum(1 for match in matched_steps if match.status == MatchStatus.FUZZY),
+            "unmatched": sum(1 for match in matched_steps if match.status == MatchStatus.UNMATCHED),
+        }
 
         logger.info(
             "[FeatureBuilderAgent] Feature собран: %s, шагов: %s", feature.name, len(feature.scenarios)
@@ -58,6 +63,8 @@ class FeatureBuilderAgent:
         return {
             "featureText": rendered,
             "unmappedSteps": unmapped_steps,
+            "buildStage": "feature_built",
+            "stepsSummary": steps_summary,
             "meta": {
                 "featureName": feature.name,
                 "language": feature.language,

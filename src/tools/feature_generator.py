@@ -1,7 +1,10 @@
 """Генерация текстового .feature файла на основе доменных моделей."""
 from __future__ import annotations
 
-from domain.enums import StepKeyword
+import re
+from typing import Any
+
+from domain.enums import MatchStatus, StepKeyword
 from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario
 
 
@@ -22,11 +25,25 @@ class FeatureGenerator:
             scenarios=[],
         )
 
-        scenario_steps = [self._render_step(ms) for ms in matched_steps]
+        scenario_steps: list[str] = []
+        steps_details: list[dict[str, Any]] = []
+        for matched_step in matched_steps:
+            rendered, meta = self._render_step(matched_step)
+            scenario_steps.append(rendered)
+            step_payload: dict[str, Any] = {
+                "originalStep": matched_step.test_step.text,
+                "generatedLine": rendered,
+                "status": matched_step.status.value,
+            }
+            if meta:
+                step_payload["meta"] = meta
+            steps_details.append(step_payload)
+
         feature_scenario = FeatureScenario(
             name=scenario.name,
             tags=scenario.tags,
             steps=scenario_steps,
+            steps_details=steps_details,
             is_outline=False,
             examples=[],
         )
@@ -65,22 +82,25 @@ class FeatureGenerator:
 
         return "\n".join(lines).rstrip() + "\n"
 
-    def _render_step(self, matched_step: MatchedStep) -> str:
-        """Преобразует MatchedStep в строку Gherkin."""
+    def _render_step(self, matched_step: MatchedStep) -> tuple[str, dict[str, Any]]:
+        """Преобразует MatchedStep в строку Gherkin и сопутствующие метаданные."""
 
-        if matched_step.status.value == "unmatched" or not matched_step.step_definition:
+        if matched_step.generated_gherkin_line:
+            return matched_step.generated_gherkin_line, {"substitutionType": "generated"}
+
+        if matched_step.status is MatchStatus.UNMATCHED or not matched_step.step_definition:
             reason = None
             if isinstance(matched_step.notes, dict):
                 reason = matched_step.notes.get("reason")
             marker = reason or "unmatched"
-            return f"{StepKeyword.WHEN.as_text()} <{marker}: {matched_step.test_step.text}>"
+            line = f"{StepKeyword.WHEN.as_text()} <{marker}: {matched_step.test_step.text}>"
+            meta: dict[str, Any] = {"substitutionType": "unmatched"}
+            if reason:
+                meta["reason"] = reason
+            return line, meta
 
-        if matched_step.generated_gherkin_line:
-            return matched_step.generated_gherkin_line
-
-        keyword = self._select_keyword(matched_step)
-        body = matched_step.step_definition.pattern
-        return f"{keyword} {body}" if body else f"{keyword} <missing-body: {matched_step.test_step.text}>"
+        rendered, meta = self._build_gherkin_line(matched_step)
+        return rendered, meta
 
     def _select_keyword(self, matched_step: MatchedStep) -> str:
         """Выбирает ключевое слово для шага."""
@@ -89,3 +109,35 @@ class FeatureGenerator:
         if definition and isinstance(definition.keyword, StepKeyword):
             return definition.keyword.as_text()
         return StepKeyword.WHEN.as_text()
+
+    def _build_gherkin_line(self, matched_step: MatchedStep) -> tuple[str, dict[str, Any]]:
+        """Формирует строку Gherkin для найденного определения с подстановкой параметров."""
+
+        definition = matched_step.step_definition
+        if not definition:
+            return "", {"substitutionType": "unmatched"}
+
+        keyword = self._select_keyword(matched_step)
+        pattern = definition.pattern
+        regex = definition.regex or pattern
+
+        filled_pattern = pattern
+        try:
+            match = re.search(regex, matched_step.test_step.text)
+        except re.error:
+            match = None
+
+        substitution_type = "pattern"
+        if match:
+            groups = match.groups()
+            placeholders = re.findall(r"\{[^}]+\}", pattern)
+
+            if groups and placeholders:
+                for placeholder, value in zip(placeholders, groups):
+                    filled_pattern = filled_pattern.replace(placeholder, value, 1)
+            elif groups:
+                filled_pattern = " ".join([pattern] + list(groups))
+            substitution_type = "regex"
+
+        rendered = f"{keyword} {filled_pattern}" if filled_pattern else keyword
+        return rendered, {"substitutionType": substitution_type}

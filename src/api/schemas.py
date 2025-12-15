@@ -106,6 +106,14 @@ class UnmappedStepDto(ApiBaseModel):
     )
 
 
+class StepsSummaryDto(ApiBaseModel):
+    """Краткая статистика по результатам сопоставления шагов."""
+
+    exact: int = Field(default=0, description="Количество точных совпадений")
+    fuzzy: int = Field(default=0, description="Количество нестрогих совпадений")
+    unmatched: int = Field(default=0, description="Количество шагов без сопоставления")
+
+
 class ScanStepsRequest(ApiBaseModel):
     """Запрос на сканирование проекта для построения индекса шагов."""
 
@@ -173,6 +181,12 @@ class GenerateFeatureResponse(ApiBaseModel):
     used_steps: list[StepDefinitionDto] = Field(
         ..., alias="usedSteps", description="Шаги фреймворка, использованные в feature"
     )
+    build_stage: str | None = Field(
+        default=None, alias="buildStage", description="Этап сборки feature"
+    )
+    steps_summary: StepsSummaryDto | None = Field(
+        default=None, alias="stepsSummary", description="Сводка по статусам шагов"
+    )
     meta: dict[str, Any] | None = Field(
         default=None, description="Дополнительные метаданные о feature"
     )
@@ -235,5 +249,6 @@ __all__ = [
     "StepImplementationDto",
     "StepDefinitionDto",
     "StepParameterDto",
+    "StepsSummaryDto",
     "UnmappedStepDto",
 ]
