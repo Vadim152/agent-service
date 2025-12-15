@@ -7,12 +7,18 @@ EmbeddingsStore будет отвечать за построение и пои�
 
 from __future__ import annotations
 
+import os
 import hashlib
 import math
 import re
 from collections import Counter
 from pathlib import Path
 from typing import Iterable, List
+
+# Disable Chroma telemetry to avoid outbound calls and keep usage local-only.
+os.environ.setdefault(
+    "CHROMA_TELEMETRY_IMPL", "chromadb.telemetry.impl.noop.NoopTelemetry"
+)
 
 import chromadb
 
