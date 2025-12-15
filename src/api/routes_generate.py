@@ -69,27 +69,29 @@ async def generate_feature(
 ) -> GenerateFeatureResponse:
     """Генерирует .feature текст и, опционально, сохраняет его на диск."""
 
+    body = await request.body()
+    content_length = request.headers.get("content-length")
+    content_type = request.headers.get("content-type")
+    body_len = len(body) if body else 0
+    body_preview = body.decode("utf-8", errors="replace")[:500] if body else ""
+    body_hex_preview = body[:128].hex() if body else ""
+
+    logger.debug(
+        (
+            "API: generate-feature raw body; client=%s, method=%s %s, content-length=%s, "
+            "read_len=%s, hex_preview=%s, utf8_preview=%r"
+        ),
+        request.client,
+        request.method,
+        request.url.path,
+        content_length,
+        body_len,
+        body_hex_preview,
+        body_preview,
+    )
+
     if request_model is None:
-        body = await request.body()
-        content_length = request.headers.get("content-length")
-        content_type = request.headers.get("content-type")
-        body_len = len(body) if body else 0
-        body_preview = body.decode("utf-8", errors="replace")[:500] if body else ""
-        body_hex_preview = body[:128].hex() if body else ""
-        logger.debug(
-            (
-                "API: request body missing; client=%s, method=%s %s, content-length=%s, "
-                "read_len=%s, hex_preview=%s, utf8_preview=%r, headers=%s"
-            ),
-            request.client,
-            request.method,
-            request.url.path,
-            content_length,
-            body_len,
-            body_hex_preview,
-            body_preview,
-            dict(request.headers),
-        )
+        logger.debug("API: request headers snapshot=%s", dict(request.headers))
         if content_length not in (None, str(body_len)):
             logger.debug(
                 "API: Content-Length mismatch: header=%s, read=%s", content_length, body_len
@@ -115,6 +117,41 @@ async def generate_feature(
             detail=(
                 "Request body is empty; ensure Content-Type: application/json and non-empty payload"
                 f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
+            ),
+        )
+
+    if content_length not in (None, str(body_len)):
+        logger.info(
+            "API: Body read length differs from Content-Length: header=%s, read=%s",
+            content_length,
+            body_len,
+        )
+
+    logger.info(
+        (
+            "API: generate-feature payload accepted (len=%s, content-type=%s, content-length=%s,"  # noqa: E501
+            " testCaseText_len=%s, targetPath=%s, options=%s, preview=%r)"
+        ),
+        body_len,
+        content_type,
+        content_length,
+        len(request_model.test_case_text or ""),
+        request_model.target_path,
+        request_model.options,
+        (request_model.test_case_text or "")[:200],
+    )
+
+    if not (request_model.test_case_text or "").strip():
+        logger.warning(
+            "API: testCaseText пустой или состоит из пробелов; возможно перепутаны поля UI? targetPath=%s, options=%s",  # noqa: E501
+            request_model.target_path,
+            request_model.options,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "testCaseText is empty; ensure the UI sends the original test case text, "
+                "not the generated feature body"
             ),
         )
 
