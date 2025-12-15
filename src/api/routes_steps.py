@@ -233,7 +233,12 @@ async def scan_steps(
         _preview_body(raw_body),
     )
     result = orchestrator.scan_steps(project_root)
-    sample_steps = orchestrator.step_index_store.load_steps(project_root)
+
+    sample_steps_payload = result.get("sampleSteps") or result.get("sample_steps")
+    if sample_steps_payload:
+        sample_steps = sample_steps_payload
+    else:
+        sample_steps = orchestrator.step_index_store.load_steps(project_root)
 
     unmapped_steps_payload = result.get("unmappedSteps") or result.get("unmatched") or []
     unmapped_steps = []
