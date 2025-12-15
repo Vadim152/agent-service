@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from fastapi import APIRouter, Body, HTTPException, Request, status
+from pydantic import ValidationError
 
 from agents.orchestrator import Orchestrator
 from api.schemas import (
@@ -59,6 +60,28 @@ def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> lis
     return list(seen.values())
 
 
+async def _read_body_with_fallback(request: Request) -> bytes:
+    """Считать тело запроса с попыткой дочитать поток при несоответствии длины."""
+
+    body = await request.body()
+    if body:
+        return body
+
+    content_length = request.headers.get("content-length")
+    if content_length not in (None, "0"):
+        # Иногда клиенты присылают Content-Length > 0, но request.body() возвращает
+        # пустое значение (например, если тело не было буферизовано). В таких
+        # случаях попробуем дочитать поток вручную.
+        chunks: list[bytes] = []
+        async for chunk in request.stream():
+            if chunk:
+                chunks.append(chunk)
+        if chunks:
+            return b"".join(chunks)
+
+    return body
+
+
 @router.post(
     "/generate-feature",
     response_model=GenerateFeatureResponse,
@@ -69,7 +92,7 @@ async def generate_feature(
 ) -> GenerateFeatureResponse:
     """Генерирует .feature текст и, опционально, сохраняет его на диск."""
 
-    body = await request.body()
+    body = await _read_body_with_fallback(request)
     content_length = request.headers.get("content-length")
     content_type = request.headers.get("content-type")
     body_len = len(body) if body else 0
@@ -97,28 +120,41 @@ async def generate_feature(
                 "API: Content-Length mismatch: header=%s, read=%s", content_length, body_len
             )
 
-        logger.warning(
-            (
-                "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s, "
-                "preview=%r)"
-            ),
-            body_len,
-            content_length,
-            content_type,
-            body_preview,
-        )
-        mismatch_note = (
-            "; Content-Length differs from read body"
-            if content_length not in (None, str(body_len))
-            else ""
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Request body is empty; ensure Content-Type: application/json and non-empty payload"
-                f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
-            ),
-        )
+        if body:
+            try:
+                request_model = GenerateFeatureRequest.model_validate_json(body)
+            except ValidationError as exc:  # pragma: no cover - обрабатывается ниже
+                logger.warning(
+                    "API: не удалось распарсить тело запроса: %s", exc, exc_info=exc
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=exc.errors(),
+                ) from exc
+
+        if request_model is None:
+            logger.warning(
+                (
+                    "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s, "
+                    "preview=%r)"
+                ),
+                body_len,
+                content_length,
+                content_type,
+                body_preview,
+            )
+            mismatch_note = (
+                "; Content-Length differs from read body"
+                if content_length not in (None, str(body_len))
+                else ""
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Request body is empty; ensure Content-Type: application/json and non-empty payload"
+                    f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
+                ),
+            )
 
     if content_length not in (None, str(body_len)):
         logger.info(
