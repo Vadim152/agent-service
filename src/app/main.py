@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -13,6 +14,13 @@ from app.config import get_settings
 from app.logging_config import LOG_LEVEL, get_logger, init_logging
 from api import router as api_router
 from agents import create_orchestrator
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"flaml\.automl is not available.*",
+    category=UserWarning,
+    module="flaml",
+)
 
 settings = get_settings()
 logger = get_logger(__name__)
