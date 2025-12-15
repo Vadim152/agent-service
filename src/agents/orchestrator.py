@@ -59,6 +59,10 @@ class Orchestrator:
 
         logger.info("[Orchestrator] Генерация feature для проекта %s", project_root)
         scenario_dict = self.testcase_parser_agent.parse_testcase(testcase_text)
+        logger.info(
+            "[Orchestrator] Парсинг тесткейса завершён (source=%s)",
+            scenario_dict.get("source", "unknown"),
+        )
         matched = self.step_matcher_agent.match_testcase_steps(project_root, scenario_dict)
         feature_result = self.feature_builder_agent.build_feature_from_matches(
             scenario_dict, matched.get("matched", []), language=language

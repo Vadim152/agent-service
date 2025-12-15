@@ -6,10 +6,16 @@
 """
 from __future__ import annotations
 
+import json
+import logging
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
 from domain.models import Scenario, TestStep
+from infrastructure.llm_client import LLMClient
+
+
+logger = logging.getLogger(__name__)
 
 
 class TestCaseParser:
@@ -36,6 +42,37 @@ class TestCaseParser:
             steps=steps,
             expected_result=expected_result,
             tags=[],
+        )
+
+    def parse_with_llm(self, raw_text: str, llm_client: LLMClient) -> Scenario:
+        """Использует LLM для структурирования тесткейса."""
+
+        prompt = (
+            "Ты аналитик тестов. Извлеки из текста тесткейса структуру сценария. "
+            "Верни строго JSON без комментариев и пояснений со следующими полями: "
+            "name (строка), description (строка или null), preconditions (массив строк), "
+            "steps (массив строк), expected_result (строка или null), tags (массив строк).\n"
+            "Текст тесткейса:\n"
+            f"{raw_text}\n"
+            "Ответ должен быть только JSON."
+        )
+
+        llm_response = llm_client.generate(prompt)
+        logger.debug("[TestCaseParser] LLM response: %s", llm_response)
+
+        payload = self._extract_json(llm_response)
+
+        preconditions = self._to_steps(payload.get("preconditions", []))
+        steps = self._to_steps(payload.get("steps", []))
+        expected_result = payload.get("expected_result") or payload.get("expectedResult")
+
+        return Scenario(
+            name=str(payload.get("name") or "Без названия"),
+            description=payload.get("description"),
+            preconditions=preconditions,
+            steps=steps,
+            expected_result=expected_result,
+            tags=[str(tag) for tag in payload.get("tags", []) if tag],
         )
 
     def _extract_name(self, lines: list[str]) -> str | None:
@@ -91,3 +128,30 @@ class TestCaseParser:
 
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         return " | ".join(cells)
+
+    def _extract_json(self, text: str) -> dict[str, Any]:
+        """Выделяет и парсит JSON-ответ LLM."""
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+        raise ValueError("LLM не вернул валидный JSON для тесткейса")
+
+    def _to_steps(self, items: Iterable[Any], *, start_order: int = 1) -> list[TestStep]:
+        """Конвертирует элементы массива в TestStep с нумерацией."""
+
+        steps: list[TestStep] = []
+        order = start_order
+        for item in items:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("step") or str(item)
+            else:
+                text = str(item)
+            if not text:
+                continue
+            steps.append(TestStep(order=order, text=text.strip()))
+            order += 1
+        return steps
