@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
+import com.intellij.openapi.diagnostic.Logger
 import ru.sber.aitestplugin.config.AiTestPluginSettings
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
@@ -27,6 +28,8 @@ import java.time.Duration
 class HttpBackendClient(
     private val settingsProvider: () -> AiTestPluginSettings = { AiTestPluginSettings.current() }
 ) : BackendClient {
+
+    private val logger = Logger.getInstance(HttpBackendClient::class.java)
 
     private val mapper = jacksonObjectMapper()
         .registerModule(JavaTimeModule())
@@ -67,12 +70,20 @@ class HttpBackendClient(
             .build()
 
         val body = mapper.writeValueAsString(payload)
+        val contentType = "application/json"
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
-            .header("Content-Type", "application/json")
+            .header("Content-Type", contentType)
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build()
+
+        if (logger.isDebugEnabled) {
+            val preview = body.take(500)
+            logger.debug(
+                "Sending POST to $url with Content-Type=$contentType, body size=${body.length} chars, preview=\"$preview\""
+            )
+        }
 
         val response = try {
             client.send(request, HttpResponse.BodyHandlers.ofString())
@@ -82,7 +93,12 @@ class HttpBackendClient(
 
         if (response.statusCode() !in 200..299) {
             val message = when (response.statusCode()) {
-                422 -> parseValidationError(response.body())
+                422 -> {
+                    if (logger.isDebugEnabled) {
+                        logger.debug("Received 422 from $url for payload: $body")
+                    }
+                    parseValidationError(response.body())
+                }
                 else -> response.body().takeIf { it.isNotBlank() } ?: "HTTP ${response.statusCode()}"
             }
             throw BackendException("Backend $url responded with ${response.statusCode()}: $message")
