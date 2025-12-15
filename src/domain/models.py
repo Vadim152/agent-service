@@ -108,6 +108,7 @@ class FeatureScenario:
     name: str
     tags: list[str] = field(default_factory=list)
     steps: list[str] = field(default_factory=list)
+    steps_details: list[dict[str, Any]] = field(default_factory=list)
     is_outline: bool = False
     examples: list[Dict[str, str]] = field(default_factory=list)
 

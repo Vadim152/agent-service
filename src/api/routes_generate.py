@@ -15,6 +15,7 @@ from api.schemas import (
     ApplyFeatureResponse,
     GenerateFeatureRequest,
     GenerateFeatureResponse,
+    StepsSummaryDto,
     StepDefinitionDto,
     UnmappedStepDto,
 )
@@ -194,6 +195,12 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         for step_text in feature_payload.get("unmappedSteps", [])
     ]
     used_steps = _dedup_used_steps(match_payload.get("matched", []))
+    steps_summary_raw = feature_payload.get("stepsSummary") or {}
+    steps_summary = StepsSummaryDto(
+        exact=steps_summary_raw.get("exact", 0),
+        fuzzy=steps_summary_raw.get("fuzzy", 0),
+        unmatched=steps_summary_raw.get("unmatched", 0),
+    )
 
     logger.info(
         "API: генерация завершена, unmapped=%s, used_steps=%s",
@@ -204,6 +211,8 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         feature_text=feature_text,
         unmapped_steps=unmapped_steps,
         used_steps=used_steps,
+        build_stage=feature_payload.get("buildStage"),
+        steps_summary=steps_summary,
         meta=feature_payload.get("meta"),
     )
 
