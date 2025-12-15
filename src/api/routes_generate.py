@@ -74,17 +74,28 @@ async def generate_feature(
         content_length = request.headers.get("content-length")
         content_type = request.headers.get("content-type")
         body_len = len(body) if body else 0
+        body_preview = body.decode("utf-8", errors="replace")[:500] if body else ""
 
         logger.warning(
-            "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s)",
+            (
+                "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s, "
+                "preview=%r)"
+            ),
             body_len,
             content_length,
             content_type,
+            body_preview,
+        )
+        mismatch_note = (
+            "; Content-Length differs from read body"
+            if content_length not in (None, str(body_len))
+            else ""
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 "Request body is empty; ensure Content-Type: application/json and non-empty payload"
+                f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
             ),
         )
 
