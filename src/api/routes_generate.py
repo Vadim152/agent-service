@@ -128,11 +128,32 @@ async def generate_feature(
         )
 
     logger.info(
-        "API: generate-feature payload accepted (len=%s, content-type=%s, content-length=%s)",
+        (
+            "API: generate-feature payload accepted (len=%s, content-type=%s, content-length=%s,"  # noqa: E501
+            " testCaseText_len=%s, targetPath=%s, options=%s, preview=%r)"
+        ),
         body_len,
         content_type,
         content_length,
+        len(request_model.test_case_text or ""),
+        request_model.target_path,
+        request_model.options,
+        (request_model.test_case_text or "")[:200],
     )
+
+    if not (request_model.test_case_text or "").strip():
+        logger.warning(
+            "API: testCaseText пустой или состоит из пробелов; возможно перепутаны поля UI? targetPath=%s, options=%s",  # noqa: E501
+            request_model.target_path,
+            request_model.options,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "testCaseText is empty; ensure the UI sends the original test case text, "
+                "not the generated feature body"
+            ),
+        )
 
     orchestrator = _get_orchestrator(request)
     project_root = request_model.project_root
