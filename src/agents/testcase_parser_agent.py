@@ -35,11 +35,25 @@ class TestcaseParserAgent:
         """Разобрать текст тесткейса в Scenario и вернуть сериализуемый словарь."""
 
         logger.info("[TestcaseParserAgent] Разбор тесткейса (длина=%s)", len(testcase_text))
-        scenario: Scenario = self.parser.parse(testcase_text)
+        source = "heuristic"
+        scenario: Scenario | None = None
+
+        if self.llm_client:
+            try:
+                scenario = self.parser.parse_with_llm(testcase_text, self.llm_client)
+                source = "llm"
+            except Exception:
+                logger.warning("[TestcaseParserAgent] LLM парсинг не удался, fallback на эвристику", exc_info=True)
+
+        if scenario is None:
+            scenario = self.parser.parse(testcase_text)
+
         logger.debug(
             "[TestcaseParserAgent] Сценарий: %s, шагов: %s", scenario.name, len(scenario.steps)
         )
-        return _serialize_scenario(scenario)
+        serialized = _serialize_scenario(scenario)
+        serialized["source"] = source
+        return serialized
 
 
 __all__ = ["TestcaseParserAgent"]
