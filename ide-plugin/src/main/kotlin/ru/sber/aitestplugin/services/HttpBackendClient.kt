@@ -72,12 +72,14 @@ class HttpBackendClient(
         val body = mapper.writeValueAsString(payload)
         val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
         val contentLength = bodyBytes.size
-        val contentType = "application/json"
+        // Явно задаём кодировку и длину тела, чтобы сервер корректно принял запрос без обрезки тела
+        val contentType = "application/json; charset=UTF-8"
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .header("Content-Type", contentType)
-            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .header("Content-Length", contentLength.toString())
+            .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
             .build()
 
         if (logger.isDebugEnabled) {
