@@ -78,6 +78,33 @@ class Orchestrator:
                 overwrite_existing=overwrite_existing,
             )
 
+        pipeline = [
+            {
+                "stage": "parse",
+                "status": "ok",
+                "details": {
+                    "source": scenario_dict.get("source"),
+                    "steps": len(scenario_dict.get("steps", [])),
+                },
+            },
+            {
+                "stage": "match",
+                "status": "ok",
+                "details": {
+                    "matched": len(matched.get("matched", [])),
+                    "unmatched": len(matched.get("unmatched", [])),
+                },
+            },
+            {
+                "stage": "feature_build",
+                "status": feature_result.get("buildStage") or "ok",
+                "details": {
+                    "stepsSummary": feature_result.get("stepsSummary"),
+                    "language": feature_result.get("meta", {}).get("language"),
+                },
+            },
+        ]
+
         logger.info(
             "[Orchestrator] Генерация feature завершена. Unmapped: %s",
             len(feature_result.get("unmappedSteps", [])),
@@ -87,6 +114,7 @@ class Orchestrator:
             "scenario": scenario_dict,
             "matchResult": matched,
             "feature": feature_result,
+            "pipeline": pipeline,
             "fileStatus": file_status,
         }
 

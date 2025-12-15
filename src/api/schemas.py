@@ -114,6 +114,16 @@ class StepsSummaryDto(ApiBaseModel):
     unmatched: int = Field(default=0, description="Количество шагов без сопоставления")
 
 
+class PipelineStepDto(ApiBaseModel):
+    """Описание шага пайплайна генерации feature."""
+
+    stage: str = Field(..., description="Название этапа")
+    status: str = Field(..., description="Статус выполнения этапа")
+    details: dict[str, Any] | None = Field(
+        default=None, description="Дополнительные детали об этапe"
+    )
+
+
 class ScanStepsRequest(ApiBaseModel):
     """Запрос на сканирование проекта для построения индекса шагов."""
 
@@ -178,6 +188,9 @@ class GenerateFeatureResponse(ApiBaseModel):
     unmapped_steps: list[UnmappedStepDto] = Field(
         ..., alias="unmappedSteps", description="Шаги без сопоставления"
     )
+    unmapped: list[str] = Field(
+        default_factory=list, description="Не сопоставленные шаги из матчера"
+    )
     used_steps: list[StepDefinitionDto] = Field(
         ..., alias="usedSteps", description="Шаги фреймворка, использованные в feature"
     )
@@ -189,6 +202,10 @@ class GenerateFeatureResponse(ApiBaseModel):
     )
     meta: dict[str, Any] | None = Field(
         default=None, description="Дополнительные метаданные о feature"
+    )
+    pipeline: list[PipelineStepDto] = Field(
+        default_factory=list,
+        description="Последовательность этапов построения feature",
     )
 
 
@@ -244,6 +261,7 @@ __all__ = [
     "GenerateFeatureOptions",
     "GenerateFeatureRequest",
     "GenerateFeatureResponse",
+    "PipelineStepDto",
     "ScanStepsRequest",
     "ScanStepsResponse",
     "StepImplementationDto",
