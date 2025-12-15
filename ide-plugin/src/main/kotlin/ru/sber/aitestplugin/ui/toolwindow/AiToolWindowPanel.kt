@@ -34,6 +34,7 @@ import java.awt.GridBagLayout
 import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.SwingConstants
 
 /**
  * Основная панель Tool Window с кнопкой сканирования и таблицей шагов.
@@ -72,7 +73,7 @@ class AiToolWindowPanel(
     }
     private val usedStepsList = JBList<StepDefinitionDto>()
     private val generatedUnmappedList = JBList<UnmappedStepDto>()
-    private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information)
+    private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, SwingConstants.LEADING)
 
     init {
         border = JBUI.Borders.empty(12)
@@ -174,7 +175,11 @@ class AiToolWindowPanel(
     fun showUnmappedSteps(unmappedSteps: List<UnmappedStepDto>) {
         generatedUnmappedList.setListData(unmappedSteps.toTypedArray())
         statusLabel.icon = if (unmappedSteps.isEmpty()) AllIcons.General.InspectionsOK else AllIcons.General.Warning
-        statusLabel.text = if (unmappedSteps.isEmpty()) "Неотображённых шагов нет" else "Неотображённые шаги: ${unmappedSteps.size}"
+        statusLabel.text = if (unmappedSteps.isEmpty()) {
+            "Неотображённых шагов нет"
+        } else {
+            "Неотображённые шаги: ${unmappedSteps.size}"
+        }
     }
 
     private fun runScanSteps() {
