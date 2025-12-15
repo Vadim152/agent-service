@@ -50,7 +50,9 @@ class StepMatcherAgent:
         logger.debug(
             "[StepMatcherAgent] Загружено шагов для сопоставления: %s", len(step_definitions)
         )
-        matched_steps: list[MatchedStep] = self.matcher.match_steps(scenario.steps, step_definitions)
+        matched_steps: list[MatchedStep] = self.matcher.match_steps(
+            scenario.steps, step_definitions, project_root=project_root
+        )
         unmatched = [m.test_step.text for m in matched_steps if m.status == MatchStatus.UNMATCHED]
         logger.info(
             "[StepMatcherAgent] Матчинг завершён. Совпадений: %s, без соответствия: %s",
