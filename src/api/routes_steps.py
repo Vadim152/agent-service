@@ -15,6 +15,8 @@ from api.schemas import (
     ScanStepsRequest,
     ScanStepsResponse,
     StepDefinitionDto,
+    StepImplementationDto,
+    StepParameterDto,
     UnmappedStepDto,
 )
 from domain.models import StepDefinition
@@ -37,10 +39,31 @@ def _to_step_dto(step_definitions: Iterable[StepDefinition]) -> list[StepDefinit
     return [
         StepDefinitionDto(
             id=step.id,
-            keyword=str(step.keyword.value),
+            keyword=step.keyword,
             pattern=step.pattern,
+            pattern_type=step.pattern_type,
+            regex=step.regex,
             code_ref=step.code_ref,
+            parameters=[
+                StepParameterDto(
+                    name=param.name,
+                    type=param.type,
+                    placeholder=param.placeholder,
+                )
+                for param in step.parameters
+            ],
             tags=step.tags or None,
+            language=step.language,
+            implementation=StepImplementationDto(
+                file=step.implementation.file,
+                line=step.implementation.line,
+                class_name=step.implementation.class_name,
+                method_name=step.implementation.method_name,
+            )
+            if step.implementation
+            else None,
+            summary=step.summary,
+            examples=step.examples,
         )
         for step in step_definitions
     ]

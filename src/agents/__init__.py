@@ -6,8 +6,17 @@ from dataclasses import asdict
 from typing import Any
 
 from app.config import Settings, get_settings
-from domain.enums import MatchStatus, StepKeyword
-from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario, StepDefinition, TestStep
+from domain.enums import MatchStatus, StepKeyword, StepPatternType
+from domain.models import (
+    FeatureFile,
+    FeatureScenario,
+    MatchedStep,
+    Scenario,
+    StepDefinition,
+    StepImplementation,
+    StepParameter,
+    TestStep,
+)
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.gigachat_adapter import GigaChatAdapter
 from infrastructure.step_index_store import StepIndexStore
@@ -19,6 +28,7 @@ logger = logging.getLogger(__name__)
 def _serialize_step_definition(step: StepDefinition) -> dict[str, Any]:
     data = asdict(step)
     data["keyword"] = step.keyword.value
+    data["pattern_type"] = step.pattern_type.value
     return data
 
 
@@ -76,9 +86,17 @@ def _deserialize_step_definition(data: dict[str, Any]) -> StepDefinition:
         pattern=data.get("pattern", ""),
         regex=data.get("regex"),
         code_ref=data.get("code_ref", ""),
-        parameters=list(data.get("parameters", []) or []),
+        pattern_type=StepPatternType(
+            data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
+        ),
+        parameters=[StepParameter(**param) for param in data.get("parameters", [])],
         tags=list(data.get("tags", []) or []),
         language=data.get("language"),
+        implementation=StepImplementation(**data["implementation"])
+        if data.get("implementation")
+        else None,
+        summary=data.get("summary"),
+        examples=list(data.get("examples", []) or []),
     )
 
 

@@ -16,8 +16,8 @@ from typing import Iterable, List
 
 import chromadb
 
-from domain.enums import StepKeyword
-from domain.models import StepDefinition
+from domain.enums import StepKeyword, StepPatternType
+from domain.models import StepDefinition, StepImplementation, StepParameter
 
 
 class EmbeddingsStore:
@@ -50,10 +50,15 @@ class EmbeddingsStore:
         if step.regex:
             parts.append(step.regex)
         if step.parameters:
-            parts.extend(step.parameters)
+            parts.extend(param.name for param in step.parameters)
         if step.tags:
             parts.extend(step.tags)
         parts.append(step.code_ref)
+        parts.append(step.pattern_type.value)
+        if step.summary:
+            parts.append(step.summary)
+        if step.examples:
+            parts.extend(step.examples)
         if step.language:
             parts.append(step.language)
         return " \n".join(parts)
@@ -65,11 +70,24 @@ class EmbeddingsStore:
             pattern=metadata["pattern"],
             regex=metadata.get("regex") or None,
             code_ref=metadata["code_ref"],
-            parameters=(metadata.get("parameters") or "").split(",")
-            if metadata.get("parameters")
-            else [],
+            pattern_type=StepPatternType(
+                metadata.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
+            ),
+            parameters=[
+                StepParameter(name=name)
+                for name in (metadata.get("parameters") or "").split(",")
+                if name
+            ],
             tags=(metadata.get("tags") or "").split(",") if metadata.get("tags") else [],
             language=metadata.get("language") or None,
+            implementation=StepImplementation(
+                file=metadata.get("file"),
+                line=int(metadata["line"]) if metadata.get("line") else None,
+                class_name=metadata.get("class_name"),
+                method_name=metadata.get("method_name"),
+            ),
+            summary=metadata.get("summary") or None,
+            examples=[ex for ex in (metadata.get("examples") or "").split("\n") if ex],
         )
 
     def index_steps(self, project_root: str, steps: list[StepDefinition]) -> None:
@@ -86,9 +104,16 @@ class EmbeddingsStore:
                 "pattern": step.pattern,
                 "regex": step.regex or "",
                 "code_ref": step.code_ref,
-                "parameters": ",".join(step.parameters),
+                "pattern_type": step.pattern_type.value,
+                "parameters": ",".join(param.name for param in step.parameters),
                 "tags": ",".join(step.tags),
                 "language": step.language or "",
+                "file": step.implementation.file if step.implementation else "",
+                "line": step.implementation.line if step.implementation else "",
+                "class_name": step.implementation.class_name if step.implementation else "",
+                "method_name": step.implementation.method_name if step.implementation else "",
+                "summary": step.summary or "",
+                "examples": "\n".join(step.examples),
             }
             for step in steps
         ]
