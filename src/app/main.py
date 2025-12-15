@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
@@ -18,6 +20,27 @@ orchestrator = None
 
 
 app = FastAPI(title=settings.app_name)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(
+    request: Request, exc: RequestValidationError
+):
+    """Логировать тело запроса при ошибках валидации."""
+
+    raw_body = await request.body()
+    body_preview = "<empty>"
+    if raw_body:
+        body_preview = raw_body[:1000].decode("utf-8", errors="replace")
+
+    logger.warning(
+        "[Validation] %s %s: errors=%s | body=%s",
+        request.method,
+        request.url.path,
+        exc.errors(),
+        body_preview,
+    )
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.on_event("startup")
