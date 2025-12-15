@@ -2,9 +2,11 @@ package ru.sber.aitestplugin.ui.dialogs
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JComponent
@@ -16,12 +18,18 @@ import javax.swing.JPanel
  */
 class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOptions) : DialogWrapper(project) {
     private val targetPathField = JBTextField(defaults.targetPath ?: "")
-    private val createFileCheckbox = JBCheckBox("Create file if missing", defaults.createFile)
-    private val overwriteCheckbox = JBCheckBox("Overwrite existing file", defaults.overwriteExisting)
+    private val createFileCheckbox = JBCheckBox("Создать файл, если отсутствует", defaults.createFile).apply {
+        toolTipText = "Если путь не существует, будет создан новый файл"
+        border = JBUI.Borders.emptyLeft(2)
+    }
+    private val overwriteCheckbox = JBCheckBox("Перезаписать существующий файл", defaults.overwriteExisting).apply {
+        toolTipText = "При совпадении пути перезапишет найденный файл"
+        border = JBUI.Borders.emptyLeft(2)
+    }
     private val languageField = JBTextField(defaults.language ?: "")
 
     init {
-        title = "Generate Feature"
+        title = "Сгенерировать feature"
         init()
     }
 
@@ -37,11 +45,15 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
             weightx = 1.0
             ipadx = 4
             ipady = 4
+            insets = JBUI.insetsBottom(8)
         }
 
-        panel.add(JLabel("Target path (relative to project root):"), gbc)
+        panel.add(JLabel("Целевой путь (относительно корня проекта)"), gbc)
         gbc.gridy++
         panel.add(targetPathField, gbc)
+
+        gbc.gridy++
+        panel.add(hintLabel("Пример: src/test/resources/features"), gbc)
 
         gbc.gridy++
         panel.add(createFileCheckbox, gbc)
@@ -50,9 +62,12 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
         panel.add(overwriteCheckbox, gbc)
 
         gbc.gridy++
-        panel.add(JLabel("Language (optional):"), gbc)
+        panel.add(JLabel("Язык (необязательно)"), gbc)
         gbc.gridy++
         panel.add(languageField, gbc)
+
+        gbc.gridy++
+        panel.add(hintLabel("Оставьте поле пустым, чтобы использовать язык по умолчанию"), gbc)
 
         return panel
     }
@@ -67,8 +82,14 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
         targetPath = targetPath(),
         createFile = shouldCreateFile(),
         overwriteExisting = shouldOverwriteExisting(),
-        language = language()
+        language = language(),
     )
 
     fun language(): String? = languageField.text.trim().takeIf { it.isNotEmpty() }
+
+    private fun hintLabel(text: String): JLabel = JLabel(text).apply {
+        font = font.deriveFont(Font.PLAIN, font.size2D - 1)
+        foreground = JBColor.GRAY
+        border = JBUI.Borders.emptyLeft(2)
+    }
 }
