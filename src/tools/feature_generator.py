@@ -75,8 +75,11 @@ class FeatureGenerator:
             marker = reason or "unmatched"
             return f"{StepKeyword.WHEN.as_text()} <{marker}: {matched_step.test_step.text}>"
 
+        if matched_step.generated_gherkin_line:
+            return matched_step.generated_gherkin_line
+
         keyword = self._select_keyword(matched_step)
-        body = matched_step.generated_gherkin_line or matched_step.step_definition.pattern
+        body = matched_step.step_definition.pattern
         return f"{keyword} {body}" if body else f"{keyword} <missing-body: {matched_step.test_step.text}>"
 
     def _select_keyword(self, matched_step: MatchedStep) -> str:
