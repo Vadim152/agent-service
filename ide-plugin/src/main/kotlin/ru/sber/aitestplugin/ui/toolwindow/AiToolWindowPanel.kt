@@ -42,7 +42,8 @@ class AiToolWindowPanel(
     private val project: Project,
     private val backendClient: BackendClient = HttpBackendClient()
 ) : JPanel(BorderLayout()) {
-    private val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().settings)
+    private val settings = AiTestPluginSettingsService.getInstance().settings
+    private val stateStorage = FeatureDialogStateStorage(settings)
     private val generateDefaults: GenerateFeatureDialogOptions = stateStorage.loadGenerateOptions(project.basePath)
     private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
         foreground = JBColor(0x0B5CAD, 0x78A6FF)
@@ -50,7 +51,7 @@ class AiToolWindowPanel(
         border = JBUI.Borders.empty(6, 12)
         isOpaque = true
     }
-    private val projectRootField = JBTextField(project.basePath ?: "")
+    private val projectRootField = JBTextField(settings.scanProjectRoot ?: project.basePath ?: "")
     private val stepsList = JBList<StepDefinitionDto>()
     private val unmappedList = JBList<UnmappedStepDto>()
     private val testCaseInput = JBTextArea(5, 20)
@@ -178,12 +179,15 @@ class AiToolWindowPanel(
 
     private fun runScanSteps() {
         val projectRoot = projectRootField.text.trim()
+            .ifEmpty { settings.scanProjectRoot.orEmpty() }
+            .ifEmpty { project.basePath.orEmpty() }
         if (projectRoot.isBlank()) {
             statusLabel.icon = AllIcons.General.Warning
             statusLabel.text = "Путь к проекту не указан"
             notify("Укажите путь к корню проекта", NotificationType.WARNING)
             return
         }
+        settings.scanProjectRoot = projectRoot
 
         statusLabel.icon = AllIcons.General.BalloonInformation
         statusLabel.text = "Идёт сканирование проекта..."
@@ -219,13 +223,17 @@ class AiToolWindowPanel(
     }
 
     private fun runGenerateFeature() {
-        val projectRoot = projectRootField.text.trim().ifEmpty { project.basePath.orEmpty() }
+        val projectRoot = projectRootField.text.trim()
+            .ifEmpty { settings.scanProjectRoot.orEmpty() }
+            .ifEmpty { project.basePath.orEmpty() }
         if (projectRoot.isBlank()) {
             statusLabel.icon = AllIcons.General.Warning
             statusLabel.text = "Путь к проекту не указан"
             notify("Укажите путь к корню проекта", NotificationType.WARNING)
             return
         }
+
+        settings.scanProjectRoot = projectRoot
 
         val testCaseText = testCaseInput.text.trim()
         if (testCaseText.isBlank()) {

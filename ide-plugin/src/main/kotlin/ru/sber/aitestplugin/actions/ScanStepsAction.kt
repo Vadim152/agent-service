@@ -9,6 +9,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindowManager
+import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.toolwindow.AiToolWindowPanel
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
@@ -18,14 +19,17 @@ import ru.sber.aitestplugin.model.ScanStepsResponseDto
  */
 class ScanStepsAction : AnAction() {
     private val backendClient = HttpBackendClient()
+    private val settings = AiTestPluginSettingsService.getInstance().settings
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val projectRoot = project.basePath
+        val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath
         if (projectRoot.isNullOrBlank()) {
             notify(project, "Project root is empty", NotificationType.WARNING)
             return
         }
+
+        settings.scanProjectRoot = projectRoot
 
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Scanning Cucumber steps", true) {
             private var response: ScanStepsResponseDto? = null
