@@ -13,7 +13,8 @@ class FeatureDialogStateStorageTest {
         val settings = AiTestPluginSettings(
             generateFeatureTargetPath = "stored/path.feature",
             generateFeatureCreateFile = false,
-            generateFeatureOverwriteExisting = true
+            generateFeatureOverwriteExisting = true,
+            generateFeatureLanguage = "en"
         )
 
         val storage = FeatureDialogStateStorage(settings)
@@ -22,6 +23,7 @@ class FeatureDialogStateStorageTest {
         assertEquals("stored/path.feature", options.targetPath)
         assertFalse(options.createFile)
         assertTrue(options.overwriteExisting)
+        assertEquals("en", options.language)
     }
 
     @Test
@@ -45,7 +47,8 @@ class FeatureDialogStateStorageTest {
             GenerateFeatureDialogOptions(
                 targetPath = "new/generate.feature",
                 createFile = false,
-                overwriteExisting = true
+                overwriteExisting = true,
+                language = "ru"
             )
         )
 
@@ -60,6 +63,7 @@ class FeatureDialogStateStorageTest {
         assertEquals("new/generate.feature", settings.generateFeatureTargetPath)
         assertFalse(settings.generateFeatureCreateFile)
         assertTrue(settings.generateFeatureOverwriteExisting)
+        assertEquals("ru", settings.generateFeatureLanguage)
 
         assertEquals("apply/path.feature", settings.applyFeatureTargetPath)
         assertFalse(settings.applyFeatureCreateFile)
