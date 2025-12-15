@@ -65,7 +65,7 @@ def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> lis
     summary="Сгенерировать Gherkin-файл по тесткейсу",
 )
 async def generate_feature(
-    request_model: GenerateFeatureRequest | None = Body(None), request: Request
+    request: Request, request_model: GenerateFeatureRequest | None = Body(None)
 ) -> GenerateFeatureResponse:
     """Генерирует .feature текст и, опционально, сохраняет его на диск."""
 
