@@ -77,3 +77,10 @@ class MatchStatus(str, Enum):
     def requires_manual_review(self) -> bool:
         """Показывает, требуется ли ручная проверка человека."""
         return self is not MatchStatus.EXACT
+
+
+class StepPatternType(str, Enum):
+    """Тип паттерна шага (регулярка или выражение Cucumber)."""
+
+    CUCUMBER_EXPRESSION = "cucumberExpression"
+    REGULAR_EXPRESSION = "regularExpression"

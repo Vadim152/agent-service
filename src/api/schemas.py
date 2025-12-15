@@ -7,6 +7,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from domain.enums import StepKeyword, StepPatternType
+
 
 def _to_camel(value: str) -> str:
     """Преобразует snake_case в camelCase для JSON."""
@@ -18,18 +20,75 @@ def _to_camel(value: str) -> str:
 class ApiBaseModel(BaseModel):
     """Базовая модель для API со стилем camelCase и populate_by_name."""
 
-    model_config = ConfigDict(alias_generator=_to_camel, populate_by_name=True)
+    model_config = ConfigDict(
+        alias_generator=_to_camel, populate_by_name=True, from_attributes=True
+    )
+
+
+class StepParameterDto(ApiBaseModel):
+    """Структурированное описание параметра шага."""
+
+    name: str = Field(..., description="Имя параметра из сигнатуры шага")
+    type: str | None = Field(
+        default=None, description="Тип параметра (например, string/int/object)"
+    )
+    placeholder: str | None = Field(
+        default=None,
+        description="Исходный placeholder или регулярное выражение из паттерна",
+    )
+
+
+class StepImplementationDto(ApiBaseModel):
+    """Информация об исходном файле и методе, реализующем шаг."""
+
+    file: str | None = Field(default=None, description="Путь к файлу с реализацией")
+    line: int | None = Field(default=None, description="Номер строки аннотации шага")
+    class_name: str | None = Field(
+        default=None, alias="className", description="Имя класса, если применимо"
+    )
+    method_name: str | None = Field(
+        default=None, alias="methodName", description="Имя метода, если применимо"
+    )
 
 
 class StepDefinitionDto(ApiBaseModel):
     """Упрощённое представление StepDefinition для отдачи в API."""
 
     id: str = Field(..., description="Уникальный идентификатор шага")
-    keyword: str = Field(..., description="Ключевое слово шага (Given/When/Then)")
+    keyword: StepKeyword = Field(
+        ..., description="Ключевое слово шага (Given/When/Then/And/But)"
+    )
     pattern: str = Field(..., description="Паттерн шага из аннотации")
+    pattern_type: StepPatternType = Field(
+        default=StepPatternType.CUCUMBER_EXPRESSION,
+        alias="patternType",
+        description="Тип паттерна: cucumberExpression или regularExpression",
+    )
+    regex: str | None = Field(
+        default=None,
+        description="Регулярное выражение шага, если оно есть в исходнике",
+    )
     code_ref: str = Field(..., alias="codeRef", description="Ссылка на исходный код")
+    parameters: list[StepParameterDto] = Field(
+        default_factory=list,
+        description="Список параметров шага с типами и плейсхолдерами",
+    )
     tags: list[str] | None = Field(
         default=None, description="Теги шага из исходника, если есть"
+    )
+    language: str | None = Field(
+        default=None, description="Язык шага в исходнике (ru/en и т.д.)"
+    )
+    implementation: StepImplementationDto | None = Field(
+        default=None,
+        description="Подробности о файле, строке и методе, реализующем шаг",
+    )
+    summary: str | None = Field(
+        default=None, description="Краткое описание шага из документации"
+    )
+    examples: list[str] = Field(
+        default_factory=list,
+        description="Примеры использования шага из комментариев или документации",
     )
 
 
@@ -168,6 +227,8 @@ __all__ = [
     "GenerateFeatureResponse",
     "ScanStepsRequest",
     "ScanStepsResponse",
+    "StepImplementationDto",
     "StepDefinitionDto",
+    "StepParameterDto",
     "UnmappedStepDto",
 ]

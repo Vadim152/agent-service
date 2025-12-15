@@ -47,22 +47,15 @@ def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> lis
         if not step_def or status_value == MatchStatus.UNMATCHED.value:
             continue
 
-        step_id = step_def["id"] if isinstance(step_def, dict) else step_def.id
-        if step_id in seen:
+        dto = (
+            StepDefinitionDto.model_validate(step_def, from_attributes=True)
+            if not isinstance(step_def, dict)
+            else StepDefinitionDto.model_validate(step_def)
+        )
+        if dto.id in seen:
             continue
 
-        keyword = step_def["keyword"] if isinstance(step_def, dict) else step_def.keyword.value
-        pattern = step_def["pattern"] if isinstance(step_def, dict) else step_def.pattern
-        code_ref = step_def["code_ref"] if isinstance(step_def, dict) else step_def.code_ref
-        tags = step_def.get("tags") if isinstance(step_def, dict) else step_def.tags
-
-        seen[step_id] = StepDefinitionDto(
-            id=step_id,
-            keyword=str(keyword),
-            pattern=pattern,
-            code_ref=code_ref,
-            tags=tags or None,
-        )
+        seen[dto.id] = dto
     return list(seen.values())
 
 

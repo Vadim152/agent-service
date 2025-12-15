@@ -2,9 +2,28 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Iterable
 
-from .enums import MatchStatus, StepKeyword
+from .enums import MatchStatus, StepKeyword, StepPatternType
+
+
+@dataclass
+class StepParameter:
+    """Структурированное описание параметра шага."""
+
+    name: str
+    type: str | None = None
+    placeholder: str | None = None
+
+
+@dataclass
+class StepImplementation:
+    """Информация об исходной реализации шага."""
+
+    file: str | None = None
+    line: int | None = None
+    class_name: str | None = None
+    method_name: str | None = None
 
 
 @dataclass
@@ -16,9 +35,32 @@ class StepDefinition:
     pattern: str
     regex: str | None
     code_ref: str
-    parameters: list[str] = field(default_factory=list)
+    pattern_type: StepPatternType = StepPatternType.CUCUMBER_EXPRESSION
+    parameters: list[StepParameter] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     language: str | None = None
+    implementation: StepImplementation | None = None
+    summary: str | None = None
+    examples: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.pattern_type, str):
+            self.pattern_type = StepPatternType(self.pattern_type)
+        self.pattern_type = self.pattern_type or StepPatternType.CUCUMBER_EXPRESSION
+        self.parameters = list(self._normalize_parameters(self.parameters))
+        if self.implementation and not isinstance(self.implementation, StepImplementation):
+            impl = self.implementation
+            self.implementation = StepImplementation(**impl) if isinstance(impl, dict) else None
+
+    @staticmethod
+    def _normalize_parameters(parameters: Iterable[StepParameter | str | dict]) -> Iterable[StepParameter]:
+        for param in parameters:
+            if isinstance(param, StepParameter):
+                yield param
+            elif isinstance(param, dict):
+                yield StepParameter(**param)
+            else:
+                yield StepParameter(name=str(param))
 
 
 @dataclass

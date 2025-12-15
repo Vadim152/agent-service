@@ -5,8 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, List
 
-from domain.enums import StepKeyword
-from domain.models import StepDefinition
+from domain.enums import StepKeyword, StepPatternType
+from domain.models import StepDefinition, StepImplementation, StepParameter
 from infrastructure.fs_repo import FsRepository
 
 
@@ -73,9 +73,14 @@ class StepExtractor:
                         pattern=annotation.pattern,
                         regex=annotation.regex,
                         code_ref=step_id,
+                        pattern_type=StepPatternType.REGULAR_EXPRESSION,
                         parameters=self._extract_parameters(annotation.pattern),
                         tags=[],
                         language=None,
+                        implementation=StepImplementation(
+                            file=str(relative_path),
+                            line=annotation.line_number,
+                        ),
                     )
                 )
         return steps
@@ -93,10 +98,15 @@ class StepExtractor:
             yield ExtractedAnnotation(keyword=keyword, pattern=pattern, line_number=idx)
 
     @staticmethod
-    def _extract_parameters(pattern: str) -> list[str]:
+    def _extract_parameters(pattern: str) -> list[StepParameter]:
         """Пытается извлечь имена параметров из шаблона по простым скобкам."""
 
-        params: list[str] = []
-        for idx, _ in enumerate(re.finditer(r"\([^)]*\)", pattern), start=1):
-            params.append(f"param{idx}")
+        params: list[StepParameter] = []
+        for idx, match in enumerate(re.finditer(r"\([^)]*\)", pattern), start=1):
+            params.append(
+                StepParameter(
+                    name=f"param{idx}",
+                    placeholder=match.group(0),
+                )
+            )
         return params

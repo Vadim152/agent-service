@@ -15,8 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from domain.enums import StepKeyword
-from domain.models import StepDefinition
+from domain.enums import StepKeyword, StepPatternType
+from domain.models import StepDefinition, StepImplementation, StepParameter
 
 
 class StepIndexStore:
@@ -94,6 +94,11 @@ class StepIndexStore:
     def _serialize_step(step: StepDefinition) -> dict[str, Any]:
         data = asdict(step)
         data["keyword"] = step.keyword.value
+        data["pattern_type"] = step.pattern_type.value
+        data["parameters"] = [asdict(param) for param in step.parameters]
+        data["implementation"] = (
+            asdict(step.implementation) if step.implementation else None
+        )
         return data
 
     @staticmethod
@@ -104,8 +109,16 @@ class StepIndexStore:
             pattern=data.get("pattern", ""),
             regex=data.get("regex"),
             code_ref=data.get("code_ref", ""),
-            parameters=list(data.get("parameters", []) or []),
+            pattern_type=StepPatternType(
+                data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
+            ),
+            parameters=[StepParameter(**param) for param in data.get("parameters", [])],
             tags=list(data.get("tags", []) or []),
             language=data.get("language"),
+            implementation=StepImplementation(**data["implementation"])
+            if data.get("implementation")
+            else None,
+            summary=data.get("summary"),
+            examples=list(data.get("examples", []) or []),
         )
 
