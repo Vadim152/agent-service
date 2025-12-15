@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 from typing import Iterable
 
 from domain.enums import MatchStatus, StepKeyword
@@ -136,10 +137,36 @@ class StepMatcher:
         return MatchStatus.UNMATCHED
 
     def _build_gherkin_line(self, definition: StepDefinition, test_step: TestStep) -> str:
-        """Формирует строку Gherkin для найденного определения."""
+        """Формирует строку Gherkin для найденного определения с подстановкой параметров."""
 
-        keyword = definition.keyword.value if isinstance(definition.keyword, StepKeyword) else str(definition.keyword)
-        return f"{keyword} {definition.pattern}" if definition else ""
+        if not definition:
+            return ""
+
+        keyword = (
+            definition.keyword.value
+            if isinstance(definition.keyword, StepKeyword)
+            else str(definition.keyword)
+        )
+        pattern = definition.pattern
+        regex = definition.regex or pattern
+
+        filled_pattern = pattern
+        try:
+            match = re.search(regex, test_step.text)
+        except re.error:
+            match = None
+
+        if match:
+            groups = match.groups()
+            placeholders = re.findall(r"\{[^}]+\}", pattern)
+
+            if groups and placeholders:
+                for placeholder, value in zip(placeholders, groups):
+                    filled_pattern = filled_pattern.replace(placeholder, value, 1)
+            elif groups:
+                filled_pattern = " ".join([pattern] + list(groups))
+
+        return f"{keyword} {filled_pattern}"
 
     def _combine_score(
         self,
