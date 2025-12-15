@@ -1,5 +1,11 @@
 """Проверки для поведения при отсутствии сопоставлений шагов."""
 
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT / "src"))
+
 from domain.enums import MatchStatus, StepKeyword
 from domain.models import MatchedStep, Scenario, StepDefinition, TestStep
 from tools.feature_generator import FeatureGenerator

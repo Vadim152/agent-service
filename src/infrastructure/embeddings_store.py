@@ -125,6 +125,12 @@ class EmbeddingsStore:
 
     def search_similar(self, project_root: str, query: str, top_k: int = 5) -> List[StepDefinition]:
         """Возвращает наиболее похожие шаги по текстовому запросу."""
+        return [definition for definition, _ in self.get_top_k(project_root, query, top_k=top_k)]
+
+    def get_top_k(
+        self, project_root: str, query: str, top_k: int = 5
+    ) -> list[tuple[StepDefinition, float]]:
+        """Возвращает список наиболее похожих шагов с оценкой близости."""
         if top_k <= 0:
             return []
 
@@ -132,13 +138,24 @@ class EmbeddingsStore:
             return []
 
         collection = self._get_collection(project_root)
-        results = collection.query(query_texts=[query], n_results=top_k)
+        results = collection.query(query_texts=[query], n_results=top_k, include=["metadatas", "distances"])
 
         metadatas: list[list[dict]] | None = results.get("metadatas")
+        distances: list[list[float]] | None = results.get("distances")
         if not metadatas or not metadatas[0]:
             return []
 
-        return [self._step_from_metadata(metadata) for metadata in metadatas[0]]
+        definitions = [self._step_from_metadata(metadata) for metadata in metadatas[0]]
+
+        scores: list[float] = []
+        if distances and distances[0]:
+            for distance in distances[0]:
+                similarity = 1 / (1 + distance) if distance is not None else 0.0
+                scores.append(similarity)
+        else:
+            scores = [0.0 for _ in definitions]
+
+        return list(zip(definitions, scores))
 
     def clear(self, project_root: str) -> None:
         """Очищает индекс эмбеддингов для указанного проекта."""
