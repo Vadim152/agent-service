@@ -41,9 +41,14 @@ class StepDefinition:
     language: str | None = None
     implementation: StepImplementation | None = None
     summary: str | None = None
+    doc_summary: str | None = None
     examples: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.doc_summary and not self.summary:
+            self.summary = self.doc_summary
+        if self.summary and not self.doc_summary:
+            self.doc_summary = self.summary
         if isinstance(self.pattern_type, str):
             self.pattern_type = StepPatternType(self.pattern_type)
         self.pattern_type = self.pattern_type or StepPatternType.CUCUMBER_EXPRESSION

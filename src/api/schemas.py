@@ -86,6 +86,11 @@ class StepDefinitionDto(ApiBaseModel):
     summary: str | None = Field(
         default=None, description="Краткое описание шага из документации"
     )
+    doc_summary: str | None = Field(
+        default=None,
+        alias="docSummary",
+        description="Резюме шага, обогащенное LLM или документацией",
+    )
     examples: list[str] = Field(
         default_factory=list,
         description="Примеры использования шага из комментариев или документации",

@@ -63,6 +63,7 @@ def _to_step_dto(step_definitions: Iterable[StepDefinition]) -> list[StepDefinit
             if step.implementation
             else None,
             summary=step.summary,
+            doc_summary=step.doc_summary,
             examples=step.examples,
         )
         for step in step_definitions
