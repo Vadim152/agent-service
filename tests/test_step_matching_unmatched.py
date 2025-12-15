@@ -31,12 +31,13 @@ def test_match_steps_collects_structured_notes_for_unmatched() -> None:
 
     assert matches[0].status is MatchStatus.UNMATCHED
     assert matches[0].generated_gherkin_line is None
-    assert matches[0].notes == {
-        "reason": "no_definition_found",
-        "original_text": "Выполнить важное действие",
-        "closest_pattern": "Открыт стартовый экран",
-        "confidence": matches[0].notes["confidence"],
-    }
+    notes = matches[0].notes or {}
+    assert notes["reason"] == "no_definition_found"
+    assert notes["original_text"] == "Выполнить важное действие"
+    assert notes["closest_pattern"] == "Открыт стартовый экран"
+    assert "confidence" in notes
+    assert notes.get("final_score", 0.0) == notes["confidence_sources"]["sequence"]
+    assert set(notes.get("confidence_sources", {}).keys()) == {"sequence", "embedding", "llm"}
     assert "TODO" not in (matches[0].generated_gherkin_line or "")
 
 

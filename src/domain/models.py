@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable
+from typing import Any, Dict, Iterable
 
 from .enums import MatchStatus, StepKeyword, StepPatternType
 
@@ -98,7 +98,7 @@ class MatchedStep:
     step_definition: StepDefinition | None = None
     confidence: float | None = None
     generated_gherkin_line: str | None = None
-    notes: Dict[str, str] | None = None
+    notes: Dict[str, Any] | None = None
 
 
 @dataclass
