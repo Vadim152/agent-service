@@ -6,7 +6,8 @@ import logging
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
+from pydantic import ValidationError
 
 from agents.orchestrator import Orchestrator
 from api.schemas import (
@@ -64,17 +65,15 @@ def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> lis
     response_model=GenerateFeatureResponse,
     summary="Сгенерировать Gherkin-файл по тесткейсу",
 )
-async def generate_feature(
-    request: Request, request_model: GenerateFeatureRequest | None = Body(None)
-) -> GenerateFeatureResponse:
+async def generate_feature(request: Request) -> GenerateFeatureResponse:
     """Генерирует .feature текст и, опционально, сохраняет его на диск."""
 
-    body = await request.body()
+    raw_body = await request.body()
     content_length = request.headers.get("content-length")
     content_type = request.headers.get("content-type")
-    body_len = len(body) if body else 0
-    body_preview = body.decode("utf-8", errors="replace")[:500] if body else ""
-    body_hex_preview = body[:128].hex() if body else ""
+    body_len = len(raw_body) if raw_body else 0
+    body_preview = raw_body.decode("utf-8", errors="replace")[:500] if raw_body else ""
+    body_hex_preview = raw_body[:128].hex() if raw_body else ""
 
     logger.debug(
         (
@@ -90,7 +89,7 @@ async def generate_feature(
         body_preview,
     )
 
-    if request_model is None:
+    if not raw_body:
         logger.debug("API: request headers snapshot=%s", dict(request.headers))
         if content_length not in (None, str(body_len)):
             logger.debug(
@@ -119,6 +118,15 @@ async def generate_feature(
                 f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
             ),
         )
+
+    try:
+        request_model = GenerateFeatureRequest.model_validate_json(raw_body)
+    except ValidationError as exc:  # pragma: no cover - форма валидируется FastAPI
+        logger.warning("API: generate-feature validation failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
 
     if content_length not in (None, str(body_len)):
         logger.info(
