@@ -123,23 +123,24 @@ app.include_router(api_router, prefix=settings.api_prefix)
 def _validate_external_credentials(_: FastAPI, orchestrator) -> None:
     llm_client = getattr(orchestrator, "llm_client", None)
     if not llm_client:
-        logger.warning("[Startup] LLM клиент не сконфигурирован")
-        return
+        raise RuntimeError("LLM клиент не сконфигурирован и fallback не задан")
 
     logger.debug("[Startup] Проверка LLM credentials")
+    has_credentials = bool(
+        getattr(llm_client, "credentials", None) or getattr(llm_client, "access_token", None)
+    )
+    if not has_credentials:
+        if not getattr(llm_client, "allow_fallback", False):
+            raise RuntimeError("Учётные данные LLM не заданы или недоступны")
+        logger.info(
+            "[Startup] Учётные данные LLM отсутствуют, используется fallback режим"
+        )
+        return
+
     try:
         llm_client._ensure_credentials()  # type: ignore[attr-defined]
     except Exception as exc:
         raise RuntimeError("Учётные данные LLM не заданы или недоступны") from exc
-
-    has_custom_creds = any(
-        getattr(settings, field)
-        for field in ("llm_api_key", "gigachat_client_id", "gigachat_client_secret")
-    )
-    if not has_custom_creds and getattr(llm_client, "allow_fallback", False):
-        logger.warning(
-            "[Startup] Учётные данные LLM отсутствуют, будет использован fallback режим"
-        )
 
 
 def _preload_step_indexes(_: FastAPI, orchestrator) -> None:

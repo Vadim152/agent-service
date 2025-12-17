@@ -135,6 +135,12 @@ def create_orchestrator(settings: Settings | None = None):
     from agents.testcase_parser_agent import TestcaseParserAgent
 
     resolved_settings = settings or get_settings()
+    credentials_provided = bool(
+        resolved_settings.llm_api_key
+        or (
+            resolved_settings.gigachat_client_id and resolved_settings.gigachat_client_secret
+        )
+    )
     llm_client = GigaChatAdapter(
         base_url=resolved_settings.gigachat_api_url,
         auth_url=resolved_settings.gigachat_auth_url,
@@ -144,16 +150,19 @@ def create_orchestrator(settings: Settings | None = None):
         model_name=resolved_settings.llm_model or "GigaChat",
         scope=resolved_settings.gigachat_scope,
         verify_ssl_certs=resolved_settings.gigachat_verify_ssl,
+        allow_fallback=not credentials_provided,
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
     embeddings_store = EmbeddingsStore()
 
     logger.debug("LLMClient и хранилища инициализированы")
 
-    repo_scanner = RepoScannerAgent(step_index_store, embeddings_store, llm_client)
-    testcase_parser = TestcaseParserAgent(llm_client)
-    step_matcher = StepMatcherAgent(step_index_store, embeddings_store, llm_client)
-    feature_generator = FeatureBuilderAgent(llm_client)
+    agent_llm_client = llm_client if credentials_provided else None
+
+    repo_scanner = RepoScannerAgent(step_index_store, embeddings_store, agent_llm_client)
+    testcase_parser = TestcaseParserAgent(agent_llm_client)
+    step_matcher = StepMatcherAgent(step_index_store, embeddings_store, agent_llm_client)
+    feature_generator = FeatureBuilderAgent(agent_llm_client)
 
     orchestrator = Orchestrator(
         repo_scanner_agent=repo_scanner,
