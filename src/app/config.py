@@ -12,13 +12,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = ROOT_DIR / ".env"
-load_dotenv(ENV_PATH, override=False)
+
+# Загружаем переменные только если файл существует, чтобы избежать лишних предупреждений
+if ENV_PATH.exists():
+    load_dotenv(ENV_PATH, override=False)
 
 
 class Settings(BaseSettings):
     """Основные настройки приложения."""
 
-    model_config = SettingsConfigDict(env_prefix="AGENT_SERVICE_", env_file=ENV_PATH, case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_prefix="AGENT_SERVICE_",
+        env_file=ENV_PATH,
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     app_name: str = Field(default="agent-service", description="Название сервиса")
     api_prefix: str = Field(default="/api/v1", description="Префикс для HTTP API")
@@ -60,6 +68,33 @@ class Settings(BaseSettings):
         default=False,
         description="Проверять ли SSL сертификаты для GigaChat",
         validation_alias=AliasChoices("GIGACHAT_VERIFY_SSL", "AGENT_SERVICE_GIGACHAT_VERIFY_SSL"),
+    )
+
+    # Дополнительные настройки для локальной разработки и интеграций
+    secret_key: str | None = Field(
+        default=None,
+        description="Секретный ключ приложения",
+        validation_alias=AliasChoices("SECRET_KEY", "AGENT_SERVICE_SECRET_KEY"),
+    )
+    input_queue_storage: str | None = Field(
+        default=None,
+        description="Конфигурация хранилища входной очереди",
+        validation_alias=AliasChoices("INPUT_QUEUE_STORAGE", "AGENT_SERVICE_INPUT_QUEUE_STORAGE"),
+    )
+    input_queue_backend: str | None = Field(
+        default=None,
+        description="Тип backend для входной очереди",
+        validation_alias=AliasChoices("INPUT_QUEUE_BACKEND", "AGENT_SERVICE_INPUT_QUEUE_BACKEND"),
+    )
+    azure_function: bool = Field(
+        default=False,
+        description="Флаг запуска в среде Azure Functions",
+        validation_alias=AliasChoices("AZURE_FUNCTION", "AGENT_SERVICE_AZURE_FUNCTION"),
+    )
+    env: str | None = Field(
+        default=None,
+        description="Название окружения (например, dev, prod)",
+        validation_alias=AliasChoices("ENV", "AGENT_SERVICE_ENV"),
     )
 
 
