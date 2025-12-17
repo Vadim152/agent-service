@@ -71,20 +71,18 @@ class HttpBackendClient(
 
         val body = mapper.writeValueAsString(payload)
         val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
-        val contentLength = bodyBytes.size
         val contentType = "application/json"
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .header("Content-Type", contentType)
-            .header("Content-Length", contentLength.toString())
             .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
             .build()
 
         if (logger.isDebugEnabled) {
             val preview = body.take(500)
             logger.debug(
-                "Sending POST to $url with Content-Type=$contentType, Content-Length=$contentLength, body size=$contentLength bytes, preview=\"$preview\""
+                "Sending POST to $url with Content-Type=$contentType, body size=${bodyBytes.size} bytes, preview=\"$preview\""
             )
         }
 
@@ -93,7 +91,7 @@ class HttpBackendClient(
         } catch (ex: Exception) {
             if (logger.isDebugEnabled) {
                 logger.debug(
-                    "Failed to send POST to $url with Content-Length=$contentLength (body size=$contentLength bytes)",
+                    "Failed to send POST to $url with body size=${bodyBytes.size} bytes",
                     ex
                 )
             }
