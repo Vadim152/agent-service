@@ -77,7 +77,8 @@ class HttpBackendClient(
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .header("Content-Type", contentType)
-            .POST(HttpRequest.BodyPublishers.ofString(body))
+            .header("Content-Length", contentLength.toString())
+            .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
             .build()
 
         if (logger.isDebugEnabled) {
