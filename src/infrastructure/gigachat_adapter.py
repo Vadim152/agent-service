@@ -60,15 +60,27 @@ class GigaChatAdapter(LLMClient):
         scope: str = "GIGACHAT_API_PERS",
         verify_ssl_certs: bool = True,
         access_token: str | None = None,
+        allow_fallback: bool | None = None,
     ) -> None:
-        super().__init__(endpoint=base_url, api_key=credentials, model_name=model_name)
+        self.credentials = credentials or self._build_credentials(client_id, client_secret)
+        fallback_enabled = (
+            allow_fallback
+            if allow_fallback is not None
+            else not bool(self.credentials or access_token)
+        )
+
+        super().__init__(
+            endpoint=base_url,
+            api_key=self.credentials,
+            model_name=model_name,
+            allow_fallback=fallback_enabled,
+        )
         self.scope = scope
         self.verify_ssl_certs = verify_ssl_certs
         self.auth_url = auth_url
         self.client_id = client_id
         self.client_secret = client_secret
         self.access_token = access_token
-        self.credentials = credentials or self._build_credentials(client_id, client_secret)
 
     @staticmethod
     def _build_credentials(client_id: str | None, client_secret: str | None) -> str | None:
@@ -77,8 +89,10 @@ class GigaChatAdapter(LLMClient):
         token = f"{client_id}:{client_secret}".encode("utf-8")
         return b64encode(token).decode("utf-8")
 
-    def _create_client(self) -> GigaChat:
+    def _create_client(self) -> GigaChat | None:
         if not (self.credentials or self.access_token):
+            if self.allow_fallback:
+                return None
             raise RuntimeError("Не заданы учетные данные для подключения к GigaChat")
 
         return GigaChat(
@@ -97,8 +111,12 @@ class GigaChatAdapter(LLMClient):
     def embed_text(self, text: str) -> List[float]:
         """Возвращает эмбеддинг для одного текста через GigaChat."""
 
+        client = self._create_client()
+        if not client:
+            return super().embed_text(text)
+
         try:
-            with self._create_client() as client:
+            with client:
                 response = client.embeddings(text)
         except GigaChatException as exc:  # pragma: no cover - внешний SDK
             raise RuntimeError("Ошибка получения эмбеддинга из GigaChat") from exc
@@ -109,8 +127,12 @@ class GigaChatAdapter(LLMClient):
     def embed_texts(self, texts: Iterable[str]) -> List[List[float]]:
         """Возвращает эмбеддинги для списка текстов."""
 
+        client = self._create_client()
+        if not client:
+            return super().embed_texts(list(texts))
+
         try:
-            with self._create_client() as client:
+            with client:
                 response = client.embeddings(list(texts))
         except GigaChatException as exc:  # pragma: no cover - внешний SDK
             raise RuntimeError("Ошибка пакетного получения эмбеддингов из GigaChat") from exc
@@ -120,8 +142,12 @@ class GigaChatAdapter(LLMClient):
     def generate(self, prompt: str, **kwargs: Any) -> str:
         """Генерирует ответ от GigaChat по заданному промпту."""
 
+        client = self._create_client()
+        if not client:
+            return super().generate(prompt, **kwargs)
+
         try:
-            with self._create_client() as client:
+            with client:
                 response: ChatCompletion = client.chat(prompt, **kwargs)
         except GigaChatException as exc:  # pragma: no cover - внешний SDK
             raise RuntimeError("Ошибка генерации текста через GigaChat") from exc

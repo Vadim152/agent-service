@@ -18,7 +18,9 @@ load_dotenv(ENV_PATH, override=False)
 class Settings(BaseSettings):
     """Основные настройки приложения."""
 
-    model_config = SettingsConfigDict(env_prefix="AGENT_SERVICE_", env_file=ENV_PATH, case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_prefix="AGENT_SERVICE_", env_file=ENV_PATH, case_sensitive=False, extra="ignore"
+    )
 
     app_name: str = Field(default="agent-service", description="Название сервиса")
     api_prefix: str = Field(default="/api/v1", description="Префикс для HTTP API")
