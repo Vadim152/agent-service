@@ -72,17 +72,21 @@ class HttpBackendClient(
         val body = mapper.writeValueAsString(payload)
         val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
         val contentType = "application/json"
+        val bodyLength = bodyBytes.size
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .header("Content-Type", contentType)
+            .header("X-Body-Length", bodyLength.toString())
+            // HttpClient automatically sets Content-Length when the BodyPublisher has a known size.
+            // Adding the header manually triggers "restricted header name" errors in the IDE runtime.
             .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
             .build()
 
         if (logger.isDebugEnabled) {
             val preview = body.take(500)
             logger.debug(
-                "Sending POST to $url with Content-Type=$contentType, body size=${bodyBytes.size} bytes, preview=\"$preview\""
+                "Sending POST to $url with Content-Type=$contentType, body size=$bodyLength bytes, preview=\"$preview\""
             )
         }
 
