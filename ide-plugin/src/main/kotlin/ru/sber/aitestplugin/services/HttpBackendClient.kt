@@ -77,8 +77,9 @@ class HttpBackendClient(
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .header("Content-Type", contentType)
-            .header("Content-Length", bodyLength.toString())
             .header("X-Body-Length", bodyLength.toString())
+            // HttpClient automatically sets Content-Length when the BodyPublisher has a known size.
+            // Adding the header manually triggers "restricted header name" errors in the IDE runtime.
             .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
             .build()
 
