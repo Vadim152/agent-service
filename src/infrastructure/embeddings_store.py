@@ -24,6 +24,7 @@ import chromadb
 
 from domain.enums import StepKeyword, StepPatternType
 from domain.models import StepDefinition, StepImplementation, StepParameter
+from tools.cucumber_expression import cucumber_expression_to_regex
 
 
 class EmbeddingsStore:
@@ -70,15 +71,24 @@ class EmbeddingsStore:
         return " \n".join(parts)
 
     def _step_from_metadata(self, metadata: dict) -> StepDefinition:
+        pattern = metadata["pattern"]
+        pattern_type = StepPatternType(
+            metadata.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
+        )
+        regex = metadata.get("regex") or None
+        if not regex:
+            regex = (
+                cucumber_expression_to_regex(pattern)
+                if pattern_type is StepPatternType.CUCUMBER_EXPRESSION
+                else pattern
+            )
         return StepDefinition(
             id=metadata["id"],
             keyword=StepKeyword(metadata["keyword"]),
-            pattern=metadata["pattern"],
-            regex=metadata.get("regex") or None,
+            pattern=pattern,
+            regex=regex,
             code_ref=metadata["code_ref"],
-            pattern_type=StepPatternType(
-                metadata.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
-            ),
+            pattern_type=pattern_type,
             parameters=[
                 StepParameter(name=name)
                 for name in (metadata.get("parameters") or "").split(",")
@@ -199,4 +209,3 @@ class _LocalEmbeddingFunction:
 def _tokenize(text: str) -> list[str]:
     tokens = re.findall(r"\w+", text.lower())
     return tokens
-

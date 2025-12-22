@@ -20,6 +20,7 @@ from domain.models import (
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.gigachat_adapter import GigaChatAdapter
 from infrastructure.step_index_store import StepIndexStore
+from tools.cucumber_expression import cucumber_expression_to_regex
 from tools.feature_generator import FeatureGenerator
 
 logger = logging.getLogger(__name__)
@@ -80,15 +81,24 @@ def _deserialize_scenario(data: dict[str, Any]) -> Scenario:
 
 
 def _deserialize_step_definition(data: dict[str, Any]) -> StepDefinition:
+    pattern = data.get("pattern", "")
+    pattern_type = StepPatternType(
+        data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
+    )
+    regex = data.get("regex")
+    if not regex:
+        regex = (
+            cucumber_expression_to_regex(pattern)
+            if pattern_type is StepPatternType.CUCUMBER_EXPRESSION
+            else pattern
+        )
     return StepDefinition(
         id=data.get("id", ""),
         keyword=StepKeyword(data.get("keyword", StepKeyword.GIVEN.value)),
-        pattern=data.get("pattern", ""),
-        regex=data.get("regex"),
+        pattern=pattern,
+        regex=regex,
         code_ref=data.get("code_ref", ""),
-        pattern_type=StepPatternType(
-            data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
-        ),
+        pattern_type=pattern_type,
         parameters=[StepParameter(**param) for param in data.get("parameters", [])],
         tags=list(data.get("tags", []) or []),
         language=data.get("language"),
