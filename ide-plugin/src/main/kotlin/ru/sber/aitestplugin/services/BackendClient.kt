@@ -5,6 +5,7 @@ import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
+import ru.sber.aitestplugin.model.StepDefinitionDto
 
 /**
  * Абстракция клиента, обращающегося к backend-сервису agent-service.
@@ -12,6 +13,8 @@ import ru.sber.aitestplugin.model.ScanStepsResponseDto
  */
 interface BackendClient {
     fun scanSteps(projectRoot: String): ScanStepsResponseDto
+
+    fun listSteps(projectRoot: String): List<StepDefinitionDto>
 
     fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto
 

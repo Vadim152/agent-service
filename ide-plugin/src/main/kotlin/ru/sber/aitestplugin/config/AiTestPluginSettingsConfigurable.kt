@@ -80,6 +80,7 @@ class AiTestPluginSettingsConfigurable(
             buildUi()
         }
         projectRootField.text = saved.scanProjectRoot ?: project.basePath.orEmpty()
+        loadIndexedSteps(projectRootField.text.trim())
     }
 
     private fun buildUi() {
@@ -115,6 +116,42 @@ class AiTestPluginSettingsConfigurable(
         scanButton.addActionListener {
             runScanSteps()
         }
+    }
+
+    private fun loadIndexedSteps(projectRoot: String) {
+        if (projectRoot.isBlank()) return
+
+        statusLabel.icon = AllIcons.General.BalloonInformation
+        statusLabel.text = "Загрузка сохранённых шагов..."
+
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Загрузка сохранённых шагов", true) {
+            private var responseSteps = emptyList<StepDefinitionDto>()
+            private var statusMessage: String = ""
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Обращение к сервису..."
+                responseSteps = backendClient.listSteps(projectRoot)
+                statusMessage = if (responseSteps.isEmpty()) {
+                    "Сохранённые шаги не найдены"
+                } else {
+                    "Найдено ${responseSteps.size} шагов • Загружено из индекса"
+                }
+            }
+
+            override fun onSuccess() {
+                stepsList.setListData(responseSteps.toTypedArray())
+                unmappedList.setListData(emptyArray())
+                statusLabel.icon = AllIcons.General.InspectionsOK
+                statusLabel.text = statusMessage
+            }
+
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Непредвиденная ошибка"
+                statusLabel.icon = AllIcons.General.Warning
+                statusLabel.text = "Не удалось загрузить индекс: $message"
+                notify(message, NotificationType.WARNING)
+            }
+        })
     }
 
     private fun buildScanControls(): JPanel {
