@@ -13,6 +13,7 @@ import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
+import ru.sber.aitestplugin.model.StepDefinitionDto
 import java.net.URI
 import java.net.URLEncoder
 import com.fasterxml.jackson.databind.JsonNode
@@ -41,6 +42,11 @@ class HttpBackendClient(
         val request = ScanStepsRequestDto(projectRoot)
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
         return post("/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
+    }
+
+    override fun listSteps(projectRoot: String): List<StepDefinitionDto> {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/steps/?projectRoot=$encodedProjectRoot")
     }
 
     override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto {
@@ -129,6 +135,52 @@ class HttpBackendClient(
                     }
                     else -> responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
                 }
+                throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
+            }
+
+            return try {
+                mapper.readValue(responseBody)
+            } catch (ex: Exception) {
+                throw BackendException("Failed to parse response from $url: ${ex.message}", ex)
+            }
+        }
+    }
+
+    private inline fun <reified T : Any> get(
+        path: String,
+        timeoutMs: Int? = null
+    ): T {
+        val settings = settingsProvider()
+        val url = "${settings.backendUrl.trimEnd('/')}$path"
+        val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
+        val client = OkHttpClient.Builder()
+            .callTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
+            .connectTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
+            .build()
+
+        val request = Request.Builder()
+            .url(URI.create(url).toURL())
+            .get()
+            .build()
+
+        val response = try {
+            client.newCall(request).execute()
+        } catch (ex: Exception) {
+            if (logger.isDebugEnabled) {
+                logger.debug("Failed to send GET to $url", ex)
+            }
+            throw BackendException("Failed to call $url: ${ex.message}", ex)
+        }
+
+        response.use { httpResponse ->
+            val responseBody = httpResponse.body?.string().orEmpty()
+            if (!httpResponse.isSuccessful) {
+                if (logger.isDebugEnabled) {
+                    logger.debug(
+                        "Received non-2xx from $url: status=${httpResponse.code}, headers=${httpResponse.headers}, body=\"$responseBody\""
+                    )
+                }
+                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
                 throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
 
