@@ -94,11 +94,6 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
 
     if not raw_body:
         logger.debug("API: request headers snapshot=%s", dict(request.headers))
-        if content_length not in (None, str(body_len)):
-            logger.debug(
-                "API: Content-Length mismatch: header=%s, read=%s", content_length, body_len
-            )
-
         logger.warning(
             (
                 "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s, "
@@ -109,34 +104,18 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
             content_type,
             body_preview,
         )
-        mismatch_note = (
-            "; Content-Length differs from read body"
-            if content_length not in (None, str(body_len))
-            else ""
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Request body is empty; ensure Content-Type: application/json and non-empty payload"
-                f" (read {body_len} bytes, content-length={content_length}{mismatch_note})"
-            ),
-        )
 
     try:
-        request_model = GenerateFeatureRequest.model_validate_json(raw_body)
+        if raw_body:
+            request_model = GenerateFeatureRequest.model_validate_json(raw_body)
+        else:
+            request_model = GenerateFeatureRequest.model_validate({})
     except ValidationError as exc:  # pragma: no cover - форма валидируется FastAPI
         logger.warning("API: generate-feature validation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=jsonable_encoder(exc.errors()),
         ) from exc
-
-    if content_length not in (None, str(body_len)):
-        logger.info(
-            "API: Body read length differs from Content-Length: header=%s, read=%s",
-            content_length,
-            body_len,
-        )
 
     logger.info(
         (
