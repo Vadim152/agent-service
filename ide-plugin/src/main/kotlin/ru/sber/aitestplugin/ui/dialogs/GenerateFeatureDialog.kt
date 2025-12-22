@@ -76,8 +76,6 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
     )
 
     private fun hintLabel(text: String): JLabel = JLabel(text).apply {
-        font = font.deriveFont(Font.PLAIN, font.size2D - 1)
-        foreground = JBColor.GRAY
         border = JBUI.Borders.emptyLeft(2)
     }
 

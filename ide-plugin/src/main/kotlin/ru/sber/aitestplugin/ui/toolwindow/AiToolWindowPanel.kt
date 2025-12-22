@@ -205,12 +205,10 @@ class AiToolWindowPanel(
     }
 
     private fun createSectionLabel(text: String): JLabel = JLabel(text).apply {
-        font = font.deriveFont(Font.BOLD, font.size2D + 1)
         border = JBUI.Borders.emptyBottom(6)
     }
 
     private fun createHintLabel(text: String): JLabel = JLabel(text).apply {
-        font = font.deriveFont(Font.PLAIN, font.size2D - 1)
         foreground = JBColor.GRAY
     }
 
