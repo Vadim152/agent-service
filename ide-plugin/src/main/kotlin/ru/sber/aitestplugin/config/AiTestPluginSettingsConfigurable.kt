@@ -33,7 +33,10 @@ import javax.swing.JPanel
 /**
  * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
  */
-class AiTestPluginSettingsConfigurable : Configurable {
+class AiTestPluginSettingsConfigurable(
+    private val project: Project? = null,
+    private val backendClient: BackendClient = HttpBackendClient()
+) : Configurable {
     private val settingsService = AiTestPluginSettingsService.getInstance()
     private var project: Project = ProjectManager.getInstance().defaultProject
     private var backendClient: BackendClient = HttpBackendClient()
