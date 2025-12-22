@@ -38,6 +38,8 @@ class AiTestPluginSettingsConfigurable(
     private val backendClient: BackendClient = HttpBackendClient()
 ) : Configurable {
     private val settingsService = AiTestPluginSettingsService.getInstance()
+    private lateinit var project: Project
+    private var backendClient: BackendClient = HttpBackendClient()
 
     private val projectRootField = JBTextField()
     private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
