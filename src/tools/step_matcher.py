@@ -55,7 +55,7 @@ class StepMatcher:
                     }
                 )
             else:
-                gherkin_line = self._build_gherkin_line(best_def, test_step)
+                gherkin_line = None
 
             matches.append(
                 MatchedStep(
@@ -160,16 +160,11 @@ class StepMatcher:
         return MatchStatus.UNMATCHED
 
     def _build_gherkin_line(self, definition: StepDefinition, test_step: TestStep) -> str:
-        """Формирует строку Gherkin для найденного определения с подстановкой параметров."""
+        """Формирует шаблон шага с подстановкой параметров без ключевого слова."""
 
         if not definition:
             return ""
 
-        keyword = (
-            definition.keyword.value
-            if isinstance(definition.keyword, StepKeyword)
-            else str(definition.keyword)
-        )
         pattern = definition.pattern
         regex = definition.regex or pattern
 
@@ -189,7 +184,7 @@ class StepMatcher:
             elif groups:
                 filled_pattern = " ".join([pattern] + list(groups))
 
-        return f"{keyword} {filled_pattern}"
+        return filled_pattern
 
     def _combine_score(
         self,
