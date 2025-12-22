@@ -29,6 +29,7 @@ import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
 import ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialogOptions
 import java.awt.BorderLayout
 import java.awt.Font
+import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JButton
@@ -66,6 +67,7 @@ class AiToolWindowPanel(
         border = JBUI.Borders.empty(6, 12)
         isOpaque = true
     }
+    private val testScenarioButton = JButton("Тестовый сценарий")
     private val featureTextPane = JBTextArea().apply {
         isEditable = false
         lineWrap = true
@@ -74,6 +76,13 @@ class AiToolWindowPanel(
     private val usedStepsList = JBList<StepDefinitionDto>()
     private val generatedUnmappedList = JBList<UnmappedStepDto>()
     private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, SwingConstants.LEADING)
+    private val sampleTestCase = """
+        Feature: Пример авторизации
+          Scenario: Успешный вход
+            Given пользователь на странице входа
+            When он вводит корректные учетные данные
+            Then отображается главная страница
+    """.trimIndent()
 
     init {
         border = JBUI.Borders.empty(12)
@@ -160,6 +169,12 @@ class AiToolWindowPanel(
         }
 
         generateButton.addActionListener {
+            runGenerateFeature()
+        }
+
+        testScenarioButton.addActionListener {
+            testCaseInput.text = sampleTestCase
+            testCaseInput.caretPosition = 0
             runGenerateFeature()
         }
     }
@@ -429,7 +444,12 @@ class AiToolWindowPanel(
 
         formConstraints.gridy++
         formConstraints.insets = JBUI.insets(12, 0, 0, 0)
-        panel.add(generateButton, formConstraints)
+        val actionPanel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 0)).apply {
+            background = JBColor.PanelBackground
+            add(generateButton)
+            add(testScenarioButton)
+        }
+        panel.add(actionPanel, formConstraints)
         return panel
     }
 
