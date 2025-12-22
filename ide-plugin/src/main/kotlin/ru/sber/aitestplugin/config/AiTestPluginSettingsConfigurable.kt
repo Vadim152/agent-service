@@ -1,199 +1,254 @@
 package ru.sber.aitestplugin.config
 
-import com.intellij.openapi.options.ConfigurationException
+import com.intellij.icons.AllIcons
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.options.Configurable
-import com.intellij.ui.components.JBCheckBox
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
+import com.intellij.openapi.project.Project
+import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.JBSplitter
+import com.intellij.ui.JBColor
+import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import ru.sber.aitestplugin.model.StepDefinitionDto
+import ru.sber.aitestplugin.model.UnmappedStepDto
+import ru.sber.aitestplugin.services.BackendClient
+import ru.sber.aitestplugin.services.HttpBackendClient
+import java.awt.BorderLayout
+import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
-import javax.swing.JComboBox
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.JSpinner
-import javax.swing.JTextField
-import javax.swing.SpinnerNumberModel
 
 /**
- * Панель настроек плагина (Settings/Preferences → "AI Test Agent").
- * Позволяет редактировать URL backend, таймаут и настройки сценариев/сканирования.
+ * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
  */
-class AiTestPluginSettingsConfigurable : Configurable {
+class AiTestPluginSettingsConfigurable(
+    private val project: Project,
+    private val backendClient: BackendClient = HttpBackendClient()
+) : Configurable {
     private val settingsService = AiTestPluginSettingsService.getInstance()
 
-    private val backendUrlField = JTextField()
-    private val timeoutField = JTextField()
-
-    private val scanProjectRootField = JTextField()
-    private val scanDepthSpinner = JSpinner(SpinnerNumberModel(AiTestPluginSettings.DEFAULT_SCAN_DEPTH, 1, 10_000, 1))
-    private val scanPatternField = JTextField()
-    private val scanLanguageCombo = JComboBox(arrayOf("auto", "ru", "en"))
-
-    private val generateTargetPathField = JTextField()
-    private val generateCreateFileCheckbox = JBCheckBox("Создавать файл при отсутствии")
-    private val generateOverwriteCheckbox = JBCheckBox("Перезаписывать существующий файл")
-    private val generateLanguageField = JTextField()
-
-    private val applyTargetPathField = JTextField()
-    private val applyCreateFileCheckbox = JBCheckBox("Создавать файл при отсутствии")
-    private val applyOverwriteCheckbox = JBCheckBox("Перезаписывать существующий файл")
-
-    private val rootPanel: JPanel = JPanel(GridBagLayout()).apply {
-        val gbc = GridBagConstraints().apply {
-            gridx = 0
-            gridy = 0
-            weightx = 1.0
-            fill = GridBagConstraints.HORIZONTAL
-            anchor = GridBagConstraints.NORTHWEST
-            insets = JBUI.insetsBottom(12)
-        }
-
-        add(sectionLabel("Подключение к бэкенду"), gbc)
-        gbc.gridy++
-        add(labeledRow("URL бэкенда", backendUrlField), gbc)
-        gbc.gridy++
-        add(labeledRow("Таймаут (мс)", timeoutField), gbc)
-
-        gbc.gridy++
-        add(sectionLabel("Сканирование шагов"), gbc)
-        gbc.gridy++
-        add(labeledRow("Корень проекта по умолчанию", scanProjectRootField), gbc)
-        gbc.gridy++
-        add(labeledRow("Глубина поиска", scanDepthSpinner), gbc)
-        gbc.gridy++
-        add(labeledRow("Паттерн файлов", scanPatternField), gbc)
-        gbc.gridy++
-        add(labeledRow("Язык интерфейса", scanLanguageCombo), gbc)
-
-        gbc.gridy++
-        add(sectionLabel("Генерация feature"), gbc)
-        gbc.gridy++
-        add(labeledRow("Целевой путь по умолчанию", generateTargetPathField), gbc)
-        gbc.gridy++
-        add(generateCreateFileCheckbox, gbc)
-        gbc.gridy++
-        add(generateOverwriteCheckbox, gbc)
-        gbc.gridy++
-        add(labeledRow("Язык генерации", generateLanguageField), gbc)
-
-        gbc.gridy++
-        add(sectionLabel("Применение feature"), gbc)
-        gbc.gridy++
-        add(labeledRow("Целевой путь по умолчанию", applyTargetPathField), gbc)
-        gbc.gridy++
-        add(applyCreateFileCheckbox, gbc)
-        gbc.gridy++
-        add(applyOverwriteCheckbox, gbc)
+    private val projectRootField = JBTextField()
+    private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
+        foreground = JBColor(0x0B5CAD, 0x78A6FF)
+        background = JBColor(0xE8F1FF, 0x2C3F57)
+        border = JBUI.Borders.empty(6, 12)
+        isOpaque = true
     }
+    private val stepsList = JBList<StepDefinitionDto>()
+    private val unmappedList = JBList<UnmappedStepDto>()
+    private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
+
+    private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
 
     override fun getDisplayName(): String = "AI Test Agent"
 
-    override fun createComponent(): JComponent = rootPanel
+    override fun createComponent(): JComponent {
+        if (rootPanel.componentCount == 0) {
+            buildUi()
+        }
+        return rootPanel
+    }
 
     override fun isModified(): Boolean {
         val saved = settingsService.settings
-        return backendUrlField.text.trim() != saved.backendUrl ||
-            timeoutField.text.trim() != saved.requestTimeoutMs.toString() ||
-            scanProjectRootField.text.trim() != (saved.scanProjectRoot ?: "") ||
-            (scanDepthSpinner.value as? Int ?: saved.scanSearchDepth) != saved.scanSearchDepth ||
-            scanPatternField.text.trim() != saved.scanFilePattern ||
-            scanLanguageCombo.selectedItem != saved.scanLanguage ||
-            generateTargetPathField.text.trim() != (saved.generateFeatureTargetPath ?: "") ||
-            generateCreateFileCheckbox.isSelected != saved.generateFeatureCreateFile ||
-            generateOverwriteCheckbox.isSelected != saved.generateFeatureOverwriteExisting ||
-            generateLanguageField.text.trim() != (saved.generateFeatureLanguage ?: "") ||
-            applyTargetPathField.text.trim() != (saved.applyFeatureTargetPath ?: "") ||
-            applyCreateFileCheckbox.isSelected != saved.applyFeatureCreateFile ||
-            applyOverwriteCheckbox.isSelected != saved.applyFeatureOverwriteExisting
+        return projectRootField.text.trim() != (saved.scanProjectRoot ?: "")
     }
 
     override fun apply() {
-        val backendUrl = backendUrlField.text.trim()
-        val timeout = timeoutField.text.trim().toIntOrNull() ?: throw ConfigurationException("Таймаут должен быть целым числом")
-        validateBackendUrl(backendUrl)
-        if (timeout <= 0) throw ConfigurationException("Таймаут должен быть положительным")
-
-        val scanDepth = (scanDepthSpinner.value as? Int) ?: throw ConfigurationException("Глубина поиска должна быть числом")
-        if (scanDepth <= 0) throw ConfigurationException("Глубина поиска должна быть больше 0")
-
-        settingsService.settings.apply {
-            this.backendUrl = backendUrl
-            this.requestTimeoutMs = timeout
-            this.scanProjectRoot = scanProjectRootField.text.trim().ifEmpty { null }
-            this.scanSearchDepth = scanDepth
-            this.scanFilePattern = scanPatternField.text.trim().ifEmpty { AiTestPluginSettings.DEFAULT_SCAN_PATTERN }
-            this.scanLanguage = (scanLanguageCombo.selectedItem as? String)?.ifBlank { AiTestPluginSettings.DEFAULT_LANGUAGE }
-                ?: AiTestPluginSettings.DEFAULT_LANGUAGE
-
-            this.generateFeatureTargetPath = generateTargetPathField.text.trim().ifEmpty { null }
-            this.generateFeatureCreateFile = generateCreateFileCheckbox.isSelected
-            this.generateFeatureOverwriteExisting = generateOverwriteCheckbox.isSelected
-            this.generateFeatureLanguage = generateLanguageField.text.trim().ifEmpty { null }
-
-            this.applyFeatureTargetPath = applyTargetPathField.text.trim().ifEmpty { null }
-            this.applyFeatureCreateFile = applyCreateFileCheckbox.isSelected
-            this.applyFeatureOverwriteExisting = applyOverwriteCheckbox.isSelected
-        }
+        settingsService.settings.scanProjectRoot = projectRootField.text.trim().ifEmpty { null }
     }
 
     override fun reset() {
         val saved = settingsService.settings
-        backendUrlField.text = saved.backendUrl
-        timeoutField.text = saved.requestTimeoutMs.toString()
-
-        scanProjectRootField.text = saved.scanProjectRoot ?: ""
-        scanDepthSpinner.value = saved.scanSearchDepth
-        scanPatternField.text = saved.scanFilePattern
-        val languageToSelect = (0 until scanLanguageCombo.itemCount)
-            .map { scanLanguageCombo.getItemAt(it) }
-            .firstOrNull { it == saved.scanLanguage }
-            ?: AiTestPluginSettings.DEFAULT_LANGUAGE
-        scanLanguageCombo.selectedItem = languageToSelect
-
-        generateTargetPathField.text = saved.generateFeatureTargetPath ?: ""
-        generateCreateFileCheckbox.isSelected = saved.generateFeatureCreateFile
-        generateOverwriteCheckbox.isSelected = saved.generateFeatureOverwriteExisting
-        generateLanguageField.text = saved.generateFeatureLanguage ?: ""
-
-        applyTargetPathField.text = saved.applyFeatureTargetPath ?: ""
-        applyCreateFileCheckbox.isSelected = saved.applyFeatureCreateFile
-        applyOverwriteCheckbox.isSelected = saved.applyFeatureOverwriteExisting
+        if (rootPanel.componentCount == 0) {
+            buildUi()
+        }
+        projectRootField.text = saved.scanProjectRoot ?: project.basePath.orEmpty()
     }
 
-    private fun validateBackendUrl(url: String) {
-        if (url.isBlank()) {
-            throw ConfigurationException("Backend URL не может быть пустым")
+    private fun buildUi() {
+        val topPanel = createCardPanel().apply {
+            add(sectionLabel("Сканирование шагов"), BorderLayout.NORTH)
+            add(buildScanControls(), BorderLayout.CENTER)
         }
 
-        val parsedUrl = try {
-            java.net.URL(url)
-        } catch (ex: java.net.MalformedURLException) {
-            throw ConfigurationException("Некорректный backend URL: ${ex.message}")
+        stepsList.emptyText.text = "Шаги ещё не найдены"
+        unmappedList.emptyText.text = "Неотображённые шаги отсутствуют"
+        configureStepRenderer(stepsList)
+        configureUnmappedRenderer(unmappedList)
+
+        val stepsPanel = createCardPanel().apply {
+            add(sectionLabel("Найденные шаги"), BorderLayout.NORTH)
+            add(JBScrollPane(stepsList), BorderLayout.CENTER)
         }
 
-        val protocol = parsedUrl.protocol?.lowercase()
-        if (protocol != "http" && protocol != "https") {
-            throw ConfigurationException("Backend URL должен начинаться с http:// или https://")
+        val unmappedPanel = createCardPanel().apply {
+            add(sectionLabel("Неотображённые шаги"), BorderLayout.NORTH)
+            add(JBScrollPane(unmappedList), BorderLayout.CENTER)
+        }
+
+        val listsSplitter = JBSplitter(false, 0.5f).apply {
+            firstComponent = stepsPanel
+            secondComponent = unmappedPanel
+        }
+
+        rootPanel.add(topPanel, BorderLayout.NORTH)
+        rootPanel.add(listsSplitter, BorderLayout.CENTER)
+        rootPanel.add(statusLabel, BorderLayout.SOUTH)
+
+        scanButton.addActionListener {
+            runScanSteps()
         }
     }
 
-    private fun sectionLabel(text: String): JLabel = JLabel(text).apply {
-        border = JBUI.Borders.empty(4, 0, 6, 0)
-    }
-
-    private fun labeledRow(label: String, component: JComponent): JPanel = JPanel(GridBagLayout()).apply {
+    private fun buildScanControls(): JPanel {
+        val panel = JPanel(GridBagLayout())
+        panel.background = JBColor.PanelBackground
         val gbc = GridBagConstraints().apply {
             gridx = 0
             gridy = 0
             weightx = 0.0
-            anchor = GridBagConstraints.WEST
-            insets = JBUI.insetsRight(8)
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insetsBottom(6)
+            anchor = GridBagConstraints.NORTHWEST
         }
-        add(JLabel(label), gbc)
-        gbc.gridx = 1
+
+        panel.add(JLabel("Корень проекта"), gbc)
+        gbc.gridx++
         gbc.weightx = 1.0
-        gbc.fill = GridBagConstraints.HORIZONTAL
-        add(component, gbc)
+        panel.add(projectRootField, gbc)
+
+        gbc.gridx++
+        gbc.weightx = 0.0
+        panel.add(scanButton, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.gridwidth = 3
+        val hint = JLabel("Укажите путь, который будет передан сервису сканирования.").apply {
+            font = font.deriveFont(Font.PLAIN, font.size2D - 1)
+            foreground = JBColor.GRAY
+        }
+        panel.add(hint, gbc)
+
+        return panel
+    }
+
+    private fun runScanSteps() {
+        val projectRoot = projectRootField.text.trim()
+            .ifEmpty { settingsService.settings.scanProjectRoot.orEmpty() }
+            .ifEmpty { project.basePath.orEmpty() }
+        if (projectRoot.isBlank()) {
+            statusLabel.icon = AllIcons.General.Warning
+            statusLabel.text = "Путь к проекту не указан"
+            notify("Укажите путь к корню проекта", NotificationType.WARNING)
+            return
+        }
+        settingsService.settings.scanProjectRoot = projectRoot
+
+        statusLabel.icon = AllIcons.General.BalloonInformation
+        statusLabel.text = "Идёт сканирование проекта..."
+
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Сканирование шагов Cucumber", true) {
+            private var responseSteps = emptyList<StepDefinitionDto>()
+            private var responseUnmapped = emptyList<UnmappedStepDto>()
+            private var statusMessage: String = ""
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Обращение к сервису..."
+                val response = backendClient.scanSteps(projectRoot)
+                responseSteps = response.sampleSteps.orEmpty()
+                responseUnmapped = response.unmappedSteps
+                val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", неотображённых: ${responseUnmapped.size}"
+                statusMessage = "Найдено ${response.stepsCount} шагов$unmappedMessage • Обновлено ${response.updatedAt}"
+            }
+
+            override fun onSuccess() {
+                stepsList.setListData(responseSteps.toTypedArray())
+                unmappedList.setListData(responseUnmapped.toTypedArray())
+                statusLabel.icon = AllIcons.General.InspectionsOK
+                statusLabel.text = statusMessage
+            }
+
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Непредвиденная ошибка"
+                statusLabel.icon = AllIcons.General.Error
+                statusLabel.text = "Сканирование не удалось: $message"
+                notify(message, NotificationType.ERROR)
+            }
+        })
+    }
+
+    private fun configureStepRenderer(list: JBList<StepDefinitionDto>) {
+        list.cellRenderer = object : ColoredListCellRenderer<StepDefinitionDto>() {
+            override fun customizeCellRenderer(
+                list: javax.swing.JList<out StepDefinitionDto>,
+                value: StepDefinitionDto?,
+                index: Int,
+                selected: Boolean,
+                hasFocus: Boolean,
+            ) {
+                if (value == null) return
+                val keywordAttributes = SimpleTextAttributes(SimpleTextAttributes.STYLE_UNDERLINE, JBColor(0x0B874B, 0x7DE390))
+                append(value.keyword, keywordAttributes)
+                append(" ${value.pattern}")
+                value.summary?.takeIf { it.isNotBlank() }?.let {
+                    append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                }
+            }
+        }
+    }
+
+    private fun configureUnmappedRenderer(list: JBList<UnmappedStepDto>) {
+        list.cellRenderer = object : ColoredListCellRenderer<UnmappedStepDto>() {
+            override fun customizeCellRenderer(
+                list: javax.swing.JList<out UnmappedStepDto>,
+                value: UnmappedStepDto?,
+                index: Int,
+                selected: Boolean,
+                hasFocus: Boolean,
+            ) {
+                if (value == null) return
+                val warningColor = JBColor(0xC77C02, 0xFFB86C)
+                val keyword = value.text.substringBefore(' ')
+                val rest = value.text.removePrefix(keyword).trimStart()
+                append(keyword, SimpleTextAttributes(SimpleTextAttributes.STYLE_UNDERLINE, warningColor))
+                if (rest.isNotBlank()) {
+                    append(" $rest", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, warningColor))
+                }
+                value.reason?.let { append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+            }
+        }
+    }
+
+    private fun notify(message: String, type: NotificationType) {
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("AI Cucumber Assistant")
+            .createNotification(message, type)
+            .notify(project)
+    }
+
+    private fun sectionLabel(text: String): JLabel = JLabel(text).apply {
+        font = font.deriveFont(Font.BOLD, font.size2D + 1)
         border = JBUI.Borders.emptyBottom(6)
+    }
+
+    private fun createCardPanel(): JPanel = JPanel(BorderLayout()).apply {
+        background = JBColor.PanelBackground
+        border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 1),
+            JBUI.Borders.empty(12)
+        )
     }
 }
