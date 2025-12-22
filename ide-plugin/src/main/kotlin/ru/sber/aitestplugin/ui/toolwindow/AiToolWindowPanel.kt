@@ -24,7 +24,6 @@ import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
 import ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialogOptions
 import java.awt.BorderLayout
-import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import javax.swing.JButton
