@@ -44,6 +44,7 @@ class HttpBackendClient(
     }
 
     override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto {
+        val settings = settingsProvider()
         val sanitizedRequest = request.copy(
             projectRoot = request.projectRoot.trim(),
             testCaseText = request.testCaseText.trim()
@@ -57,18 +58,27 @@ class HttpBackendClient(
             throw BackendException("Test case text must not be empty")
         }
 
-        return post("/feature/generate-feature", sanitizedRequest)
+        return post(
+            "/feature/generate-feature",
+            sanitizedRequest,
+            timeoutMs = settings.generateFeatureTimeoutMs
+        )
     }
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
         post("/feature/apply-feature", request)
 
-    private inline fun <reified T : Any> post(path: String, payload: Any): T {
+    private inline fun <reified T : Any> post(
+        path: String,
+        payload: Any,
+        timeoutMs: Int? = null
+    ): T {
         val settings = settingsProvider()
         val url = "${settings.backendUrl.trimEnd('/')}$path"
+        val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
         val client = OkHttpClient.Builder()
-            .callTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
-            .connectTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
+            .callTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
+            .connectTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
             .build()
 
         val body = mapper.writeValueAsString(payload)
