@@ -7,6 +7,7 @@ package ru.sber.aitestplugin.config
 data class AiTestPluginSettings(
     var backendUrl: String = DEFAULT_BACKEND_URL,
     var requestTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
+    var generateFeatureTimeoutMs: Int = DEFAULT_GENERATE_FEATURE_TIMEOUT_MS,
     var scanProjectRoot: String? = null,
     var scanSearchDepth: Int = DEFAULT_SCAN_DEPTH,
     var scanFilePattern: String = DEFAULT_SCAN_PATTERN,
@@ -25,6 +26,7 @@ data class AiTestPluginSettings(
     companion object {
         const val DEFAULT_BACKEND_URL: String = "http://localhost:8000/api/v1"
         const val DEFAULT_TIMEOUT_MS: Int = 30_000
+        const val DEFAULT_GENERATE_FEATURE_TIMEOUT_MS: Int = 120_000
         const val DEFAULT_SCAN_DEPTH: Int = 5
         const val DEFAULT_SCAN_PATTERN: String = "**/*.feature"
         const val DEFAULT_LANGUAGE: String = "auto"
