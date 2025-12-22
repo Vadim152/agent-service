@@ -11,15 +11,19 @@ from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario, l
 class FeatureGenerator:
     """Собирает FeatureFile и финальный Gherkin-текст."""
 
+    def __init__(self) -> None:
+        self.language: str | None = None
+
     def build_feature(
         self, scenario: Scenario, matched_steps: list[MatchedStep], language: str | None = None
     ) -> FeatureFile:
         """Создает структуру FeatureFile на основе сценария и сопоставленных шагов."""
 
+        self.language = language or "ru"
         feature = FeatureFile(
             name=scenario.name or "Feature",
             description=scenario.description or scenario.expected_result,
-            language=language or "ru",
+            language=self.language,
             tags=scenario.tags,
             background_steps=[],
             scenarios=[],
@@ -28,7 +32,7 @@ class FeatureGenerator:
         scenario_steps: list[str] = []
         steps_details: list[dict[str, Any]] = []
         for matched_step in matched_steps:
-            rendered, meta = self._render_step(matched_step)
+            rendered, meta = self._render_step(matched_step, self.language)
             scenario_steps.append(rendered)
             step_payload: dict[str, Any] = {
                 "originalStep": matched_step.test_step.text,
@@ -85,7 +89,9 @@ class FeatureGenerator:
 
         return "\n".join(lines).rstrip() + "\n"
 
-    def _render_step(self, matched_step: MatchedStep) -> tuple[str, dict[str, Any]]:
+    def _render_step(
+        self, matched_step: MatchedStep, language: str | None
+    ) -> tuple[str, dict[str, Any]]:
         """Преобразует MatchedStep в строку Gherkin и сопутствующие метаданные."""
 
         if matched_step.generated_gherkin_line:
@@ -96,31 +102,35 @@ class FeatureGenerator:
             if isinstance(matched_step.notes, dict):
                 reason = matched_step.notes.get("reason")
             marker = reason or "unmatched"
-            line = f"{StepKeyword.WHEN.as_text()} <{marker}: {matched_step.test_step.text}>"
+            line = (
+                f"{StepKeyword.WHEN.as_text(language)} <{marker}: {matched_step.test_step.text}>"
+            )
             meta: dict[str, Any] = {"substitutionType": "unmatched"}
             if reason:
                 meta["reason"] = reason
             return line, meta
 
-        rendered, meta = self._build_gherkin_line(matched_step)
+        rendered, meta = self._build_gherkin_line(matched_step, language)
         return rendered, meta
 
-    def _select_keyword(self, matched_step: MatchedStep) -> str:
+    def _select_keyword(self, matched_step: MatchedStep, language: str | None) -> str:
         """Выбирает ключевое слово для шага."""
 
         definition = matched_step.step_definition
         if definition and isinstance(definition.keyword, StepKeyword):
-            return definition.keyword.as_text()
-        return StepKeyword.WHEN.as_text()
+            return definition.keyword.as_text(language)
+        return StepKeyword.WHEN.as_text(language)
 
-    def _build_gherkin_line(self, matched_step: MatchedStep) -> tuple[str, dict[str, Any]]:
+    def _build_gherkin_line(
+        self, matched_step: MatchedStep, language: str | None
+    ) -> tuple[str, dict[str, Any]]:
         """Формирует строку Gherkin для найденного определения с подстановкой параметров."""
 
         definition = matched_step.step_definition
         if not definition:
             return "", {"substitutionType": "unmatched"}
 
-        keyword = self._select_keyword(matched_step)
+        keyword = self._select_keyword(matched_step, language)
         pattern = definition.pattern
         regex = definition.regex or pattern
 

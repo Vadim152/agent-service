@@ -13,8 +13,18 @@ class StepKeyword(str, Enum):
     AND = "And"
     BUT = "But"
 
-    def as_text(self) -> str:
+    def as_text(self, language: str | None = None) -> str:
         """Возвращает строковое представление ключевого слова."""
+
+        if language and language.casefold() == "ru":
+            localized = {
+                StepKeyword.GIVEN: "Дано",
+                StepKeyword.WHEN: "Когда",
+                StepKeyword.THEN: "Тогда",
+                StepKeyword.AND: "И",
+                StepKeyword.BUT: "Но",
+            }
+            return localized[self]
         return self.value
 
     @classmethod
