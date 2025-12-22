@@ -20,6 +20,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import com.fasterxml.jackson.databind.JsonNode
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Duration
 
 /**
@@ -73,11 +74,15 @@ class HttpBackendClient(
         val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
         val contentType = "application/json"
         val bodyLength = bodyBytes.size
+        val bodyHash = sha256Short(bodyBytes)
+        val reqId = java.util.UUID.randomUUID().toString()
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))
             .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .header("Content-Type", contentType)
+            .header("X-Request-Id", reqId)
             .header("X-Body-Length", bodyLength.toString())
+            .header("X-Body-Hash", bodyHash)
             // HttpClient automatically sets Content-Length when the BodyPublisher has a known size.
             // Adding the header manually triggers "restricted header name" errors in the IDE runtime.
             .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
@@ -86,7 +91,21 @@ class HttpBackendClient(
         if (logger.isDebugEnabled) {
             val preview = body.take(500)
             logger.debug(
-                "Sending POST to $url with Content-Type=$contentType, body size=$bodyLength bytes, preview=\"$preview\""
+                """
+                |HTTP REQUEST
+                |reqId=$reqId
+                |url=$url
+                |method=POST
+                |contentType=$contentType
+                |bodyLength=$bodyLength
+                |bodyHash=$bodyHash
+                |bodyPreview=$preview
+                |requestHeaders=${request.headers().map()}
+                |javaVersion=${System.getProperty("java.version")}
+                |httpProxy=${System.getProperty("http.proxyHost")}:${System.getProperty("http.proxyPort")}
+                |httpsProxy=${System.getProperty("https.proxyHost")}:${System.getProperty("https.proxyPort")}
+                |nonProxyHosts=${System.getProperty("http.nonProxyHosts")}
+                """.trimMargin()
             )
         }
 
@@ -95,11 +114,25 @@ class HttpBackendClient(
         } catch (ex: Exception) {
             if (logger.isDebugEnabled) {
                 logger.debug(
-                    "Failed to send POST to $url with body size=${bodyBytes.size} bytes",
+                    "Failed to send POST reqId=$reqId to $url with body size=${bodyBytes.size} bytes",
                     ex
                 )
             }
             throw BackendException("Failed to call $url: ${ex.message}", ex)
+        }
+
+        if (logger.isDebugEnabled) {
+            val responseBody = response.body()
+            logger.debug(
+                """
+                |HTTP RESPONSE
+                |reqId=$reqId
+                |status=${response.statusCode()}
+                |responseHeaders=${response.headers().map()}
+                |responseBodyLength=${responseBody.length}
+                |responsePreview=${responseBody.take(500)}
+                """.trimMargin()
+            )
         }
 
         if (response.statusCode() !in 200..299) {
@@ -146,5 +179,15 @@ class HttpBackendClient(
         } catch (_: Exception) {
             body
         }
+    }
+
+    private fun sha256Short(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        val hex = buildString(digest.size * 2) {
+            for (byte in digest) {
+                append(String.format("%02x", byte))
+            }
+        }
+        return hex.take(12)
     }
 }
