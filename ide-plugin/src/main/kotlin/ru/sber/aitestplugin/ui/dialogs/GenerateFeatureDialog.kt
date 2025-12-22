@@ -26,7 +26,7 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
         toolTipText = "При совпадении пути перезапишет найденный файл"
         border = JBUI.Borders.emptyLeft(2)
     }
-    private val languageField = JBTextField(defaults.language ?: "")
+    private val defaultLanguage = defaults.language
 
     init {
         title = "Сгенерировать feature"
@@ -61,14 +61,6 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
         gbc.gridy++
         panel.add(overwriteCheckbox, gbc)
 
-        gbc.gridy++
-        panel.add(JLabel("Язык (необязательно)"), gbc)
-        gbc.gridy++
-        panel.add(languageField, gbc)
-
-        gbc.gridy++
-        panel.add(hintLabel("Оставьте поле пустым, чтобы использовать язык по умолчанию"), gbc)
-
         return panel
     }
 
@@ -82,14 +74,13 @@ class GenerateFeatureDialog(project: Project, defaults: GenerateFeatureDialogOpt
         targetPath = targetPath(),
         createFile = shouldCreateFile(),
         overwriteExisting = shouldOverwriteExisting(),
-        language = language(),
+        language = defaultLanguage,
     )
-
-    fun language(): String? = languageField.text.trim().takeIf { it.isNotEmpty() }
 
     private fun hintLabel(text: String): JLabel = JLabel(text).apply {
         font = font.deriveFont(Font.PLAIN, font.size2D - 1)
         foreground = JBColor.GRAY
         border = JBUI.Borders.emptyLeft(2)
     }
+
 }
