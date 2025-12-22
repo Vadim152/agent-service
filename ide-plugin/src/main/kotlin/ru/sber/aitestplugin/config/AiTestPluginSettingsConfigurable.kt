@@ -8,6 +8,7 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.JBColor
@@ -37,6 +38,8 @@ class AiTestPluginSettingsConfigurable(
     private val backendClient: BackendClient = HttpBackendClient()
 ) : Configurable {
     private val settingsService = AiTestPluginSettingsService.getInstance()
+    private lateinit var project: Project
+    private var backendClient: BackendClient = HttpBackendClient()
 
     private val projectRootField = JBTextField()
     private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
@@ -51,9 +54,16 @@ class AiTestPluginSettingsConfigurable(
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
 
+    constructor(project: Project) : this() {
+        this.project = project
+    }
+
     override fun getDisplayName(): String = "AI Test Agent"
 
     override fun createComponent(): JComponent {
+        if (!::project.isInitialized) {
+            project = ProjectManager.getInstance().defaultProject
+        }
         if (rootPanel.componentCount == 0) {
             buildUi()
         }
