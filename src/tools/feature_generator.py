@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 from domain.enums import MatchStatus, StepKeyword
-from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario
+from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario, localize_gherkin_keyword
 
 
 class FeatureGenerator:
@@ -60,7 +60,8 @@ class FeatureGenerator:
         if feature.tags:
             lines.append(" ".join(f"@{tag}" for tag in feature.tags))
 
-        lines.append(f"Feature: {feature.name}")
+        feature_keyword = localize_gherkin_keyword("Feature", feature.language)
+        lines.append(f"{feature_keyword}: {feature.name}")
 
         if feature.description:
             lines.append("")
@@ -68,7 +69,8 @@ class FeatureGenerator:
 
         if feature.background_steps:
             lines.append("")
-            lines.append("  Background:")
+            background_keyword = localize_gherkin_keyword("Background", feature.language)
+            lines.append(f"  {background_keyword}:")
             for step in feature.background_steps:
                 lines.append(f"    {step}")
 
@@ -76,7 +78,8 @@ class FeatureGenerator:
             lines.append("")
             if scenario.tags:
                 lines.append(" ".join(f"@{tag}" for tag in scenario.tags))
-            lines.append(f"  Scenario: {scenario.name}")
+            scenario_keyword = localize_gherkin_keyword("Scenario", feature.language)
+            lines.append(f"  {scenario_keyword}: {scenario.name}")
             for step in scenario.steps:
                 lines.append(f"    {step}")
 

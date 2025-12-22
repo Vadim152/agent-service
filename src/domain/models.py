@@ -6,6 +6,24 @@ from typing import Any, Dict, Iterable
 
 from .enums import MatchStatus, StepKeyword, StepPatternType
 
+GHERKIN_KEYWORDS: dict[str, dict[str, str]] = {
+    "ru": {
+        "Feature": "Функционал",
+        "Background": "Предыстория",
+        "Scenario": "Сценарий",
+        "Scenario Outline": "Структура сценария",
+        "Examples": "Примеры",
+    }
+}
+
+
+def localize_gherkin_keyword(keyword: str, language: str | None) -> str:
+    """Возвращает локализованное ключевое слово Gherkin."""
+
+    if not language:
+        return keyword
+    return GHERKIN_KEYWORDS.get(language, {}).get(keyword, keyword)
+
 
 @dataclass
 class StepParameter:
@@ -138,7 +156,8 @@ class FeatureFile:
         if self.tags:
             lines.append(" ".join(f"@{tag}" for tag in self.tags))
 
-        lines.append(f"Feature: {self.name}")
+        feature_keyword = localize_gherkin_keyword("Feature", self.language)
+        lines.append(f"{feature_keyword}: {self.name}")
 
         if self.description:
             lines.append("")
@@ -146,7 +165,8 @@ class FeatureFile:
 
         if self.background_steps:
             lines.append("")
-            lines.append("  Background:")
+            background_keyword = localize_gherkin_keyword("Background", self.language)
+            lines.append(f"  {background_keyword}:")
             for step in self.background_steps:
                 lines.append(f"    {step}")
 
@@ -155,11 +175,13 @@ class FeatureFile:
             if scenario.tags:
                 lines.append(" ".join(f"@{tag}" for tag in scenario.tags))
             scenario_type = "Scenario Outline" if scenario.is_outline else "Scenario"
-            lines.append(f"  {scenario_type}: {scenario.name}")
+            localized_scenario_type = localize_gherkin_keyword(scenario_type, self.language)
+            lines.append(f"  {localized_scenario_type}: {scenario.name}")
             for step in scenario.steps:
                 lines.append(f"    {step}")
             if scenario.is_outline and scenario.examples:
-                lines.append("    Examples:")
+                examples_keyword = localize_gherkin_keyword("Examples", self.language)
+                lines.append(f"    {examples_keyword}:")
                 for example in scenario.examples:
                     lines.append("      | " + " | ".join(str(value) for value in example.values()) + " |")
 
