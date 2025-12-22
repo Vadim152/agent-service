@@ -34,12 +34,12 @@ import javax.swing.JPanel
  * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
  */
 class AiTestPluginSettingsConfigurable(
-    private val project: Project? = null,
-    private val backendClient: BackendClient = HttpBackendClient()
+    project: Project? = null,
+    backendClient: BackendClient = HttpBackendClient()
 ) : Configurable {
     private val settingsService = AiTestPluginSettingsService.getInstance()
-    private var project: Project = ProjectManager.getInstance().defaultProject
-    private var backendClient: BackendClient = HttpBackendClient()
+    private val project: Project = project ?: ProjectManager.getInstance().defaultProject
+    private val backendClient: BackendClient = backendClient
 
     private val projectRootField = JBTextField()
     private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
@@ -54,9 +54,7 @@ class AiTestPluginSettingsConfigurable(
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
 
-    constructor(project: Project) : this() {
-        this.project = project
-    }
+    constructor(project: Project) : this(project, HttpBackendClient())
 
     override fun getDisplayName(): String = "AI Test Agent"
 
