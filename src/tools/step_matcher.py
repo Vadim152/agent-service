@@ -166,7 +166,7 @@ class StepMatcher:
             return ""
 
         pattern = definition.pattern
-        regex = definition.regex or pattern
+        regex = definition.regex
 
         filled_pattern = pattern
         try:

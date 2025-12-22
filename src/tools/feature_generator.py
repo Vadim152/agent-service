@@ -151,7 +151,7 @@ class FeatureGenerator:
 
         keyword = self._select_keyword(matched_step, language)
         pattern = definition.pattern
-        regex = definition.regex or pattern
+        regex = definition.regex
 
         filled_pattern = pattern
         try:

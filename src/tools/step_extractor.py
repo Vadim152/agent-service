@@ -8,6 +8,7 @@ from typing import Iterable, List, Sequence
 from domain.enums import StepKeyword, StepPatternType
 from domain.models import StepDefinition, StepImplementation, StepParameter
 from infrastructure.fs_repo import FsRepository
+from tools.cucumber_expression import cucumber_expression_to_regex
 
 
 _SUPPORTED_KEYWORDS_PATTERN = "|".join(
@@ -73,12 +74,17 @@ class StepExtractor:
             for annotation in annotations:
                 step_id = f"{relative_path}:{annotation.line_number}"
                 pattern_type = self._detect_pattern_type(annotation.pattern)
+                regex = (
+                    cucumber_expression_to_regex(annotation.pattern)
+                    if pattern_type is StepPatternType.CUCUMBER_EXPRESSION
+                    else annotation.pattern
+                )
                 steps.append(
                     StepDefinition(
                         id=step_id,
                         keyword=annotation.keyword,
                         pattern=annotation.pattern,
-                        regex=annotation.regex,
+                        regex=regex,
                         code_ref=step_id,
                         pattern_type=pattern_type,
                         parameters=self._extract_parameters(

@@ -17,6 +17,7 @@ from typing import Any
 
 from domain.enums import StepKeyword, StepPatternType
 from domain.models import StepDefinition, StepImplementation, StepParameter
+from tools.cucumber_expression import cucumber_expression_to_regex
 
 
 class StepIndexStore:
@@ -120,15 +121,24 @@ class StepIndexStore:
 
     @staticmethod
     def _deserialize_step(data: dict[str, Any]) -> StepDefinition:
+        pattern = data.get("pattern", "")
+        pattern_type = StepPatternType(
+            data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
+        )
+        regex = data.get("regex")
+        if not regex:
+            regex = (
+                cucumber_expression_to_regex(pattern)
+                if pattern_type is StepPatternType.CUCUMBER_EXPRESSION
+                else pattern
+            )
         return StepDefinition(
             id=data.get("id", ""),
             keyword=StepKeyword(data.get("keyword", StepKeyword.GIVEN.value)),
-            pattern=data.get("pattern", ""),
-            regex=data.get("regex"),
+            pattern=pattern,
+            regex=regex,
             code_ref=data.get("code_ref", ""),
-            pattern_type=StepPatternType(
-                data.get("pattern_type", StepPatternType.CUCUMBER_EXPRESSION.value)
-            ),
+            pattern_type=pattern_type,
             parameters=[
                 StepParameter(**param) if isinstance(param, dict) else StepParameter(name=str(param))
                 for param in data.get("parameters", [])
@@ -142,4 +152,3 @@ class StepIndexStore:
             doc_summary=data.get("doc_summary"),
             examples=list(data.get("examples", []) or []),
         )
-
