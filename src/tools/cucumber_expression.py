@@ -10,7 +10,7 @@ _TYPE_MAP: dict[str, str] = {
     "float": r"(\d+(?:\.\d+)?)",
     "double": r"(\d+(?:\.\d+)?)",
     "word": r"(\w+)",
-    "string": r"\"([^\"]*)\"",
+    "string": r"\"?([^\"\n]+)\"?",
     "byte": r"(\d+)",
     "short": r"(\d+)",
     "long": r"(\d+)",

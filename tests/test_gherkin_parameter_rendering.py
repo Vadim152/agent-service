@@ -8,6 +8,7 @@ sys.path.append(str(PROJECT_ROOT / "src"))
 
 from domain.enums import MatchStatus, StepKeyword
 from domain.models import MatchedStep, Scenario, StepDefinition, TestStep
+from tools.cucumber_expression import cucumber_expression_to_regex
 from tools.feature_generator import FeatureGenerator
 from tools.step_matcher import StepMatcher
 
@@ -77,7 +78,7 @@ def test_feature_generator_localizes_given_keyword_in_ru() -> None:
         id="3",
         keyword=StepKeyword.GIVEN,
         pattern="Пользователь авторизован",
-        regex=None,
+        regex=r"Пользователь авторизован",
         code_ref="steps.auth",
         parameters=[],
         tags=[],
@@ -117,3 +118,52 @@ def test_localizes_generated_gherkin_line_for_ru_language() -> None:
     rendered = FeatureGenerator().render_feature(feature)
 
     assert "Дано something" in rendered
+
+
+def test_feature_generator_substitutes_unquoted_cucumber_strings() -> None:
+    given_definition = StepDefinition(
+        id="4",
+        keyword=StepKeyword.GIVEN,
+        pattern="открыт сайт {string}",
+        regex=cucumber_expression_to_regex("открыт сайт {string}"),
+        code_ref="steps.browser",
+        parameters=[],
+    )
+    when_definition = StepDefinition(
+        id="5",
+        keyword=StepKeyword.WHEN,
+        pattern="пользователь прокручивает страницу к элементу {string}",
+        regex=cucumber_expression_to_regex(
+            "пользователь прокручивает страницу к элементу {string}"
+        ),
+        code_ref="steps.scroll",
+        parameters=[],
+    )
+    given_step = TestStep(order=1, text="открыт сайт google.com")
+    when_step = TestStep(order=2, text="пользователь прокручивает страницу к элементу Поиск")
+    matched_steps = [
+        MatchedStep(
+            test_step=given_step,
+            status=MatchStatus.EXACT,
+            step_definition=given_definition,
+        ),
+        MatchedStep(
+            test_step=when_step,
+            status=MatchStatus.EXACT,
+            step_definition=when_definition,
+        ),
+    ]
+    scenario = Scenario(
+        name="Навигация",
+        description="",
+        steps=[given_step, when_step],
+        expected_result=None,
+        tags=[],
+    )
+
+    feature = FeatureGenerator().build_feature(scenario, matched_steps, language="ru")
+    rendered = FeatureGenerator().render_feature(feature)
+
+    assert "Дано открыт сайт google.com" in rendered
+    assert "Когда пользователь прокручивает страницу к элементу Поиск" in rendered
+    assert "{string}" not in rendered
