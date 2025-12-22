@@ -19,6 +19,8 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import com.fasterxml.jackson.databind.JsonNode
+import java.net.Proxy
+import java.net.ProxySelector
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 
@@ -65,8 +67,10 @@ class HttpBackendClient(
     private inline fun <reified T : Any> post(path: String, payload: Any): T {
         val settings = settingsProvider()
         val url = "${settings.backendUrl.trimEnd('/')}$path"
+        val proxySelector = buildProxySelector(settings.backendUrl)
         val client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
+            .proxy(proxySelector)
             .build()
 
         val body = mapper.writeValueAsString(payload)
@@ -145,6 +149,26 @@ class HttpBackendClient(
             }
         } catch (_: Exception) {
             body
+        }
+    }
+
+    private fun buildProxySelector(backendUrl: String): ProxySelector {
+        val backendHost = runCatching { URI.create(backendUrl).host }.getOrNull()
+        val bypassHosts = setOf("localhost", "127.0.0.1", "::1") + listOfNotNull(backendHost)
+        val defaultSelector = ProxySelector.getDefault()
+
+        return object : ProxySelector() {
+            override fun select(uri: URI?): List<Proxy> {
+                val host = uri?.host?.lowercase()
+                if (host != null && bypassHosts.any { it.equals(host, ignoreCase = true) }) {
+                    return listOf(Proxy.NO_PROXY)
+                }
+                return defaultSelector?.select(uri) ?: listOf(Proxy.NO_PROXY)
+            }
+
+            override fun connectFailed(uri: URI?, sa: java.net.SocketAddress?, ioe: java.io.IOException?) {
+                defaultSelector?.connectFailed(uri, sa, ioe)
+            }
         }
     }
 }
