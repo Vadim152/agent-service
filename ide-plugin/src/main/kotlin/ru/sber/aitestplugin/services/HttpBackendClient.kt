@@ -15,10 +15,11 @@ import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import java.net.URI
 import java.net.URLEncoder
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import com.fasterxml.jackson.databind.JsonNode
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 
@@ -65,7 +66,8 @@ class HttpBackendClient(
     private inline fun <reified T : Any> post(path: String, payload: Any): T {
         val settings = settingsProvider()
         val url = "${settings.backendUrl.trimEnd('/')}$path"
-        val client = HttpClient.newBuilder()
+        val client = OkHttpClient.Builder()
+            .callTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .connectTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
             .build()
 
@@ -73,14 +75,12 @@ class HttpBackendClient(
         val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
         val contentType = "application/json"
         val bodyLength = bodyBytes.size
-        val request = HttpRequest.newBuilder()
-            .uri(URI.create(url))
-            .timeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
+        val requestBody = bodyBytes.toRequestBody(contentType.toMediaType())
+        val request = Request.Builder()
+            .url(URI.create(url).toURL())
             .header("Content-Type", contentType)
             .header("X-Body-Length", bodyLength.toString())
-            // HttpClient automatically sets Content-Length when the BodyPublisher has a known size.
-            // Adding the header manually triggers "restricted header name" errors in the IDE runtime.
-            .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
+            .post(requestBody)
             .build()
 
         if (logger.isDebugEnabled) {
@@ -91,7 +91,7 @@ class HttpBackendClient(
         }
 
         val response = try {
-            client.send(request, HttpResponse.BodyHandlers.ofString())
+            client.newCall(request).execute()
         } catch (ex: Exception) {
             if (logger.isDebugEnabled) {
                 logger.debug(
@@ -102,28 +102,31 @@ class HttpBackendClient(
             throw BackendException("Failed to call $url: ${ex.message}", ex)
         }
 
-        if (response.statusCode() !in 200..299) {
-            if (logger.isDebugEnabled) {
-                logger.debug(
-                    "Received non-2xx from $url: status=${response.statusCode()}, headers=${response.headers().map()}, body=\"${response.body()}\""
-                )
-            }
-            val message = when (response.statusCode()) {
-                422 -> {
-                    if (logger.isDebugEnabled) {
-                        logger.debug("Received 422 from $url for payload: $body")
-                    }
-                    parseValidationError(response.body())
+        response.use { httpResponse ->
+            val responseBody = httpResponse.body?.string().orEmpty()
+            if (!httpResponse.isSuccessful) {
+                if (logger.isDebugEnabled) {
+                    logger.debug(
+                        "Received non-2xx from $url: status=${httpResponse.code}, headers=${httpResponse.headers}, body=\"$responseBody\""
+                    )
                 }
-                else -> response.body().takeIf { it.isNotBlank() } ?: "HTTP ${response.statusCode()}"
+                val message = when (httpResponse.code) {
+                    422 -> {
+                        if (logger.isDebugEnabled) {
+                            logger.debug("Received 422 from $url for payload: $body")
+                        }
+                        parseValidationError(responseBody)
+                    }
+                    else -> responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                }
+                throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
             }
-            throw BackendException("Backend $url responded with ${response.statusCode()}: $message")
-        }
 
-        return try {
-            mapper.readValue(response.body())
-        } catch (ex: Exception) {
-            throw BackendException("Failed to parse response from $url: ${ex.message}", ex)
+            return try {
+                mapper.readValue(responseBody)
+            } catch (ex: Exception) {
+                throw BackendException("Failed to parse response from $url: ${ex.message}", ex)
+            }
         }
     }
 
