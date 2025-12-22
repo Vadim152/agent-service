@@ -38,7 +38,7 @@ class AiTestPluginSettingsConfigurable(
     private val backendClient: BackendClient = HttpBackendClient()
 ) : Configurable {
     private val settingsService = AiTestPluginSettingsService.getInstance()
-    private lateinit var project: Project
+    private var project: Project = ProjectManager.getInstance().defaultProject
     private var backendClient: BackendClient = HttpBackendClient()
 
     private val projectRootField = JBTextField()
@@ -53,6 +53,10 @@ class AiTestPluginSettingsConfigurable(
     private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
+
+    constructor(project: Project) : this() {
+        this.project = project
+    }
 
     override fun getDisplayName(): String = "AI Test Agent"
 
@@ -77,7 +81,7 @@ class AiTestPluginSettingsConfigurable(
         if (rootPanel.componentCount == 0) {
             buildUi()
         }
-        projectRootField.text = saved.scanProjectRoot ?: activeProject().basePath.orEmpty()
+        projectRootField.text = saved.scanProjectRoot ?: project.basePath.orEmpty()
     }
 
     private fun buildUi() {
@@ -151,7 +155,7 @@ class AiTestPluginSettingsConfigurable(
     private fun runScanSteps() {
         val projectRoot = projectRootField.text.trim()
             .ifEmpty { settingsService.settings.scanProjectRoot.orEmpty() }
-            .ifEmpty { activeProject().basePath.orEmpty() }
+            .ifEmpty { project.basePath.orEmpty() }
         if (projectRoot.isBlank()) {
             statusLabel.icon = AllIcons.General.Warning
             statusLabel.text = "Путь к проекту не указан"
@@ -163,7 +167,7 @@ class AiTestPluginSettingsConfigurable(
         statusLabel.icon = AllIcons.General.BalloonInformation
         statusLabel.text = "Идёт сканирование проекта..."
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(activeProject(), "Сканирование шагов Cucumber", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Сканирование шагов Cucumber", true) {
             private var responseSteps = emptyList<StepDefinitionDto>()
             private var responseUnmapped = emptyList<UnmappedStepDto>()
             private var statusMessage: String = ""
@@ -239,10 +243,8 @@ class AiTestPluginSettingsConfigurable(
         NotificationGroupManager.getInstance()
             .getNotificationGroup("AI Cucumber Assistant")
             .createNotification(message, type)
-            .notify(activeProject())
+            .notify(project)
     }
-
-    private fun activeProject(): Project = project ?: ProjectManager.getInstance().defaultProject
 
     private fun sectionLabel(text: String): JLabel = JLabel(text).apply {
         font = font.deriveFont(Font.BOLD, font.size2D + 1)
