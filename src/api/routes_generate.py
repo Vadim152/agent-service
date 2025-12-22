@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
 from agents.orchestrator import Orchestrator
@@ -127,7 +128,7 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         logger.warning("API: generate-feature validation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
+            detail=jsonable_encoder(exc.errors()),
         ) from exc
 
     if content_length not in (None, str(body_len)):
