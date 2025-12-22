@@ -16,6 +16,9 @@
                     id="AI Cucumber Assistant"
                     anchor="right"
                     icon="/META-INF/pluginIcon.svg" />
+        <projectConfigurable instance="ru.sber.aitestplugin.config.AiTestPluginSettingsConfigurable"
+                             displayName="AI Test Agent"
+                             groupId="tools" />
         <notificationGroup id="AI Cucumber Assistant" displayType="BALLOON" isLogByDefault="true" />
     </extensions>
 

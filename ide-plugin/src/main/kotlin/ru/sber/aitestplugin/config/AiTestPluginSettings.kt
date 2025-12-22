@@ -17,7 +17,10 @@ data class AiTestPluginSettings(
     var generateFeatureLanguage: String? = null,
     var applyFeatureTargetPath: String? = null,
     var applyFeatureCreateFile: Boolean = true,
-    var applyFeatureOverwriteExisting: Boolean = false
+    var applyFeatureOverwriteExisting: Boolean = false,
+    var showScanSteps: Boolean = true,
+    var showFoundSteps: Boolean = true,
+    var showUnmappedSteps: Boolean = true
 ) {
     companion object {
         const val DEFAULT_BACKEND_URL: String = "http://localhost:8000/api/v1"
