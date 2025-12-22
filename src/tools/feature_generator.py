@@ -95,7 +95,10 @@ class FeatureGenerator:
         """Преобразует MatchedStep в строку Gherkin и сопутствующие метаданные."""
 
         if matched_step.generated_gherkin_line:
-            return matched_step.generated_gherkin_line, {"substitutionType": "generated"}
+            return (
+                self._localize_generated_line(matched_step.generated_gherkin_line, language),
+                {"substitutionType": "generated"},
+            )
 
         if matched_step.status is MatchStatus.UNMATCHED or not matched_step.step_definition:
             reason = None
@@ -112,6 +115,22 @@ class FeatureGenerator:
 
         rendered, meta = self._build_gherkin_line(matched_step, language)
         return rendered, meta
+
+    def _localize_generated_line(self, line: str, language: str | None) -> str:
+        """Локализует ключевое слово в сгенерированной строке шага."""
+
+        match = re.match(r"^\s*(\S+)(\s+.*)?$", line)
+        if not match:
+            return line
+
+        keyword = match.group(1)
+        rest = match.group(2) or ""
+        try:
+            normalized_keyword = StepKeyword.from_string(keyword).as_text(language)
+        except ValueError:
+            return line
+
+        return f"{normalized_keyword}{rest}"
 
     def _select_keyword(self, matched_step: MatchedStep, language: str | None) -> str:
         """Выбирает ключевое слово для шага."""
