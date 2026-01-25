@@ -8,6 +8,10 @@ data class AiTestPluginSettings(
     var backendUrl: String = DEFAULT_BACKEND_URL,
     var requestTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
     var generateFeatureTimeoutMs: Int = DEFAULT_GENERATE_FEATURE_TIMEOUT_MS,
+    var zephyrAuthType: ZephyrAuthType = ZephyrAuthType.TOKEN,
+    var zephyrToken: String? = null,
+    var zephyrLogin: String? = null,
+    var zephyrPassword: String? = null,
     var scanProjectRoot: String? = null,
     var scanSearchDepth: Int = DEFAULT_SCAN_DEPTH,
     var scanFilePattern: String = DEFAULT_SCAN_PATTERN,
@@ -36,4 +40,9 @@ data class AiTestPluginSettings(
          */
         fun current(): AiTestPluginSettings = AiTestPluginSettingsService.getInstance().settings
     }
+}
+
+enum class ZephyrAuthType {
+    TOKEN,
+    LOGIN_PASSWORD
 }
