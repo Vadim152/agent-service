@@ -12,6 +12,8 @@ data class AiTestPluginSettings(
     var zephyrToken: String? = null,
     var zephyrLogin: String? = null,
     var zephyrPassword: String? = null,
+    var zephyrJiraInstance: String = DEFAULT_ZEPHYR_JIRA_INSTANCE,
+    var zephyrProjects: MutableList<String> = mutableListOf(),
     var scanProjectRoot: String? = null,
     var scanSearchDepth: Int = DEFAULT_SCAN_DEPTH,
     var scanFilePattern: String = DEFAULT_SCAN_PATTERN,
@@ -34,6 +36,7 @@ data class AiTestPluginSettings(
         const val DEFAULT_SCAN_DEPTH: Int = 5
         const val DEFAULT_SCAN_PATTERN: String = "**/*.feature"
         const val DEFAULT_LANGUAGE: String = "auto"
+        const val DEFAULT_ZEPHYR_JIRA_INSTANCE: String = "Sigma"
 
         /**
          * Возвращает текущие настройки, сохранённые в PersistentStateComponent.
