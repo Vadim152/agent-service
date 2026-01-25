@@ -18,6 +18,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.components.JBPasswordField
+import com.intellij.ui.components.JBComboBox
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
@@ -66,7 +67,7 @@ class AiTestPluginSettingsConfigurable(
     private val zephyrServiceRadio = JRadioButton("Zephyr", true)
     private val testItServiceRadio = JRadioButton("Test IT")
     private val zephyrJiraLabel = JLabel("Jira:")
-    private val zephyrJiraInstanceCombo = com.intellij.ui.components.JBComboBox(jiraInstanceOptions.keys.toTypedArray())
+    private val zephyrJiraInstanceCombo = JBComboBox<String>(jiraInstanceOptions.keys.toTypedArray())
     private val zephyrTokenRadio = JRadioButton("Token", true)
     private val zephyrLoginRadio = JRadioButton("Login/Password")
     private val zephyrTokenLabel = JLabel("Token for Jira:")
