@@ -16,6 +16,7 @@ import com.intellij.ui.SimpleTextAttributes
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
+import com.intellij.ui.components.JBPasswordField
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
@@ -25,10 +26,14 @@ import java.awt.BorderLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import javax.swing.Box
+import javax.swing.BoxLayout
+import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.JRadioButton
 
 /**
  * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
@@ -53,6 +58,14 @@ class AiTestPluginSettingsConfigurable(
     private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
+    private val zephyrTokenRadio = JRadioButton("Token", true)
+    private val zephyrLoginRadio = JRadioButton("Login/Password")
+    private val zephyrTokenLabel = JLabel("Token for Jira:")
+    private val zephyrTokenField = JBPasswordField()
+    private val zephyrLoginLabel = JLabel("Login:")
+    private val zephyrLoginField = JBTextField()
+    private val zephyrPasswordLabel = JLabel("Password:")
+    private val zephyrPasswordField = JBPasswordField()
 
     constructor(project: Project) : this(project, HttpBackendClient())
 
@@ -67,11 +80,24 @@ class AiTestPluginSettingsConfigurable(
 
     override fun isModified(): Boolean {
         val saved = settingsService.settings
-        return projectRootField.text.trim() != (saved.scanProjectRoot ?: "")
+        val currentAuthType = if (zephyrTokenRadio.isSelected) ZephyrAuthType.TOKEN else ZephyrAuthType.LOGIN_PASSWORD
+        val currentToken = String(zephyrTokenField.password).trim().ifEmpty { null }
+        val currentLogin = zephyrLoginField.text.trim().ifEmpty { null }
+        val currentPassword = String(zephyrPasswordField.password).trim().ifEmpty { null }
+        return projectRootField.text.trim() != (saved.scanProjectRoot ?: "") ||
+            currentAuthType != saved.zephyrAuthType ||
+            currentToken != saved.zephyrToken ||
+            currentLogin != saved.zephyrLogin ||
+            currentPassword != saved.zephyrPassword
     }
 
     override fun apply() {
         settingsService.settings.scanProjectRoot = projectRootField.text.trim().ifEmpty { null }
+        settingsService.settings.zephyrAuthType =
+            if (zephyrTokenRadio.isSelected) ZephyrAuthType.TOKEN else ZephyrAuthType.LOGIN_PASSWORD
+        settingsService.settings.zephyrToken = String(zephyrTokenField.password).trim().ifEmpty { null }
+        settingsService.settings.zephyrLogin = zephyrLoginField.text.trim().ifEmpty { null }
+        settingsService.settings.zephyrPassword = String(zephyrPasswordField.password).trim().ifEmpty { null }
     }
 
     override fun reset() {
@@ -80,6 +106,15 @@ class AiTestPluginSettingsConfigurable(
             buildUi()
         }
         projectRootField.text = saved.scanProjectRoot ?: project.basePath.orEmpty()
+        zephyrTokenField.text = saved.zephyrToken.orEmpty()
+        zephyrLoginField.text = saved.zephyrLogin.orEmpty()
+        zephyrPasswordField.text = saved.zephyrPassword.orEmpty()
+        if (saved.zephyrAuthType == ZephyrAuthType.TOKEN) {
+            zephyrTokenRadio.isSelected = true
+        } else {
+            zephyrLoginRadio.isSelected = true
+        }
+        updateZephyrAuthUi()
         loadIndexedSteps(projectRootField.text.trim())
     }
 
@@ -87,6 +122,11 @@ class AiTestPluginSettingsConfigurable(
         val topPanel = createCardPanel().apply {
             add(sectionLabel("Сканирование шагов"), BorderLayout.NORTH)
             add(buildScanControls(), BorderLayout.CENTER)
+        }
+
+        val zephyrPanel = createCardPanel().apply {
+            add(sectionLabel("Zephyr"), BorderLayout.NORTH)
+            add(buildZephyrControls(), BorderLayout.CENTER)
         }
 
         stepsList.emptyText.text = "Шаги ещё не найдены"
@@ -109,13 +149,29 @@ class AiTestPluginSettingsConfigurable(
             secondComponent = unmappedPanel
         }
 
-        rootPanel.add(topPanel, BorderLayout.NORTH)
+        val settingsPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            background = JBColor.PanelBackground
+            add(topPanel)
+            add(Box.createVerticalStrut(JBUI.scale(12)))
+            add(zephyrPanel)
+        }
+
+        rootPanel.add(settingsPanel, BorderLayout.NORTH)
         rootPanel.add(listsSplitter, BorderLayout.CENTER)
         rootPanel.add(statusLabel, BorderLayout.SOUTH)
 
         scanButton.addActionListener {
             runScanSteps()
         }
+
+        ButtonGroup().apply {
+            add(zephyrTokenRadio)
+            add(zephyrLoginRadio)
+        }
+        zephyrTokenRadio.addActionListener { updateZephyrAuthUi() }
+        zephyrLoginRadio.addActionListener { updateZephyrAuthUi() }
+        updateZephyrAuthUi()
     }
 
     private fun loadIndexedSteps(projectRoot: String) {
@@ -185,6 +241,73 @@ class AiTestPluginSettingsConfigurable(
         panel.add(hint, gbc)
 
         return panel
+    }
+
+    private fun buildZephyrControls(): JPanel {
+        val panel = JPanel(GridBagLayout())
+        panel.background = JBColor.PanelBackground
+        val gbc = GridBagConstraints().apply {
+            gridx = 0
+            gridy = 0
+            weightx = 0.0
+            fill = GridBagConstraints.HORIZONTAL
+            insets = JBUI.insetsBottom(6)
+            anchor = GridBagConstraints.NORTHWEST
+        }
+
+        panel.add(JLabel("Auth type"), gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        val authPanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            background = JBColor.PanelBackground
+            add(zephyrTokenRadio)
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(zephyrLoginRadio)
+        }
+        panel.add(authPanel, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(zephyrTokenLabel, gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(zephyrTokenField, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(zephyrLoginLabel, gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(zephyrLoginField, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(zephyrPasswordLabel, gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(zephyrPasswordField, gbc)
+
+        return panel
+    }
+
+    private fun updateZephyrAuthUi() {
+        val tokenSelected = zephyrTokenRadio.isSelected
+        setZephyrFieldState(zephyrTokenLabel, zephyrTokenField, tokenSelected)
+        setZephyrFieldState(zephyrLoginLabel, zephyrLoginField, !tokenSelected)
+        setZephyrFieldState(zephyrPasswordLabel, zephyrPasswordField, !tokenSelected)
+        rootPanel.revalidate()
+        rootPanel.repaint()
+    }
+
+    private fun setZephyrFieldState(label: JLabel, field: JComponent, isVisible: Boolean) {
+        label.isVisible = isVisible
+        field.isVisible = isVisible
+        label.isEnabled = isVisible
+        field.isEnabled = isVisible
     }
 
     private fun runScanSteps() {
