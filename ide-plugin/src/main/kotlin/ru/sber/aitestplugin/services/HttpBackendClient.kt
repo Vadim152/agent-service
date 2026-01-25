@@ -7,6 +7,8 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.intellij.openapi.diagnostic.Logger
 import ru.sber.aitestplugin.config.AiTestPluginSettings
+import ru.sber.aitestplugin.config.toZephyrAuthDto
+import ru.sber.aitestplugin.config.toZephyrAuthHeaders
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
@@ -51,9 +53,11 @@ class HttpBackendClient(
 
     override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto {
         val settings = settingsProvider()
+        val zephyrAuth = settings.toZephyrAuthDto()
         val sanitizedRequest = request.copy(
             projectRoot = request.projectRoot.trim(),
-            testCaseText = request.testCaseText.trim()
+            testCaseText = request.testCaseText.trim(),
+            zephyrAuth = request.zephyrAuth ?: zephyrAuth
         )
 
         if (sanitizedRequest.projectRoot.isBlank()) {
@@ -67,7 +71,8 @@ class HttpBackendClient(
         return post(
             "/feature/generate-feature",
             sanitizedRequest,
-            timeoutMs = settings.generateFeatureTimeoutMs
+            timeoutMs = settings.generateFeatureTimeoutMs,
+            headers = settings.toZephyrAuthHeaders()
         )
     }
 
@@ -77,7 +82,8 @@ class HttpBackendClient(
     private inline fun <reified T : Any> post(
         path: String,
         payload: Any,
-        timeoutMs: Int? = null
+        timeoutMs: Int? = null,
+        headers: Map<String, String> = emptyMap()
     ): T {
         val settings = settingsProvider()
         val url = "${settings.backendUrl.trimEnd('/')}$path"
@@ -92,12 +98,15 @@ class HttpBackendClient(
         val contentType = "application/json"
         val bodyLength = bodyBytes.size
         val requestBody = bodyBytes.toRequestBody(contentType.toMediaType())
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(URI.create(url).toURL())
             .header("Content-Type", contentType)
             .header("X-Body-Length", bodyLength.toString())
             .post(requestBody)
-            .build()
+        headers.forEach { (key, value) ->
+            requestBuilder.header(key, value)
+        }
+        val request = requestBuilder.build()
 
         if (logger.isDebugEnabled) {
             val preview = body.take(500)

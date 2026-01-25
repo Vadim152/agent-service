@@ -14,6 +14,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
+import ru.sber.aitestplugin.config.toZephyrAuthDto
+import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
@@ -107,6 +109,14 @@ class AiToolWindowPanel(
             return
         }
 
+        val authError = settings.zephyrAuthValidationError()
+        if (authError != null) {
+            statusLabel.icon = AllIcons.General.Warning
+            statusLabel.text = "Не заполнены данные авторизации Jira/Zephyr"
+            notify(authError, NotificationType.WARNING)
+            return
+        }
+
         val dialogOptions = GenerateFeatureDialogOptions(
             targetPath = targetPathField.text.trim().takeIf { it.isNotEmpty() },
             createFile = createFileCheckbox.isSelected,
@@ -123,7 +133,8 @@ class AiToolWindowPanel(
                 createFile = dialogOptions.createFile,
                 overwriteExisting = dialogOptions.overwriteExisting,
                 language = dialogOptions.language
-            )
+            ),
+            zephyrAuth = settings.toZephyrAuthDto()
         )
 
         statusLabel.icon = AllIcons.General.BalloonInformation
