@@ -9,6 +9,7 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManager
+import com.intellij.openapi.ui.Messages
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBSplitter
 import com.intellij.ui.JBColor
@@ -31,9 +32,14 @@ import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JComboBox
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JRadioButton
+import okhttp3.Credentials
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.time.Duration
 
 /**
  * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
@@ -58,6 +64,10 @@ class AiTestPluginSettingsConfigurable(
     private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
+    private val zephyrServiceRadio = JRadioButton("Zephyr", true)
+    private val testItServiceRadio = JRadioButton("Test IT")
+    private val zephyrJiraLabel = JLabel("Jira:")
+    private val zephyrJiraInstanceCombo = JComboBox(jiraInstanceOptions.keys.toTypedArray())
     private val zephyrTokenRadio = JRadioButton("Token", true)
     private val zephyrLoginRadio = JRadioButton("Login/Password")
     private val zephyrTokenLabel = JLabel("Token for Jira:")
@@ -66,6 +76,10 @@ class AiTestPluginSettingsConfigurable(
     private val zephyrLoginField = JBTextField()
     private val zephyrPasswordLabel = JLabel("Password:")
     private val zephyrPasswordField = JBPasswordField()
+    private val addJiraProjectButton = JButton("Add Jira Project")
+    private val verifySettingsButton = JButton("Verify settings")
+    private val jiraProjectsPanel = JPanel()
+    private val jiraProjects: MutableList<String> = mutableListOf()
 
     constructor(project: Project) : this(project, HttpBackendClient())
 
@@ -84,11 +98,14 @@ class AiTestPluginSettingsConfigurable(
         val currentToken = String(zephyrTokenField.password).trim().ifEmpty { null }
         val currentLogin = zephyrLoginField.text.trim().ifEmpty { null }
         val currentPassword = String(zephyrPasswordField.password).trim().ifEmpty { null }
+        val currentJiraInstance = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
         return projectRootField.text.trim() != (saved.scanProjectRoot ?: "") ||
             currentAuthType != saved.zephyrAuthType ||
             currentToken != saved.zephyrToken ||
             currentLogin != saved.zephyrLogin ||
-            currentPassword != saved.zephyrPassword
+            currentPassword != saved.zephyrPassword ||
+            currentJiraInstance != saved.zephyrJiraInstance ||
+            jiraProjects != saved.zephyrProjects
     }
 
     override fun apply() {
@@ -98,6 +115,8 @@ class AiTestPluginSettingsConfigurable(
         settingsService.settings.zephyrToken = String(zephyrTokenField.password).trim().ifEmpty { null }
         settingsService.settings.zephyrLogin = zephyrLoginField.text.trim().ifEmpty { null }
         settingsService.settings.zephyrPassword = String(zephyrPasswordField.password).trim().ifEmpty { null }
+        settingsService.settings.zephyrJiraInstance = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
+        settingsService.settings.zephyrProjects = jiraProjects.toMutableList()
     }
 
     override fun reset() {
@@ -109,6 +128,10 @@ class AiTestPluginSettingsConfigurable(
         zephyrTokenField.text = saved.zephyrToken.orEmpty()
         zephyrLoginField.text = saved.zephyrLogin.orEmpty()
         zephyrPasswordField.text = saved.zephyrPassword.orEmpty()
+        zephyrJiraInstanceCombo.selectedItem = saved.zephyrJiraInstance
+        jiraProjects.clear()
+        jiraProjects.addAll(saved.zephyrProjects)
+        refreshJiraProjects()
         if (saved.zephyrAuthType == ZephyrAuthType.TOKEN) {
             zephyrTokenRadio.isSelected = true
         } else {
@@ -169,8 +192,14 @@ class AiTestPluginSettingsConfigurable(
             add(zephyrTokenRadio)
             add(zephyrLoginRadio)
         }
+        ButtonGroup().apply {
+            add(zephyrServiceRadio)
+            add(testItServiceRadio)
+        }
         zephyrTokenRadio.addActionListener { updateZephyrAuthUi() }
         zephyrLoginRadio.addActionListener { updateZephyrAuthUi() }
+        addJiraProjectButton.addActionListener { promptAddJiraProject() }
+        verifySettingsButton.addActionListener { verifyJiraProjectAvailability() }
         updateZephyrAuthUi()
     }
 
@@ -255,7 +284,30 @@ class AiTestPluginSettingsConfigurable(
             anchor = GridBagConstraints.NORTHWEST
         }
 
-        panel.add(JLabel("Auth type"), gbc)
+        val servicePanel = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.X_AXIS)
+            background = JBColor.PanelBackground
+            add(zephyrServiceRadio)
+            add(Box.createHorizontalStrut(JBUI.scale(12)))
+            add(testItServiceRadio)
+        }
+        panel.add(servicePanel, gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(JPanel().apply { background = JBColor.PanelBackground }, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(zephyrJiraLabel, gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(zephyrJiraInstanceCombo, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(JLabel(""), gbc)
         gbc.gridx++
         gbc.weightx = 1.0
         val authPanel = JPanel().apply {
@@ -278,6 +330,14 @@ class AiTestPluginSettingsConfigurable(
         gbc.gridx = 0
         gbc.gridy++
         gbc.weightx = 0.0
+        panel.add(JLabel(""), gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(addJiraProjectButton, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
         panel.add(zephyrLoginLabel, gbc)
         gbc.gridx++
         gbc.weightx = 1.0
@@ -291,6 +351,25 @@ class AiTestPluginSettingsConfigurable(
         gbc.weightx = 1.0
         panel.add(zephyrPasswordField, gbc)
 
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(JLabel("Jira project:"), gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        jiraProjectsPanel.layout = BoxLayout(jiraProjectsPanel, BoxLayout.Y_AXIS)
+        jiraProjectsPanel.background = JBColor.PanelBackground
+        panel.add(jiraProjectsPanel, gbc)
+
+        gbc.gridx = 0
+        gbc.gridy++
+        gbc.weightx = 0.0
+        panel.add(verifySettingsButton, gbc)
+        gbc.gridx++
+        gbc.weightx = 1.0
+        panel.add(JPanel().apply { background = JBColor.PanelBackground }, gbc)
+
+        refreshJiraProjects()
         return panel
     }
 
@@ -301,6 +380,121 @@ class AiTestPluginSettingsConfigurable(
         setZephyrFieldState(zephyrPasswordLabel, zephyrPasswordField, !tokenSelected)
         rootPanel.revalidate()
         rootPanel.repaint()
+    }
+
+    private fun promptAddJiraProject() {
+        val projectKey = Messages.showInputDialog(
+            rootPanel,
+            "Введите ключ Jira проекта",
+            "Добавить Jira проект",
+            Messages.getQuestionIcon()
+        )?.trim().orEmpty()
+        if (projectKey.isBlank()) return
+        if (jiraProjects.contains(projectKey)) {
+            notify("Проект уже добавлен", NotificationType.WARNING)
+            return
+        }
+        jiraProjects.add(projectKey)
+        refreshJiraProjects()
+    }
+
+    private fun refreshJiraProjects() {
+        jiraProjectsPanel.removeAll()
+        if (jiraProjects.isEmpty()) {
+            jiraProjectsPanel.add(JLabel("Список проектов пуст").apply {
+                font = font.deriveFont(Font.PLAIN, font.size2D - 1)
+                foreground = JBColor.GRAY
+            })
+        } else {
+            jiraProjects.forEach { project ->
+                jiraProjectsPanel.add(createProjectRow(project))
+                jiraProjectsPanel.add(Box.createVerticalStrut(JBUI.scale(6)))
+            }
+        }
+        jiraProjectsPanel.revalidate()
+        jiraProjectsPanel.repaint()
+    }
+
+    private fun createProjectRow(projectKey: String): JPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        background = JBColor.PanelBackground
+        val projectField = JBTextField(projectKey).apply {
+            isEditable = false
+        }
+        val deleteButton = JButton("Delete").apply {
+            addActionListener {
+                jiraProjects.remove(projectKey)
+                refreshJiraProjects()
+            }
+        }
+        add(projectField)
+        add(Box.createHorizontalStrut(JBUI.scale(8)))
+        add(deleteButton)
+    }
+
+    private fun verifyJiraProjectAvailability() {
+        val jiraInstanceName = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
+        val jiraBaseUrl = jiraInstanceOptions[jiraInstanceName]
+        if (jiraBaseUrl.isNullOrBlank()) {
+            notify("Не выбран Jira инстанс", NotificationType.WARNING)
+            return
+        }
+        val projectKey = jiraProjects.firstOrNull()?.trim().orEmpty()
+        if (projectKey.isBlank()) {
+            notify("Добавьте Jira проект для проверки", NotificationType.WARNING)
+            return
+        }
+        val tokenSelected = zephyrTokenRadio.isSelected
+        val token = String(zephyrTokenField.password).trim()
+        val login = zephyrLoginField.text.trim()
+        val password = String(zephyrPasswordField.password).trim()
+        if (tokenSelected && token.isBlank()) {
+            notify("Укажите токен Jira", NotificationType.WARNING)
+            return
+        }
+        if (!tokenSelected && (login.isBlank() || password.isBlank())) {
+            notify("Укажите логин и пароль Jira", NotificationType.WARNING)
+            return
+        }
+
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Проверка Jira проекта", true) {
+            private var statusMessage: String = ""
+
+            override fun run(indicator: ProgressIndicator) {
+                indicator.text = "Проверяем доступность проекта..."
+                val settings = settingsService.settings
+                val client = OkHttpClient.Builder()
+                    .callTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
+                    .connectTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
+                    .build()
+                val requestUrl = "${jiraBaseUrl.trimEnd('/')}/rest/api/2/project/${projectKey.trim()}/"
+                val requestBuilder = Request.Builder()
+                    .url(requestUrl)
+                    .get()
+                if (tokenSelected) {
+                    requestBuilder.header("Authorization", "Bearer $token")
+                } else {
+                    requestBuilder.header("Authorization", Credentials.basic(login, password))
+                }
+                client.newCall(requestBuilder.build()).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val body = response.body?.string().orEmpty()
+                        val message = body.takeIf { it.isNotBlank() } ?: "HTTP ${response.code}"
+                        throw IllegalStateException("Jira ответила ${response.code}: $message")
+                    }
+                }
+                statusMessage = "Проект $projectKey доступен"
+            }
+
+            override fun onSuccess() {
+                notify(statusMessage, NotificationType.INFORMATION)
+            }
+
+            override fun onThrowable(error: Throwable) {
+                val message = error.message ?: "Непредвиденная ошибка"
+                notify("Проверка не удалась: $message", NotificationType.ERROR)
+            }
+        })
     }
 
     private fun setZephyrFieldState(label: JLabel, field: JComponent, isVisible: Boolean) {
@@ -414,6 +608,12 @@ class AiTestPluginSettingsConfigurable(
         border = JBUI.Borders.compound(
             JBUI.Borders.customLine(JBColor.border(), 1),
             JBUI.Borders.empty(12)
+        )
+    }
+
+    companion object {
+        private val jiraInstanceOptions = mapOf(
+            "Sigma" to "https://jira.sberbank.ru"
         )
     }
 }
