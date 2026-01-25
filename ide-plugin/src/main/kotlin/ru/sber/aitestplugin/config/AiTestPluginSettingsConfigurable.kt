@@ -129,7 +129,7 @@ class AiTestPluginSettingsConfigurable(
         zephyrTokenField.text = saved.zephyrToken.orEmpty()
         zephyrLoginField.text = saved.zephyrLogin.orEmpty()
         zephyrPasswordField.text = saved.zephyrPassword.orEmpty()
-        zephyrJiraInstanceCombo.selectedItem = saved.zephyrJiraInstance
+        zephyrJiraInstanceCombo.setSelectedItem(saved.zephyrJiraInstance)
         jiraProjects.clear()
         jiraProjects.addAll(saved.zephyrProjects)
         refreshJiraProjects()
