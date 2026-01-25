@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -164,6 +165,22 @@ class GenerateFeatureOptions(ApiBaseModel):
     )
 
 
+class ZephyrAuthType(str, Enum):
+    """Тип авторизации для Jira/Zephyr."""
+
+    TOKEN = "TOKEN"
+    LOGIN_PASSWORD = "LOGIN_PASSWORD"
+
+
+class ZephyrAuth(ApiBaseModel):
+    """Данные авторизации для получения тесткейса из Jira/Zephyr."""
+
+    auth_type: ZephyrAuthType = Field(..., alias="authType", description="Тип авторизации")
+    token: str | None = Field(default=None, description="Token Jira/Zephyr")
+    login: str | None = Field(default=None, description="Login Jira/Zephyr")
+    password: str | None = Field(default=None, description="Password Jira/Zephyr")
+
+
 class GenerateFeatureRequest(ApiBaseModel):
     """Запрос на генерацию .feature на основе тесткейса."""
 
@@ -178,6 +195,11 @@ class GenerateFeatureRequest(ApiBaseModel):
     )
     options: GenerateFeatureOptions | None = Field(
         default=None, description="Опции генерации и сохранения файла"
+    )
+    zephyr_auth: ZephyrAuth | None = Field(
+        default=None,
+        alias="zephyrAuth",
+        description="Данные авторизации Jira/Zephyr для получения тесткейса",
     )
 
 

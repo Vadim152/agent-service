@@ -16,7 +16,8 @@ data class GenerateFeatureRequestDto(
     val projectRoot: String,
     val testCaseText: String,
     val targetPath: String? = null,
-    val options: GenerateFeatureOptionsDto? = null
+    val options: GenerateFeatureOptionsDto? = null,
+    val zephyrAuth: ZephyrAuthDto? = null
 )
 
 /** Ответ на генерацию feature. */

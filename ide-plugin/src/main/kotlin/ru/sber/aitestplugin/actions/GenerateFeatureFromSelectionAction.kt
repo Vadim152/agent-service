@@ -26,6 +26,8 @@ import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.openapi.wm.ToolWindowManager
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
+import ru.sber.aitestplugin.config.toZephyrAuthDto
+import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
@@ -76,6 +78,13 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         val dialogOptions = dialog.selectedOptions()
         stateStorage.saveGenerateOptions(dialogOptions)
 
+        val settings = AiTestPluginSettingsService.getInstance().settings
+        val authError = settings.zephyrAuthValidationError()
+        if (authError != null) {
+            JOptionPane.showMessageDialog(null, authError)
+            return
+        }
+
         val request = GenerateFeatureRequestDto(
             projectRoot = projectRoot,
             testCaseText = selectedText,
@@ -83,7 +92,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             options = GenerateFeatureOptionsDto(
                 createFile = dialogOptions.createFile,
                 overwriteExisting = dialogOptions.overwriteExisting
-            )
+            ),
+            zephyrAuth = settings.toZephyrAuthDto()
         )
 
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Generating feature", true) {
