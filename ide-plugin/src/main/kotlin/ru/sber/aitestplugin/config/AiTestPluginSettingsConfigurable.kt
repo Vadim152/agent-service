@@ -37,10 +37,9 @@ import javax.swing.JComboBox
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JRadioButton
-import okhttp3.Credentials
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.time.Duration
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Base64
 
 /**
  * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
@@ -464,25 +463,28 @@ class AiTestPluginSettingsConfigurable(
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Проверяем доступность проекта..."
                 val settings = settingsService.settings
-                val client = OkHttpClient.Builder()
-                    .callTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
-                    .connectTimeout(Duration.ofMillis(settings.requestTimeoutMs.toLong()))
-                    .build()
                 val requestUrl = "${jiraBaseUrl.trimEnd('/')}/rest/api/2/project/${projectKey.trim()}/"
-                val requestBuilder = Request.Builder()
-                    .url(requestUrl)
-                    .get()
-                if (tokenSelected) {
-                    requestBuilder.header("Authorization", "Bearer $token")
-                } else {
-                    requestBuilder.header("Authorization", Credentials.basic(login, password))
-                }
-                client.newCall(requestBuilder.build()).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val body = response.body?.string().orEmpty()
-                        val message = body.takeIf { it.isNotBlank() } ?: "HTTP ${response.code}"
-                        throw IllegalStateException("Jira ответила ${response.code}: $message")
+                val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = settings.requestTimeoutMs
+                    readTimeout = settings.requestTimeoutMs
+                    if (tokenSelected) {
+                        setRequestProperty("Authorization", "Bearer $token")
+                    } else {
+                        val credentials = "$login:$password"
+                        val encoded = Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
+                        setRequestProperty("Authorization", "Basic $encoded")
                     }
+                }
+                try {
+                    val responseCode = connection.responseCode
+                    if (responseCode !in 200..299) {
+                        val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                        val message = errorBody.takeIf { it.isNotBlank() } ?: "HTTP $responseCode"
+                        throw IllegalStateException("Jira ответила $responseCode: $message")
+                    }
+                } finally {
+                    connection.disconnect()
                 }
                 statusMessage = "Проект $projectKey доступен"
             }
