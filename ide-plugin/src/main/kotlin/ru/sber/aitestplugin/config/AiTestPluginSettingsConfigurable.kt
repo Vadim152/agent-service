@@ -33,6 +33,7 @@ import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
 import javax.swing.JButton
 import javax.swing.JComponent
+import javax.swing.JComboBox
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JRadioButton
@@ -67,7 +68,7 @@ class AiTestPluginSettingsConfigurable(
     private val zephyrServiceRadio = JRadioButton("Zephyr", true)
     private val testItServiceRadio = JRadioButton("Test IT")
     private val zephyrJiraLabel = JLabel("Jira:")
-    private val zephyrJiraInstanceCombo = JBComboBox<String>(jiraInstanceOptions.keys.toTypedArray())
+    private val zephyrJiraInstanceCombo = JComboBox(jiraInstanceOptions.keys.toTypedArray())
     private val zephyrTokenRadio = JRadioButton("Token", true)
     private val zephyrLoginRadio = JRadioButton("Login/Password")
     private val zephyrTokenLabel = JLabel("Token for Jira:")
