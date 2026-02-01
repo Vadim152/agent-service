@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from autogen import AssistantAgent
-
 from agents import _serialize_scenario
 from domain.models import Scenario
 from infrastructure.llm_client import LLMClient
@@ -20,16 +18,6 @@ class TestcaseParserAgent:
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client
         self.parser = TestCaseParser()
-        self.assistant = AssistantAgent(
-            name="testcase_parser",
-            system_message=(
-                "Ты агент, который преобразует ручной текстовый тесткейс в структурированный"
-                " сценарий с шагами, ожидаемым результатом и тегами."
-            ),
-        )
-        self.assistant.register_function({
-            "parse_testcase": self.parse_testcase,
-        })
 
     def parse_testcase(self, testcase_text: str) -> dict[str, Any]:
         """Разобрать текст тесткейса в Scenario и вернуть сериализуемый словарь."""

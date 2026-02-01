@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from autogen import AssistantAgent
-
 from agents import _deserialize_scenario, _serialize_matched_step
 from domain.enums import MatchStatus
 from domain.models import MatchedStep, Scenario
@@ -30,16 +28,6 @@ class StepMatcherAgent:
         self.embeddings_store = embeddings_store
         self.llm_client = llm_client
         self.matcher = StepMatcher(llm_client=llm_client, embeddings_store=embeddings_store)
-        self.assistant = AssistantAgent(
-            name="step_matcher",
-            system_message=(
-                "Ты агент, который сопоставляет шаги тесткейса с определениями cucumber."
-                " Используй сохранённый индекс шагов и возвращай степень уверенности."
-            ),
-        )
-        self.assistant.register_function({
-            "match_testcase_steps": self.match_testcase_steps,
-        })
 
     def match_testcase_steps(self, project_root: str, scenario_dict: dict[str, Any]) -> dict[str, Any]:
         """Матчит шаги сценария по сохранённому индексу."""

@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from autogen import AssistantAgent
-
 from agents import _deserialize_matched_step, _deserialize_scenario, _serialize_feature
 from domain.enums import MatchStatus
 from domain.models import FeatureFile, MatchedStep, Scenario
@@ -21,16 +19,6 @@ class FeatureBuilderAgent:
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client
         self.generator = FeatureGenerator()
-        self.assistant = AssistantAgent(
-            name="feature_builder",
-            system_message=(
-                "Ты агент, который собирает итоговый текст .feature на основе сценария"
-                " и сопоставленных шагов."
-            ),
-        )
-        self.assistant.register_function({
-            "build_feature_from_matches": self.build_feature_from_matches,
-        })
 
     def build_feature_from_matches(
         self,
