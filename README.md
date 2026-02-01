@@ -1,6 +1,7 @@
 # agent-service
 
 Backend-сервис для плагина Sber IDE, который помогает:
+
 - сканировать проект на Cucumber/BDD шаги;
 - сопоставлять шаги тесткейса с найденными определениями;
 - генерировать `.feature` файл (Gherkin) и сохранять его в проекте.
@@ -12,6 +13,7 @@ Backend-сервис для плагина Sber IDE, который помога
 ### Оркестратор и агенты
 
 Оркестратор запускает цепочки задач, которые реализованы агентами:
+
 - **RepoScannerAgent** — сканирует репозиторий и индексирует шаги (`**/*Steps.{java,kt,groovy,py}`).
 - **TestcaseParserAgent** — разбирает текст тесткейса в структурированный сценарий (LLM + эвристики).
 - **StepMatcherAgent** — сопоставляет шаги тесткейса с индексом Cucumber-шагов.
@@ -24,7 +26,8 @@ Backend-сервис для плагина Sber IDE, который помога
 
 ### LLM
 
-По умолчанию используется GigaChat-адаптер. При отсутствии учётных данных сервис переходит в fallback-режим: LLM-возможности будут ограничены, но основной пайплайн продолжит работать.
+По умолчанию используется GigaChat-адаптер. При отсутствии учётных данных сервис переходит в fallback-режим:
+LLM-возможности будут ограничены, но основной пайплайн продолжит работать.
 
 ## Запуск
 
@@ -46,23 +49,23 @@ agent-service
 
 Все настройки читаются с префиксом `AGENT_SERVICE_` (или из `.env`).
 
-| Переменная | Назначение | Значение по умолчанию |
-| --- | --- | --- |
-| `AGENT_SERVICE_APP_NAME` | Имя сервиса | `agent-service` |
-| `AGENT_SERVICE_API_PREFIX` | Префикс HTTP API | `/api/v1` |
-| `AGENT_SERVICE_HOST` | Хост приложения | `0.0.0.0` |
-| `AGENT_SERVICE_PORT` | Порт приложения | `8000` |
-| `AGENT_SERVICE_STEPS_INDEX_DIR` | Папка индекса шагов | `.agent/steps_index` |
-| `AGENT_SERVICE_LLM_ENDPOINT` | Endpoint LLM (если нужен) | `None` |
-| `AGENT_SERVICE_LLM_API_KEY` | API ключ LLM | `None` |
-| `AGENT_SERVICE_LLM_MODEL` | Модель LLM | `None` |
-| `AGENT_SERVICE_LLM_API_VERSION` | Версия API LLM | `None` |
-| `GIGACHAT_CLIENT_ID` | Client ID для GigaChat | `None` |
-| `GIGACHAT_CLIENT_SECRET` | Client Secret для GigaChat | `None` |
-| `GIGACHAT_SCOPE` | OAuth scope GigaChat | `GIGACHAT_API_PERS` |
-| `GIGACHAT_AUTH_URL` | OAuth endpoint GigaChat | `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` |
-| `GIGACHAT_API_URL` | API endpoint GigaChat | `https://gigachat.devices.sberbank.ru/api/v1` |
-| `GIGACHAT_VERIFY_SSL` | Проверять SSL сертификаты GigaChat | `false` |
+| Переменная                      | Назначение                         | Значение по умолчанию                               |
+|---------------------------------|------------------------------------|-----------------------------------------------------|
+| `AGENT_SERVICE_APP_NAME`        | Имя сервиса                        | `agent-service`                                     |
+| `AGENT_SERVICE_API_PREFIX`      | Префикс HTTP API                   | `/api/v1`                                           |
+| `AGENT_SERVICE_HOST`            | Хост приложения                    | `0.0.0.0`                                           |
+| `AGENT_SERVICE_PORT`            | Порт приложения                    | `8000`                                              |
+| `AGENT_SERVICE_STEPS_INDEX_DIR` | Папка индекса шагов                | `.agent/steps_index`                                |
+| `AGENT_SERVICE_LLM_ENDPOINT`    | Endpoint LLM (если нужен)          | `None`                                              |
+| `AGENT_SERVICE_LLM_API_KEY`     | API ключ LLM                       | `None`                                              |
+| `AGENT_SERVICE_LLM_MODEL`       | Модель LLM                         | `None`                                              |
+| `AGENT_SERVICE_LLM_API_VERSION` | Версия API LLM                     | `None`                                              |
+| `GIGACHAT_CLIENT_ID`            | Client ID для GigaChat             | `None`                                              |
+| `GIGACHAT_CLIENT_SECRET`        | Client Secret для GigaChat         | `None`                                              |
+| `GIGACHAT_SCOPE`                | OAuth scope GigaChat               | `GIGACHAT_API_PERS`                                 |
+| `GIGACHAT_AUTH_URL`             | OAuth endpoint GigaChat            | `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` |
+| `GIGACHAT_API_URL`              | API endpoint GigaChat              | `https://gigachat.devices.sberbank.ru/api/v1`       |
+| `GIGACHAT_VERIFY_SSL`           | Проверять SSL сертификаты GigaChat | `false`                                             |
 
 > ⚠️ Не храните реальные секреты в репозитории. Используйте `.env` локально или CI-секреты.
 
