@@ -6,8 +6,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from autogen import AssistantAgent
-
 from domain.models import StepDefinition
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.fs_repo import FsRepository
@@ -37,17 +35,6 @@ class RepoScannerAgent:
             "**/*Steps.groovy",
             "**/*Steps.py",
         ]
-        self.assistant = AssistantAgent(
-            name="repo_scanner",
-            system_message=(
-                "Ты агент, который сканирует исходный код тестового проекта и обновляет индекс"
-                " cucumber-шагов. Используй предоставленные инструменты для чтения файлов"
-                " и формирования индекса."
-            ),
-        )
-        self.assistant.register_function({
-            "scan_repository": self.scan_repository,
-        })
 
     def scan_repository(self, project_root: str) -> dict[str, Any]:
         """Проходит по репозиторию, извлекает шаги и обновляет хранилища."""
