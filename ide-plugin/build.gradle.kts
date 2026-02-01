@@ -8,12 +8,12 @@ kotlin {
 }
 
 intellij {
-    version.set("2024.2")
+    version.set("2025.1")
     plugins.set(listOf("com.intellij.java"))
 }
 
 group = "ru.sber"
-version = "0.1.0-SNAPSHOT"
+version = "0.2.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
@@ -29,8 +29,8 @@ dependencies {
 
 tasks {
     patchPluginXml {
-        sinceBuild.set("242")
-        changeNotes.set("Initial skeleton for AI Cucumber Assistant plugin.")
+        sinceBuild.set("251")
+        changeNotes.set("Update plugin metadata for 2025.1 IDE builds.")
     }
 
     test {
