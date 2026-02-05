@@ -14,6 +14,9 @@ from app.config import get_settings
 from app.logging_config import LOG_LEVEL, get_logger, init_logging
 from api import router as api_router
 from agents import create_orchestrator
+from infrastructure.artifact_store import ArtifactStore
+from infrastructure.run_state_store import RunStateStore
+from self_healing.supervisor import ExecutionSupervisor
 
 warnings.filterwarnings(
     "ignore",
@@ -64,7 +67,14 @@ async def on_startup() -> None:
         global orchestrator
         orchestrator = create_orchestrator(settings)
         app.state.orchestrator = orchestrator
-        logger.info("[Startup] Оркестратор создан")
+        app.state.run_state_store = RunStateStore()
+        app.state.artifact_store = ArtifactStore(Path(settings.steps_index_dir).parent / "job_artifacts")
+        app.state.execution_supervisor = ExecutionSupervisor(
+            orchestrator=orchestrator,
+            run_state_store=app.state.run_state_store,
+            artifact_store=app.state.artifact_store,
+        )
+        logger.info("[Startup] Оркестратор и control-plane компоненты созданы")
     except Exception as exc:  # pragma: no cover - ранняя инициализация
         app.state.init_error = f"Ошибка создания оркестратора: {exc}"
         logger.exception("[Startup] Не удалось создать оркестратор")

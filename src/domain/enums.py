@@ -94,3 +94,30 @@ class StepPatternType(str, Enum):
 
     CUCUMBER_EXPRESSION = "cucumberExpression"
     REGULAR_EXPRESSION = "regularExpression"
+
+
+class JobStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    NEEDS_ATTENTION = "needs_attention"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class RunAttemptStatus(str, Enum):
+    STARTED = "started"
+    FAILED = "failed"
+    REMEDIATED = "remediated"
+    RERUN_SCHEDULED = "rerun_scheduled"
+    SUCCEEDED = "succeeded"
+
+
+class FailureCategory(str, Enum):
+    INFRA = "infra"
+    ENV = "env"
+    DATA = "data"
+    FLAKY = "flaky"
+    PRODUCT = "product"
+    AUTOMATION = "automation"
+    UNKNOWN = "unknown"

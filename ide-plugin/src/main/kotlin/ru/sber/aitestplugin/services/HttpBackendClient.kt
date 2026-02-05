@@ -13,6 +13,9 @@ import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
+import ru.sber.aitestplugin.model.JobCreateRequestDto
+import ru.sber.aitestplugin.model.JobCreateResponseDto
+import ru.sber.aitestplugin.model.JobStatusResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
@@ -75,6 +78,12 @@ class HttpBackendClient(
             headers = settings.toZephyrAuthHeaders()
         )
     }
+
+    override fun createJob(request: JobCreateRequestDto): JobCreateResponseDto =
+        post("/jobs", request)
+
+    override fun getJob(jobId: String): JobStatusResponseDto =
+        get("/jobs/$jobId")
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
         post("/feature/apply-feature", request)

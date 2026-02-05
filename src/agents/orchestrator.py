@@ -14,6 +14,7 @@ from infrastructure.fs_repo import FsRepository
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.llm_client import LLMClient
 from infrastructure.step_index_store import StepIndexStore
+from self_healing.capabilities import CapabilityRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,24 @@ class Orchestrator:
         self.step_index_store = step_index_store
         self.embeddings_store = embeddings_store
         self.llm_client = llm_client
+        self.capability_registry = CapabilityRegistry()
+        self._register_default_capabilities()
         self._scan_graph = self._build_scan_graph()
         self._feature_graph = self._build_feature_graph()
+
+
+    def _register_default_capabilities(self) -> None:
+        self.capability_registry.register("scan_steps", self.scan_steps)
+        self.capability_registry.register("parse_testcase", self.testcase_parser_agent.parse_testcase)
+        self.capability_registry.register("match_steps", self.step_matcher_agent.match_testcase_steps)
+        self.capability_registry.register("build_feature", self.feature_builder_agent.build_feature_from_matches)
+        self.capability_registry.register("apply_feature", self.apply_feature)
+        self.capability_registry.register("run_test_execution", self.generate_feature)
+        self.capability_registry.register("collect_run_artifacts", lambda *_args, **_kwargs: {})
+        self.capability_registry.register("classify_failure", lambda *_args, **_kwargs: {})
+        self.capability_registry.register("apply_remediation", lambda *_args, **_kwargs: {})
+        self.capability_registry.register("rerun_with_strategy", self.generate_feature)
+        self.capability_registry.register("incident_report_builder", lambda *_args, **_kwargs: {})
 
     def _build_scan_graph(self):
         graph = StateGraph(ScanState)
