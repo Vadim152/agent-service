@@ -257,6 +257,74 @@ class ApplyFeatureResponse(ApiBaseModel):
     message: str | None = Field(default=None, description="Дополнительное пояснение")
 
 
+class FailureClassificationDto(ApiBaseModel):
+    category: str
+    confidence: float
+    signals: list[str] = Field(default_factory=list)
+    summary: str | None = None
+
+
+class RemediationActionDto(ApiBaseModel):
+    action: str
+    strategy: str
+    safe: bool = True
+    notes: str | None = None
+
+
+class IncidentReportDto(ApiBaseModel):
+    job_id: str = Field(..., alias="jobId")
+    run_id: str = Field(..., alias="runId")
+    attempt_id: str = Field(..., alias="attemptId")
+    source: str
+    summary: str
+    hypotheses: list[str] = Field(default_factory=list)
+
+
+class JobCreateRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    test_case_text: str = Field(..., alias="testCaseText")
+    target_path: str | None = Field(default=None, alias="targetPath")
+    profile: str = Field(default="quick")
+    create_file: bool = Field(default=False, alias="createFile")
+    overwrite_existing: bool = Field(default=False, alias="overwriteExisting")
+    language: str | None = None
+    source: str = Field(default="api")
+
+
+class JobCreateResponse(ApiBaseModel):
+    job_id: str = Field(..., alias="jobId")
+    status: str
+
+
+class RunAttemptDto(ApiBaseModel):
+    attempt_id: str = Field(..., alias="attemptId")
+    status: str
+    classification: FailureClassificationDto | None = None
+    remediation: RemediationActionDto | None = None
+
+
+class JobStatusResponse(ApiBaseModel):
+    job_id: str = Field(..., alias="jobId")
+    run_id: str | None = Field(default=None, alias="runId")
+    status: str
+    source: str | None = None
+    incident_uri: str | None = Field(default=None, alias="incidentUri")
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
+
+
+class JobEventDto(ApiBaseModel):
+    event_type: str = Field(..., alias="eventType")
+    payload: dict[str, Any]
+    created_at: datetime = Field(..., alias="createdAt")
+    index: int
+
+
+class JobCancelResponse(ApiBaseModel):
+    job_id: str = Field(..., alias="jobId")
+    status: str
+
+
 class LlmTestRequest(ApiBaseModel):
     """Запрос на тестовый вызов LLM."""
 
@@ -283,6 +351,15 @@ __all__ = [
     "GenerateFeatureOptions",
     "GenerateFeatureRequest",
     "GenerateFeatureResponse",
+    "FailureClassificationDto",
+    "RemediationActionDto",
+    "IncidentReportDto",
+    "JobCreateRequest",
+    "JobCreateResponse",
+    "RunAttemptDto",
+    "JobStatusResponse",
+    "JobEventDto",
+    "JobCancelResponse",
     "PipelineStepDto",
     "ScanStepsRequest",
     "ScanStepsResponse",

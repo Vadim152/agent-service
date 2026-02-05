@@ -18,6 +18,7 @@ import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
+import ru.sber.aitestplugin.model.JobCreateRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
@@ -143,9 +144,41 @@ class AiToolWindowPanel(
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Генерация feature", true) {
             private var usedSteps: List<StepDefinitionDto> = emptyList()
             private var unmapped: List<UnmappedStepDto> = emptyList()
+            private var finalStatus: String = "queued"
+            private var incidentUri: String? = null
 
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Отправка тесткейса в сервис..."
+                indicator.text = "Создание Job..."
+                val job = backendClient.createJob(
+                    JobCreateRequestDto(
+                        projectRoot = request.projectRoot,
+                        testCaseText = request.testCaseText,
+                        targetPath = request.targetPath,
+                        profile = "quick",
+                        createFile = request.options?.createFile ?: false,
+                        overwriteExisting = request.options?.overwriteExisting ?: false,
+                        language = request.options?.language
+                    )
+                )
+
+                var attemptsLeft = 120
+                while (attemptsLeft-- > 0) {
+                    val status = backendClient.getJob(job.jobId)
+                    finalStatus = status.status
+                    incidentUri = status.incidentUri
+                    indicator.text = when (status.status) {
+                        "running" -> "Запуск"
+                        "needs_attention" -> "Эскалация"
+                        "succeeded" -> "Повторный запуск/успех"
+                        else -> "Диагностика"
+                    }
+                    if (status.status in setOf("succeeded", "needs_attention", "failed", "cancelled")) {
+                        break
+                    }
+                    Thread.sleep(500)
+                }
+
+                indicator.text = "Получение финального feature..."
                 val response = backendClient.generateFeature(request)
                 usedSteps = response.usedSteps
                 unmapped = response.unmappedSteps
@@ -153,8 +186,11 @@ class AiToolWindowPanel(
 
             override fun onSuccess() {
                 val unmappedMessage = if (unmapped.isEmpty()) "" else ", неотображённых: ${unmapped.size}"
-                statusLabel.icon = AllIcons.General.InspectionsOK
-                statusLabel.text = "Feature сгенерирован. Использовано: ${usedSteps.size}$unmappedMessage"
+                statusLabel.icon = if (finalStatus == "succeeded") AllIcons.General.InspectionsOK else AllIcons.General.Warning
+                statusLabel.text = "Статус: $finalStatus. Использовано: ${usedSteps.size}$unmappedMessage"
+                if (!incidentUri.isNullOrBlank()) {
+                    notify("Открыть инцидент: $incidentUri", NotificationType.INFORMATION)
+                }
             }
 
             override fun onThrowable(error: Throwable) {

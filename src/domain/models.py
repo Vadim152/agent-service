@@ -186,3 +186,63 @@ class FeatureFile:
                     lines.append("      | " + " | ".join(str(value) for value in example.values()) + " |")
 
         return "\n".join(lines).rstrip() + "\n"
+
+
+@dataclass
+class CorrelationFields:
+    job_id: str
+    run_id: str | None = None
+    attempt_id: str | None = None
+    source: str | None = None
+
+
+@dataclass
+class FailureClassification:
+    correlation: CorrelationFields
+    category: str
+    confidence: float
+    signals: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RemediationAction:
+    correlation: CorrelationFields
+    action: str
+    strategy: str
+    safe: bool = True
+    result: dict[str, Any] | None = None
+
+
+@dataclass
+class RunAttempt:
+    correlation: CorrelationFields
+    status: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    classification: FailureClassification | None = None
+    remediation: RemediationAction | None = None
+
+
+@dataclass
+class Run:
+    correlation: CorrelationFields
+    attempts: list[RunAttempt] = field(default_factory=list)
+    status: str = "started"
+
+
+@dataclass
+class IncidentReport:
+    correlation: CorrelationFields
+    summary: str
+    hypotheses: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Job:
+    correlation: CorrelationFields
+    status: str
+    created_at: str
+    updated_at: str
+    runs: list[Run] = field(default_factory=list)
+    incident_report: IncidentReport | None = None
