@@ -299,8 +299,11 @@ class JobCreateResponse(ApiBaseModel):
 class RunAttemptDto(ApiBaseModel):
     attempt_id: str = Field(..., alias="attemptId")
     status: str
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
     classification: FailureClassificationDto | None = None
     remediation: RemediationActionDto | None = None
+    artifacts: dict[str, str] = Field(default_factory=dict)
 
 
 class JobStatusResponse(ApiBaseModel):
@@ -323,6 +326,36 @@ class JobEventDto(ApiBaseModel):
 class JobCancelResponse(ApiBaseModel):
     job_id: str = Field(..., alias="jobId")
     status: str
+
+
+class JobAttemptsResponse(ApiBaseModel):
+    job_id: str = Field(..., alias="jobId")
+    run_id: str | None = Field(default=None, alias="runId")
+    attempts: list[RunAttemptDto] = Field(default_factory=list)
+
+
+class JobFeatureResultDto(ApiBaseModel):
+    feature_text: str = Field(default="", alias="featureText")
+    unmapped_steps: list[UnmappedStepDto] = Field(default_factory=list, alias="unmappedSteps")
+    unmapped: list[str] = Field(default_factory=list)
+    used_steps: list[StepDefinitionDto] = Field(default_factory=list, alias="usedSteps")
+    build_stage: str | None = Field(default=None, alias="buildStage")
+    steps_summary: StepsSummaryDto | None = Field(default=None, alias="stepsSummary")
+    meta: dict[str, Any] | None = None
+    pipeline: list[PipelineStepDto] = Field(default_factory=list)
+    file_status: dict[str, Any] | None = Field(default=None, alias="fileStatus")
+
+
+class JobResultResponse(ApiBaseModel):
+    job_id: str = Field(..., alias="jobId")
+    run_id: str | None = Field(default=None, alias="runId")
+    status: str
+    source: str | None = None
+    incident_uri: str | None = Field(default=None, alias="incidentUri")
+    started_at: datetime | None = Field(default=None, alias="startedAt")
+    finished_at: datetime | None = Field(default=None, alias="finishedAt")
+    feature: JobFeatureResultDto | None = None
+    attempts: list[RunAttemptDto] = Field(default_factory=list)
 
 
 class LlmTestRequest(ApiBaseModel):
@@ -356,7 +389,10 @@ __all__ = [
     "IncidentReportDto",
     "JobCreateRequest",
     "JobCreateResponse",
+    "JobFeatureResultDto",
+    "JobResultResponse",
     "RunAttemptDto",
+    "JobAttemptsResponse",
     "JobStatusResponse",
     "JobEventDto",
     "JobCancelResponse",

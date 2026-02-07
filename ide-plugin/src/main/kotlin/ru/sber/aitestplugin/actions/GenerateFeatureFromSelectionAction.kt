@@ -26,11 +26,9 @@ import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.JBColor
 import com.intellij.openapi.wm.ToolWindowManager
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
-import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
-import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
-import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
+import ru.sber.aitestplugin.model.JobCreateRequestDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
@@ -85,34 +83,63 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             return
         }
 
-        val request = GenerateFeatureRequestDto(
-            projectRoot = projectRoot,
-            testCaseText = selectedText,
-            targetPath = dialogOptions.targetPath,
-            options = GenerateFeatureOptionsDto(
-                createFile = dialogOptions.createFile,
-                overwriteExisting = dialogOptions.overwriteExisting
-            ),
-            zephyrAuth = settings.toZephyrAuthDto()
+        val options = GenerateFeatureOptionsDto(
+            createFile = dialogOptions.createFile,
+            overwriteExisting = dialogOptions.overwriteExisting
         )
 
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Generating feature", true) {
-            private var response: GenerateFeatureResponseDto? = null
+            private var featureText: String = ""
+            private var resultTargetPath: String? = dialogOptions.targetPath
+            private var unmappedSteps: List<UnmappedStepDto> = emptyList()
 
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Sending test case to backend..."
-                response = backendClient.generateFeature(request)
+                indicator.text = "Creating job..."
+                val job = backendClient.createJob(
+                    JobCreateRequestDto(
+                        projectRoot = projectRoot,
+                        testCaseText = selectedText,
+                        targetPath = dialogOptions.targetPath,
+                        profile = "quick",
+                        createFile = options.createFile,
+                        overwriteExisting = options.overwriteExisting
+                    )
+                )
+
+                var attemptsLeft = 120
+                var finalStatus = "queued"
+                while (attemptsLeft-- > 0) {
+                    val status = backendClient.getJob(job.jobId)
+                    finalStatus = status.status
+                    if (status.status in setOf("succeeded", "needs_attention", "failed", "cancelled")) {
+                        break
+                    }
+                    Thread.sleep(500)
+                }
+                if (finalStatus == "cancelled") {
+                    throw IllegalStateException("Job was cancelled")
+                }
+
+                indicator.text = "Fetching result..."
+                val result = backendClient.getJobResult(job.jobId)
+                val feature = result.feature ?: throw IllegalStateException("Job completed without feature result")
+                featureText = feature.featureText
+                if (featureText.isBlank()) {
+                    throw IllegalStateException("Generated feature is empty")
+                }
+                unmappedSteps = feature.unmappedSteps
+                val targetFromFileStatus = feature.fileStatus?.get("targetPath") as? String
+                resultTargetPath = targetFromFileStatus ?: resultTargetPath
             }
 
             override fun onSuccess() {
-                val responseData = response ?: return
-                val file = createOrUpdateFeatureFile(project, projectRoot, request.targetPath, request.options, responseData.featureText)
+                val file = createOrUpdateFeatureFile(project, projectRoot, resultTargetPath, options, featureText)
                 FileEditorManager.getInstance(project).openFile(file, true)
-                highlightUnmappedSteps(project, file, responseData.unmappedSteps)
-                updateToolWindowUnmapped(project, responseData.unmappedSteps)
+                highlightUnmappedSteps(project, file, unmappedSteps)
+                updateToolWindowUnmapped(project, unmappedSteps)
                 notify(
                     project,
-                    "Feature generated${if (responseData.unmappedSteps.isNotEmpty()) ": ${responseData.unmappedSteps.size} unmapped steps" else ""}",
+                    "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}",
                     NotificationType.INFORMATION
                 )
             }
