@@ -10,11 +10,15 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from api.schemas import (
+    JobAttemptsResponse,
     JobCancelResponse,
     JobCreateRequest,
     JobCreateResponse,
     JobEventDto,
+    JobFeatureResultDto,
+    JobResultResponse,
     JobStatusResponse,
+    RunAttemptDto,
 )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -46,6 +50,8 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
             "source": payload.source,
             "started_at": _utcnow(),
             "updated_at": _utcnow(),
+            "attempts": [],
+            "result": None,
         }
     )
     run_state_store.append_event(job_id, "job.queued", {"jobId": job_id, "source": payload.source})
@@ -71,6 +77,51 @@ async def get_job(job_id: str, request: Request) -> JobStatusResponse:
         incident_uri=item.get("incident_uri"),
         started_at=datetime.fromisoformat(item["started_at"]) if item.get("started_at") else None,
         finished_at=datetime.fromisoformat(item["finished_at"]) if item.get("finished_at") else None,
+    )
+
+
+@router.get("/{job_id}/attempts", response_model=JobAttemptsResponse)
+async def get_job_attempts(job_id: str, request: Request) -> JobAttemptsResponse:
+    run_state_store = getattr(request.app.state, "run_state_store", None)
+    if not run_state_store:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job control plane is not initialized")
+
+    item = run_state_store.get_job(job_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
+
+    attempts = [RunAttemptDto.model_validate(attempt) for attempt in item.get("attempts", [])]
+    return JobAttemptsResponse(job_id=job_id, run_id=item.get("run_id"), attempts=attempts)
+
+
+@router.get("/{job_id}/result", response_model=JobResultResponse)
+async def get_job_result(job_id: str, request: Request) -> JobResultResponse:
+    run_state_store = getattr(request.app.state, "run_state_store", None)
+    if not run_state_store:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job control plane is not initialized")
+
+    item = run_state_store.get_job(job_id)
+    if not item:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
+
+    feature_payload = item.get("result")
+    if feature_payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Result is not ready for job: {job_id}",
+        )
+
+    attempts = [RunAttemptDto.model_validate(attempt) for attempt in item.get("attempts", [])]
+    return JobResultResponse(
+        job_id=job_id,
+        run_id=item.get("run_id"),
+        status=item.get("status", "queued"),
+        source=item.get("source"),
+        incident_uri=item.get("incident_uri"),
+        started_at=datetime.fromisoformat(item["started_at"]) if item.get("started_at") else None,
+        finished_at=datetime.fromisoformat(item["finished_at"]) if item.get("finished_at") else None,
+        feature=JobFeatureResultDto.model_validate(feature_payload),
+        attempts=attempts,
     )
 
 

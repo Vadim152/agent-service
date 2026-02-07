@@ -14,10 +14,8 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
-import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
-import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.JobCreateRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
@@ -126,16 +124,10 @@ class AiToolWindowPanel(
         )
         stateStorage.saveGenerateOptions(dialogOptions)
 
-        val request = GenerateFeatureRequestDto(
-            projectRoot = projectRoot,
-            testCaseText = testCaseText,
-            targetPath = dialogOptions.targetPath,
-            options = GenerateFeatureOptionsDto(
-                createFile = dialogOptions.createFile,
-                overwriteExisting = dialogOptions.overwriteExisting,
-                language = dialogOptions.language
-            ),
-            zephyrAuth = settings.toZephyrAuthDto()
+        val options = GenerateFeatureOptionsDto(
+            createFile = dialogOptions.createFile,
+            overwriteExisting = dialogOptions.overwriteExisting,
+            language = dialogOptions.language
         )
 
         statusLabel.icon = AllIcons.General.BalloonInformation
@@ -151,13 +143,13 @@ class AiToolWindowPanel(
                 indicator.text = "Создание Job..."
                 val job = backendClient.createJob(
                     JobCreateRequestDto(
-                        projectRoot = request.projectRoot,
-                        testCaseText = request.testCaseText,
-                        targetPath = request.targetPath,
+                        projectRoot = projectRoot,
+                        testCaseText = testCaseText,
+                        targetPath = dialogOptions.targetPath,
                         profile = "quick",
-                        createFile = request.options?.createFile ?: false,
-                        overwriteExisting = request.options?.overwriteExisting ?: false,
-                        language = request.options?.language
+                        createFile = options.createFile,
+                        overwriteExisting = options.overwriteExisting,
+                        language = options.language
                     )
                 )
 
@@ -179,9 +171,11 @@ class AiToolWindowPanel(
                 }
 
                 indicator.text = "Получение финального feature..."
-                val response = backendClient.generateFeature(request)
-                usedSteps = response.usedSteps
-                unmapped = response.unmappedSteps
+                val result = backendClient.getJobResult(job.jobId)
+                finalStatus = result.status
+                incidentUri = incidentUri ?: result.incidentUri
+                usedSteps = result.feature?.usedSteps ?: emptyList()
+                unmapped = result.feature?.unmappedSteps ?: emptyList()
             }
 
             override fun onSuccess() {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from threading import RLock
@@ -36,7 +37,7 @@ class RunStateStore:
             value = self._jobs.get(job_id)
             if not value:
                 return None
-            return dict(value)
+            return deepcopy(value)
 
     def patch_job(self, job_id: str, **changes: Any) -> dict[str, Any] | None:
         with self._lock:
@@ -45,7 +46,38 @@ class RunStateStore:
                 return None
             item.update(changes)
             item["updated_at"] = utcnow().isoformat()
-            return dict(item)
+            return deepcopy(item)
+
+    def append_attempt(self, job_id: str, attempt: dict[str, Any]) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return None
+            attempts = item.setdefault("attempts", [])
+            attempts.append(attempt)
+            item["updated_at"] = utcnow().isoformat()
+            return deepcopy(attempt)
+
+    def patch_attempt(self, job_id: str, attempt_id: str, **changes: Any) -> dict[str, Any] | None:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return None
+            attempts = item.setdefault("attempts", [])
+            for attempt in attempts:
+                if attempt.get("attempt_id") == attempt_id:
+                    attempt.update(changes)
+                    item["updated_at"] = utcnow().isoformat()
+                    return deepcopy(attempt)
+            return None
+
+    def list_attempts(self, job_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            item = self._jobs.get(job_id)
+            if not item:
+                return []
+            attempts = item.get("attempts", [])
+            return deepcopy(attempts)
 
     def append_event(self, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
         with self._lock:
