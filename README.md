@@ -1,18 +1,17 @@
 # agent-service
 
-Backend-сервис для плагина Sber IDE, который помогает:
+Backend для Sber IDE плагина, который помогает:
 
-- сканировать проект на Cucumber/BDD шаги;
+- сканировать репозиторий на Cucumber/BDD шаги;
 - сопоставлять шаги тесткейса с найденными определениями;
-- генерировать `.feature` файл (Gherkin) и сохранять его в проекте.
+- генерировать и сохранять `.feature` файл (Gherkin);
+- запускать полный цикл через единый Job API (контрольный контур + события).
 
-Сервис построен на FastAPI и использует набор агентов, объединённых в оркестратор на базе LangGraph.
+Сервис построен на FastAPI и использует набор агентных компонентов, объединенных в оркестратор.
 
 ## Архитектура
 
 ### Оркестратор и агенты
-
-Оркестратор запускает цепочки задач, которые реализованы агентами:
 
 - **RepoScannerAgent** — сканирует репозиторий и индексирует шаги (`**/*Steps.{java,kt,groovy,py}`).
 - **TestcaseParserAgent** — разбирает текст тесткейса в структурированный сценарий (LLM + эвристики).
@@ -21,31 +20,42 @@ Backend-сервис для плагина Sber IDE, который помога
 
 ### Хранилища
 
-- **StepIndexStore** — хранит индекс шагов в каталоге `.agent/steps_index`.
-- **EmbeddingsStore** — хранит эмбеддинги шагов в ChromaDB для семантического поиска.
+- **StepIndexStore** — индекс шагов в `.agent/steps_index`.
+- **EmbeddingsStore** — эмбеддинги шагов в ChromaDB для семантического поиска.
+- **RunStateStore** — состояние Job API (статусы, попытки, события).
+- **ArtifactStore** — артефакты запусков (результаты, классификации, инциденты).
 
 ### LLM
 
-По умолчанию используется GigaChat-адаптер. При отсутствии учётных данных сервис переходит в fallback-режим:
-LLM-возможности будут ограничены, но основной пайплайн продолжит работать.
+По умолчанию используется GigaChat-адаптер. Если учетные данные не заданы, сервис работает в fallback-режиме.
 
 ## Запуск
 
-### Локальный запуск
+### Локально (Windows PowerShell)
+
+```powershell
+cd C:\path\to\agent-service
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools
+python -m pip install -e .
+
+python -m app.main
+```
+
+### Локально (Linux/macOS)
 
 ```bash
-cd /workspace/agent-service
+cd /path/to/agent-service
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools
 python -m pip install -e .
 
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-# либо
-agent-service
+python -m app.main
 ```
 
-### Переменные окружения
+## Переменные окружения
 
 Все настройки читаются с префиксом `AGENT_SERVICE_` (или из `.env`).
 
@@ -67,17 +77,70 @@ agent-service
 | `GIGACHAT_API_URL`              | API endpoint GigaChat              | `https://gigachat.devices.sberbank.ru/api/v1`       |
 | `GIGACHAT_VERIFY_SSL`           | Проверять SSL сертификаты GigaChat | `false`                                             |
 
-> ⚠️ Не храните реальные секреты в репозитории. Используйте `.env` локально или CI-секреты.
+Важно: не храните реальные секреты в репозитории. Используйте `.env` локально или CI-секреты.
 
 ## HTTP API
 
-Базовый префикс настраивается через `AGENT_SERVICE_API_PREFIX` (по умолчанию `/api/v1`).
+Базовый префикс API настраивается через `AGENT_SERVICE_API_PREFIX` (по умолчанию `/api/v1`).
 
 ### Healthcheck
 
 ```bash
 curl -X GET http://0.0.0.0:8000/health
 ```
+
+### Job API (основной поток для плагина)
+
+#### Создать job
+
+```bash
+curl -X POST http://0.0.0.0:8000/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectRoot": "/path/to/project",
+    "testCaseText": "1. Открыть страницу\n2. Нажать кнопку",
+    "targetPath": "features/generated.feature",
+    "createFile": true,
+    "overwriteExisting": false,
+    "language": "ru",
+    "profile": "quick",
+    "source": "sber-ide"
+  }'
+```
+
+Ответ: `{ "jobId": "...", "status": "queued" }`
+
+#### Получить статус job
+
+```bash
+curl -X GET http://0.0.0.0:8000/api/v1/jobs/{jobId}
+```
+
+#### Получить результат job
+
+```bash
+curl -X GET http://0.0.0.0:8000/api/v1/jobs/{jobId}/result
+```
+
+Если результат еще не готов, возвращается `409`.
+
+#### Получить попытки job
+
+```bash
+curl -X GET http://0.0.0.0:8000/api/v1/jobs/{jobId}/attempts
+```
+
+#### События job (SSE)
+
+```bash
+curl -N http://0.0.0.0:8000/api/v1/jobs/{jobId}/events
+```
+
+Основные события:
+
+- `job.queued`, `job.running`, `job.finished`
+- `attempt.started`, `attempt.succeeded`, `attempt.classified`, `attempt.remediated`, `attempt.rerun_scheduled`
+- `job.incident`
 
 ### Сканирование шагов
 
@@ -87,13 +150,15 @@ curl -X POST http://0.0.0.0:8000/api/v1/steps/scan-steps \
   -d '{"projectRoot": "/path/to/project"}'
 ```
 
-Получение сохранённых шагов:
+Получение сохраненных шагов:
 
 ```bash
 curl -X GET "http://0.0.0.0:8000/api/v1/steps/?projectRoot=/path/to/project"
 ```
 
-### Генерация `.feature`
+### Ручная генерация `.feature`
+
+Основной поток для плагина идет через Job API, но ручные endpoint'ы доступны для отладки.
 
 ```bash
 curl -X POST http://0.0.0.0:8000/api/v1/feature/generate-feature \
@@ -133,7 +198,14 @@ curl -X POST http://0.0.0.0:8000/api/v1/llm/test \
 
 ## Сборка плагина
 
+Windows:
+
+```powershell
+.\ide-plugin\gradlew.bat -p ide-plugin buildPlugin
+```
+
+Linux/macOS:
+
 ```bash
-./gradlew build
 ./ide-plugin/gradlew -p ide-plugin buildPlugin
 ```
