@@ -2,6 +2,13 @@ package ru.sber.aitestplugin.services
 
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
+import ru.sber.aitestplugin.model.ChatHistoryResponseDto
+import ru.sber.aitestplugin.model.ChatMessageAcceptedResponseDto
+import ru.sber.aitestplugin.model.ChatMessageRequestDto
+import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
+import ru.sber.aitestplugin.model.ChatSessionCreateResponseDto
+import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
+import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.JobCreateRequestDto
@@ -29,4 +36,12 @@ interface BackendClient {
     fun getJobResult(jobId: String): JobResultResponseDto
 
     fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto
+
+    fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto
+
+    fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto
+
+    fun getChatHistory(sessionId: String): ChatHistoryResponseDto
+
+    fun submitChatToolDecision(sessionId: String, request: ChatToolDecisionRequestDto): ChatToolDecisionResponseDto
 }

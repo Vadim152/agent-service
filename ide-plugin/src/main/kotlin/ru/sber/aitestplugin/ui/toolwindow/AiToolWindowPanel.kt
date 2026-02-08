@@ -1,263 +1,319 @@
 package ru.sber.aitestplugin.ui.toolwindow
 
 import com.intellij.icons.AllIcons
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
-import com.intellij.openapi.progress.ProgressIndicator
-import com.intellij.openapi.progress.ProgressManager
-import com.intellij.openapi.progress.Task
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBCheckBox
+import com.intellij.ui.components.JBLabel
+import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
-import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
-import ru.sber.aitestplugin.config.zephyrAuthValidationError
-import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
-import ru.sber.aitestplugin.model.JobCreateRequestDto
+import ru.sber.aitestplugin.model.ChatHistoryResponseDto
+import ru.sber.aitestplugin.model.ChatMessageRequestDto
+import ru.sber.aitestplugin.model.ChatPendingToolCallDto
+import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
+import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
-import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
-import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
-import ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialogOptions
 import java.awt.BorderLayout
-import java.awt.GridBagConstraints
-import java.awt.GridBagLayout
+import java.awt.FlowLayout
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.concurrent.atomic.AtomicBoolean
+import javax.swing.BoxLayout
+import javax.swing.DefaultListModel
 import javax.swing.JButton
-import javax.swing.JLabel
 import javax.swing.JPanel
-import javax.swing.SwingConstants
+import javax.swing.SwingUtilities
+import javax.swing.Timer
 
 /**
- * Основная панель Tool Window с генерацией сценария.
+ * Chat-only Tool Window panel.
  */
 class AiToolWindowPanel(
     private val project: Project,
     private val backendClient: BackendClient = HttpBackendClient()
 ) : JPanel(BorderLayout()) {
+    private val logger = Logger.getInstance(AiToolWindowPanel::class.java)
     private val settings = AiTestPluginSettingsService.getInstance().settings
-    private val stateStorage = FeatureDialogStateStorage(settings)
-    private val generateDefaults: GenerateFeatureDialogOptions = stateStorage.loadGenerateOptions(project.basePath)
-    private val testCaseInput = JBTextArea(5, 20)
-    private val targetPathField = JBTextField(generateDefaults.targetPath ?: "")
-    private val createFileCheckbox = JBCheckBox("Создать файл, если отсутствует", generateDefaults.createFile)
-    private val overwriteCheckbox = JBCheckBox("Перезаписать существующий файл", generateDefaults.overwriteExisting)
-    private val generateButton = JButton("Сгенерировать", AllIcons.Actions.Execute).apply {
-        foreground = JBColor(0x0B874B, 0x7DE390)
-        background = JBColor(0xE7F6EC, 0x284133)
-        border = JBUI.Borders.empty(6, 12)
-        isOpaque = true
+    private val timelineModel = DefaultListModel<String>()
+    private val timeline = JBList(timelineModel)
+    private val inputArea = JBTextArea(4, 20)
+    private val statusLabel = JBLabel("Connecting chat session...")
+    private val approvalPanel = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        border = JBUI.Borders.empty(8, 0)
     }
-    private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, SwingConstants.LEADING)
+    private val refreshInFlight = AtomicBoolean(false)
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
+    private var sessionId: String? = null
+    private val pollTimer = Timer(1500) { refreshHistoryAsync() }
 
     init {
-        border = JBUI.Borders.empty(12)
-        layout = BorderLayout()
+        border = JBUI.Borders.empty(8)
+        background = JBColor.PanelBackground
+        add(buildCenterPanel(), BorderLayout.CENTER)
+        add(buildBottomPanel(), BorderLayout.SOUTH)
+        ensureSessionAsync()
+    }
 
-        testCaseInput.lineWrap = true
-        testCaseInput.wrapStyleWord = true
+    override fun addNotify() {
+        super.addNotify()
+        pollTimer.start()
+    }
 
-        val generationForm = createCardPanel().apply {
-            add(createSectionLabel("Генерация сценария"), BorderLayout.NORTH)
-            add(buildGenerationForm(), BorderLayout.CENTER)
-        }
-
-        add(generationForm, BorderLayout.CENTER)
-        add(statusLabel, BorderLayout.SOUTH)
-
-        generateButton.addActionListener {
-            runGenerateFeature()
-        }
+    override fun removeNotify() {
+        pollTimer.stop()
+        super.removeNotify()
     }
 
     fun showScanResult(response: ScanStepsResponseDto) {
-        val unmappedMessage = if (response.unmappedSteps.isEmpty()) "" else ", неотображённых: ${response.unmappedSteps.size}"
-        statusLabel.icon = AllIcons.General.InspectionsOK
-        statusLabel.text = "Найдено ${response.stepsCount} шагов$unmappedMessage • Обновлено ${response.updatedAt}"
+        appendLocalSystemMessage(
+            "Legacy action: scan complete, steps=${response.stepsCount}, updated=${response.updatedAt}."
+        )
     }
 
     fun showUnmappedSteps(unmappedSteps: List<UnmappedStepDto>) {
-        statusLabel.icon = if (unmappedSteps.isEmpty()) AllIcons.General.InspectionsOK else AllIcons.General.Warning
-        statusLabel.text = if (unmappedSteps.isEmpty()) {
-            "Неотображённых шагов нет"
-        } else {
-            "Неотображённые шаги: ${unmappedSteps.size}"
-        }
-    }
-
-    private fun runGenerateFeature() {
-        val projectRoot = settings.scanProjectRoot.orEmpty().ifEmpty { project.basePath.orEmpty() }
-        if (projectRoot.isBlank()) {
-            statusLabel.icon = AllIcons.General.Warning
-            statusLabel.text = "Путь к проекту не указан"
-            notify("Укажите путь к корню проекта", NotificationType.WARNING)
-            return
-        }
-
-        settings.scanProjectRoot = projectRoot
-
-        val testCaseText = testCaseInput.text.trim()
-        if (testCaseText.isBlank()) {
-            statusLabel.icon = AllIcons.General.Warning
-            statusLabel.text = "Текст тесткейса пустой"
-            notify("Введите текст тесткейса", NotificationType.WARNING)
-            return
-        }
-
-        val authError = settings.zephyrAuthValidationError()
-        if (authError != null) {
-            statusLabel.icon = AllIcons.General.Warning
-            statusLabel.text = "Не заполнены данные авторизации Jira/Zephyr"
-            notify(authError, NotificationType.WARNING)
-            return
-        }
-
-        val dialogOptions = GenerateFeatureDialogOptions(
-            targetPath = targetPathField.text.trim().takeIf { it.isNotEmpty() },
-            createFile = createFileCheckbox.isSelected,
-            overwriteExisting = overwriteCheckbox.isSelected,
-            language = generateDefaults.language
+        appendLocalSystemMessage(
+            "Legacy action: unmapped steps=${unmappedSteps.size}."
         )
-        stateStorage.saveGenerateOptions(dialogOptions)
-
-        val options = GenerateFeatureOptionsDto(
-            createFile = dialogOptions.createFile,
-            overwriteExisting = dialogOptions.overwriteExisting,
-            language = dialogOptions.language
-        )
-
-        statusLabel.icon = AllIcons.General.BalloonInformation
-        statusLabel.text = "Генерация feature..."
-
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Генерация feature", true) {
-            private var usedSteps: List<StepDefinitionDto> = emptyList()
-            private var unmapped: List<UnmappedStepDto> = emptyList()
-            private var finalStatus: String = "queued"
-            private var incidentUri: String? = null
-
-            override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Создание Job..."
-                val job = backendClient.createJob(
-                    JobCreateRequestDto(
-                        projectRoot = projectRoot,
-                        testCaseText = testCaseText,
-                        targetPath = dialogOptions.targetPath,
-                        profile = "quick",
-                        createFile = options.createFile,
-                        overwriteExisting = options.overwriteExisting,
-                        language = options.language
-                    )
-                )
-
-                var attemptsLeft = 120
-                while (attemptsLeft-- > 0) {
-                    val status = backendClient.getJob(job.jobId)
-                    finalStatus = status.status
-                    incidentUri = status.incidentUri
-                    indicator.text = when (status.status) {
-                        "running" -> "Запуск"
-                        "needs_attention" -> "Эскалация"
-                        "succeeded" -> "Повторный запуск/успех"
-                        else -> "Диагностика"
-                    }
-                    if (status.status in setOf("succeeded", "needs_attention", "failed", "cancelled")) {
-                        break
-                    }
-                    Thread.sleep(500)
-                }
-
-                indicator.text = "Получение финального feature..."
-                val result = backendClient.getJobResult(job.jobId)
-                finalStatus = result.status
-                incidentUri = incidentUri ?: result.incidentUri
-                usedSteps = result.feature?.usedSteps ?: emptyList()
-                unmapped = result.feature?.unmappedSteps ?: emptyList()
-            }
-
-            override fun onSuccess() {
-                val unmappedMessage = if (unmapped.isEmpty()) "" else ", неотображённых: ${unmapped.size}"
-                statusLabel.icon = if (finalStatus == "succeeded") AllIcons.General.InspectionsOK else AllIcons.General.Warning
-                statusLabel.text = "Статус: $finalStatus. Использовано: ${usedSteps.size}$unmappedMessage"
-                if (!incidentUri.isNullOrBlank()) {
-                    notify("Открыть инцидент: $incidentUri", NotificationType.INFORMATION)
-                }
-            }
-
-            override fun onThrowable(error: Throwable) {
-                val message = error.message ?: "Непредвиденная ошибка"
-                statusLabel.icon = AllIcons.General.Error
-                statusLabel.text = "Генерация не удалась: $message"
-                notify(message, NotificationType.ERROR)
-            }
-        })
     }
 
-    private fun notify(message: String, type: NotificationType) {
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup("AI Cucumber Assistant")
-            .createNotification(message, type)
-            .notify(project)
-    }
-
-    private fun buildGenerationForm(): JPanel {
-        val panel = JPanel(GridBagLayout())
+    private fun buildCenterPanel(): JPanel {
+        val panel = JPanel(BorderLayout())
         panel.background = JBColor.PanelBackground
-        val formConstraints = GridBagConstraints().apply {
-            gridx = 0
-            gridy = 0
-            anchor = GridBagConstraints.WEST
-            fill = GridBagConstraints.HORIZONTAL
-            weightx = 1.0
-            ipadx = 4
-            ipady = 4
-            insets = JBUI.insetsBottom(8)
-        }
 
-        panel.add(JLabel("Текст тесткейса"), formConstraints)
-        formConstraints.gridy++
-        formConstraints.fill = GridBagConstraints.BOTH
-        formConstraints.weighty = 1.0
-        panel.add(JBScrollPane(testCaseInput), formConstraints)
-
-        formConstraints.gridy++
-        formConstraints.fill = GridBagConstraints.HORIZONTAL
-        formConstraints.weighty = 0.0
-        panel.add(JLabel("Целевой путь (относительно корня проекта)"), formConstraints)
-        formConstraints.gridy++
-        panel.add(targetPathField, formConstraints)
-
-        formConstraints.gridy++
-        panel.add(createHintLabel("Например: src/test/resources/features"), formConstraints)
-
-        formConstraints.gridy++
-        panel.add(createFileCheckbox, formConstraints)
-
-        formConstraints.gridy++
-        panel.add(overwriteCheckbox, formConstraints)
-
-        formConstraints.gridy++
-        formConstraints.insets = JBUI.insets(12, 0, 0, 0)
-        panel.add(generateButton, formConstraints)
+        timeline.emptyText.text = "Chat with automation agent. Try /scan-steps or /generate-test <text>."
+        panel.add(JBScrollPane(timeline), BorderLayout.CENTER)
+        panel.add(approvalPanel, BorderLayout.SOUTH)
         return panel
     }
 
-    private fun createSectionLabel(text: String): JLabel = JLabel(text).apply {
-        border = JBUI.Borders.emptyBottom(6)
+    private fun buildBottomPanel(): JPanel {
+        val root = JPanel(BorderLayout())
+        root.background = JBColor.PanelBackground
+
+        val chips = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
+            isOpaque = false
+            add(createCommandButton("/scan-steps"))
+            add(createCommandButton("/generate-test"))
+            add(createCommandButton("/new-automation"))
+            add(createCommandButton("/help"))
+        }
+
+        val inputWrap = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(8, 0, 0, 0)
+            inputArea.lineWrap = true
+            inputArea.wrapStyleWord = true
+            add(JBScrollPane(inputArea), BorderLayout.CENTER)
+            add(
+                JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                    isOpaque = false
+                    add(
+                        JButton("Send", AllIcons.Actions.Execute).apply {
+                            addActionListener { submitMessage(inputArea.text.trim()) }
+                        }
+                    )
+                },
+                BorderLayout.SOUTH
+            )
+        }
+
+        root.add(chips, BorderLayout.NORTH)
+        root.add(inputWrap, BorderLayout.CENTER)
+        root.add(statusLabel, BorderLayout.SOUTH)
+        return root
     }
 
-    private fun createHintLabel(text: String): JLabel = JLabel(text).apply {
-        foreground = JBColor.GRAY
+    private fun createCommandButton(command: String): JButton =
+        JButton(command).apply {
+            addActionListener {
+                when (command) {
+                    "/generate-test" -> submitMessage("$command Given user opens home page")
+                    "/new-automation" -> submitMessage("$command Create automation from smoke user flow")
+                    else -> submitMessage(command)
+                }
+            }
+        }
+
+    private fun ensureSessionAsync() {
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val session = ensureSessionBlocking() ?: return@executeOnPooledThread
+            SwingUtilities.invokeLater {
+                statusLabel.text = "Chat session ${session.take(8)} is active."
+            }
+            refreshHistoryAsync()
+        }
     }
 
-    private fun createCardPanel(): JPanel = JPanel(BorderLayout()).apply {
-        background = JBColor.PanelBackground
-        border = JBUI.Borders.compound(
-            JBUI.Borders.customLine(JBColor.border(), 1),
-            JBUI.Borders.empty(12)
-        )
+    private fun ensureSessionBlocking(): String? {
+        if (!sessionId.isNullOrBlank()) {
+            return sessionId
+        }
+        val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
+        if (projectRoot.isBlank()) {
+            SwingUtilities.invokeLater {
+                statusLabel.text = "Project root is empty. Configure project path in settings."
+            }
+            return null
+        }
+        return try {
+            val created = backendClient.createChatSession(
+                ChatSessionCreateRequestDto(
+                    projectRoot = projectRoot,
+                    source = "ide-plugin",
+                    profile = "quick",
+                    reuseExisting = true
+                )
+            )
+            sessionId = created.sessionId
+            created.sessionId
+        } catch (ex: Exception) {
+            logger.warn("Failed to create chat session", ex)
+            SwingUtilities.invokeLater {
+                statusLabel.text = "Failed to initialize chat session: ${ex.message}"
+            }
+            null
+        }
+    }
+
+    private fun submitMessage(message: String) {
+        if (message.isBlank()) return
+        inputArea.text = ""
+        appendLocalUserMessage(message)
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val activeSession = ensureSessionBlocking() ?: return@executeOnPooledThread
+            try {
+                backendClient.sendChatMessage(
+                    activeSession,
+                    ChatMessageRequestDto(content = message)
+                )
+                SwingUtilities.invokeLater {
+                    statusLabel.text = "Message sent. Waiting for agent response..."
+                }
+                refreshHistoryAsync()
+            } catch (ex: Exception) {
+                logger.warn("Failed to send chat message", ex)
+                SwingUtilities.invokeLater {
+                    statusLabel.text = "Message failed: ${ex.message}"
+                }
+            }
+        }
+    }
+
+    private fun refreshHistoryAsync() {
+        val activeSession = sessionId ?: return
+        if (!refreshInFlight.compareAndSet(false, true)) {
+            return
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val history = backendClient.getChatHistory(activeSession)
+                SwingUtilities.invokeLater { renderHistory(history) }
+            } catch (_: Exception) {
+                // Keep silent here to avoid noisy status flickering during temporary outages.
+            } finally {
+                refreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun renderHistory(history: ChatHistoryResponseDto) {
+        timelineModel.clear()
+        history.messages
+            .sortedBy { it.createdAt }
+            .forEach { message ->
+                val time = timeFormatter.format(message.createdAt)
+                val role = when (message.role.lowercase()) {
+                    "assistant" -> "Agent"
+                    "user" -> "You"
+                    else -> message.role
+                }
+                timelineModel.addElement("$time [$role] ${message.content}")
+            }
+        if (timelineModel.size > 0) {
+            timeline.ensureIndexIsVisible(timelineModel.size - 1)
+        }
+        renderPendingApprovals(history.pendingToolCalls)
+        statusLabel.text = "Session ${history.sessionId.take(8)} • ${history.status} • messages ${history.messages.size}"
+    }
+
+    private fun renderPendingApprovals(pendingCalls: List<ChatPendingToolCallDto>) {
+        approvalPanel.removeAll()
+        pendingCalls.forEach { call ->
+            val row = JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.compound(
+                    JBUI.Borders.customLine(JBColor.border(), 1),
+                    JBUI.Borders.empty(6)
+                )
+                background = JBColor.PanelBackground
+            }
+            val details = JBLabel(
+                "Approval required: ${call.toolName} (risk=${call.riskLevel}) args=${call.args}"
+            )
+            row.add(details, BorderLayout.CENTER)
+            row.add(
+                JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+                    isOpaque = false
+                    add(
+                        JButton("Approve").apply {
+                            addActionListener { submitToolDecision(call, "approve") }
+                        }
+                    )
+                    add(
+                        JButton("Reject").apply {
+                            addActionListener { submitToolDecision(call, "reject") }
+                        }
+                    )
+                },
+                BorderLayout.EAST
+            )
+            approvalPanel.add(row)
+        }
+        approvalPanel.revalidate()
+        approvalPanel.repaint()
+    }
+
+    private fun submitToolDecision(call: ChatPendingToolCallDto, decision: String) {
+        val activeSession = sessionId ?: return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                backendClient.submitChatToolDecision(
+                    activeSession,
+                    ChatToolDecisionRequestDto(
+                        toolCallId = call.toolCallId,
+                        decision = decision
+                    )
+                )
+                SwingUtilities.invokeLater {
+                    statusLabel.text = "Decision `$decision` sent for ${call.toolName}."
+                }
+                refreshHistoryAsync()
+            } catch (ex: Exception) {
+                logger.warn("Failed to submit tool decision", ex)
+                SwingUtilities.invokeLater {
+                    statusLabel.text = "Decision failed: ${ex.message}"
+                }
+            }
+        }
+    }
+
+    private fun appendLocalUserMessage(content: String) {
+        val time = timeFormatter.format(java.time.Instant.now())
+        timelineModel.addElement("$time [You] $content")
+        timeline.ensureIndexIsVisible(timelineModel.size - 1)
+    }
+
+    private fun appendLocalSystemMessage(content: String) {
+        val time = timeFormatter.format(java.time.Instant.now())
+        timelineModel.addElement("$time [System] $content")
+        timeline.ensureIndexIsVisible(timelineModel.size - 1)
     }
 }

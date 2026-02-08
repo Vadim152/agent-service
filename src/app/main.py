@@ -14,6 +14,9 @@ from app.config import get_settings
 from app.logging_config import LOG_LEVEL, get_logger, init_logging
 from api import router as api_router
 from agents import create_orchestrator
+from chat.memory_store import ChatMemoryStore
+from chat.runtime import ChatAgentRuntime
+from chat.state_store import ChatStateStore
 from infrastructure.artifact_store import ArtifactStore
 from infrastructure.run_state_store import RunStateStore
 from self_healing.supervisor import ExecutionSupervisor
@@ -73,6 +76,14 @@ async def on_startup() -> None:
             orchestrator=orchestrator,
             run_state_store=app.state.run_state_store,
             artifact_store=app.state.artifact_store,
+        )
+        chat_memory_store = ChatMemoryStore(Path(settings.steps_index_dir).parent / "chat_memory")
+        app.state.chat_state_store = ChatStateStore(chat_memory_store)
+        app.state.chat_runtime = ChatAgentRuntime(
+            orchestrator=orchestrator,
+            run_state_store=app.state.run_state_store,
+            execution_supervisor=app.state.execution_supervisor,
+            state_store=app.state.chat_state_store,
         )
         logger.info("[Startup] Оркестратор и control-plane компоненты созданы")
     except Exception as exc:  # pragma: no cover - ранняя инициализация
