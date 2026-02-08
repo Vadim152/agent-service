@@ -1,15 +1,10 @@
 plugins {
-    id("org.jetbrains.intellij") version "1.17.1"
-    kotlin("jvm") version "1.9.24"
+    id("org.jetbrains.intellij.platform") version "2.11.0"
+    kotlin("jvm") version "2.1.0"
 }
 
 kotlin {
     jvmToolchain(17)
-}
-
-intellij {
-    version.set("2025.1")
-    plugins.set(listOf("com.intellij.java"))
 }
 
 group = "ru.sber"
@@ -17,6 +12,9 @@ version = "0.2.0-SNAPSHOT"
 
 repositories {
     mavenCentral()
+    intellijPlatform {
+        defaultRepositories()
+    }
 }
 
 dependencies {
@@ -25,14 +23,26 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation(kotlin("test"))
+
+    intellijPlatform {
+        intellijIdea("2025.1") {
+            useInstaller.set(false)
+        }
+        bundledPlugin("com.intellij.java")
+        jetbrainsRuntime()
+    }
+}
+
+intellijPlatform {
+    pluginConfiguration {
+        changeNotes = "Update plugin metadata for 2025.1 IDE builds."
+        ideaVersion {
+            sinceBuild = "251"
+        }
+    }
 }
 
 tasks {
-    patchPluginXml {
-        sinceBuild.set("251")
-        changeNotes.set("Update plugin metadata for 2025.1 IDE builds.")
-    }
-
     test {
         useJUnitPlatform()
     }
