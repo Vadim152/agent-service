@@ -1,139 +1,230 @@
-# agent-service
+﻿# agent-service
 
-Backend-сервис для плагина Sber IDE, который помогает:
+`agent-service` is a FastAPI control plane for BDD/test automation and the IntelliJ-based plugin.
 
-- сканировать проект на Cucumber/BDD шаги;
-- сопоставлять шаги тесткейса с найденными определениями;
-- генерировать `.feature` файл (Gherkin) и сохранять его в проекте.
+Current focus:
+- chat-first workflow in plugin ToolWindow;
+- job orchestration for feature generation;
+- approval-gated tool execution;
+- self-healing execution loop for long-running jobs.
 
-Сервис построен на FastAPI и использует набор агентов, объединённых в оркестратор на базе LangGraph.
+## What is implemented
 
-## Архитектура
+### Core backend
+- `Job API` for async orchestration (`/api/v1/jobs/*`).
+- `ExecutionSupervisor` with attempts, classification/remediation hooks, and incident artifacts.
+- `Orchestrator` based on LangGraph for scan -> parse -> match -> build -> apply.
+- Persistent artifacts in `.agent/job_artifacts`.
 
-### Оркестратор и агенты
+### Chat control plane (new)
+- Chat sessions and message processing (`/api/v1/chat/*`).
+- Agent loop with intent routing and tool calling.
+- Confirm-before-write policy for mutating/external tools.
+- Session + project memory abstraction persisted in `.agent/chat_memory`.
 
-Оркестратор запускает цепочки задач, которые реализованы агентами:
+### IntelliJ plugin (new UX)
+- ToolWindow is now chat-only UI.
+- Quick command chips (`/scan-steps`, `/generate-test`, `/new-automation`, `/help`).
+- Approval cards for risky tool calls.
+- History polling and status rendering from backend chat session.
 
-- **RepoScannerAgent** — сканирует репозиторий и индексирует шаги (`**/*Steps.{java,kt,groovy,py}`).
-- **TestcaseParserAgent** — разбирает текст тесткейса в структурированный сценарий (LLM + эвристики).
-- **StepMatcherAgent** — сопоставляет шаги тесткейса с индексом Cucumber-шагов.
-- **FeatureBuilderAgent** — собирает доменную модель `.feature` и рендерит Gherkin.
+Legacy actions are still present for compatibility (`Scan`, `Generate Feature`, `Apply Feature`).
 
-### Хранилища
+## High-level architecture
 
-- **StepIndexStore** — хранит индекс шагов в каталоге `.agent/steps_index`.
-- **EmbeddingsStore** — хранит эмбеддинги шагов в ChromaDB для семантического поиска.
+```text
+IDE Plugin Chat UI
+    -> /api/v1/chat/sessions
+    -> /api/v1/chat/sessions/{id}/messages
+    -> /api/v1/chat/sessions/{id}/history
+    -> /api/v1/chat/sessions/{id}/tool-decisions
+    -> /api/v1/chat/sessions/{id}/stream (SSE)
 
-### LLM
+ChatAgentRuntime
+    -> tool registry (read/write/external risk levels)
+    -> approval gate for mutating calls
+    -> Job API bridge for long-running generation
 
-По умолчанию используется GigaChat-адаптер. При отсутствии учётных данных сервис переходит в fallback-режим:
-LLM-возможности будут ограничены, но основной пайплайн продолжит работать.
+Job API + ExecutionSupervisor
+    -> Orchestrator (LangGraph)
+    -> StepIndexStore / EmbeddingsStore / ArtifactStore / RunStateStore
+```
 
-## Запуск
+## Repository structure
 
-### Локальный запуск
+- `src/app` - startup/config/logging.
+- `src/api` - HTTP routes and schemas.
+- `src/chat` - chat runtime, session state, memory, tool registry.
+- `src/agents` - orchestration agents and LangGraph facade.
+- `src/self_healing` - execution supervisor and remediation components.
+- `src/infrastructure` - stores/adapters (step index, artifacts, run state, LLM).
+- `ide-plugin` - IntelliJ plugin module.
+- `tests` - backend tests.
+
+## Run locally
+
+### Backend
+
+Windows PowerShell:
+
+```powershell
+cd C:\path\to\agent-service
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip setuptools
+python -m pip install -e .
+python -m app.main
+```
+
+Linux/macOS:
 
 ```bash
-cd /workspace/agent-service
+cd /path/to/agent-service
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools
 python -m pip install -e .
-
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-# либо
-agent-service
+python -m app.main
 ```
 
-### Переменные окружения
-
-Все настройки читаются с префиксом `AGENT_SERVICE_` (или из `.env`).
-
-| Переменная                      | Назначение                         | Значение по умолчанию                               |
-|---------------------------------|------------------------------------|-----------------------------------------------------|
-| `AGENT_SERVICE_APP_NAME`        | Имя сервиса                        | `agent-service`                                     |
-| `AGENT_SERVICE_API_PREFIX`      | Префикс HTTP API                   | `/api/v1`                                           |
-| `AGENT_SERVICE_HOST`            | Хост приложения                    | `0.0.0.0`                                           |
-| `AGENT_SERVICE_PORT`            | Порт приложения                    | `8000`                                              |
-| `AGENT_SERVICE_STEPS_INDEX_DIR` | Папка индекса шагов                | `.agent/steps_index`                                |
-| `AGENT_SERVICE_LLM_ENDPOINT`    | Endpoint LLM (если нужен)          | `None`                                              |
-| `AGENT_SERVICE_LLM_API_KEY`     | API ключ LLM                       | `None`                                              |
-| `AGENT_SERVICE_LLM_MODEL`       | Модель LLM                         | `None`                                              |
-| `AGENT_SERVICE_LLM_API_VERSION` | Версия API LLM                     | `None`                                              |
-| `GIGACHAT_CLIENT_ID`            | Client ID для GigaChat             | `None`                                              |
-| `GIGACHAT_CLIENT_SECRET`        | Client Secret для GigaChat         | `None`                                              |
-| `GIGACHAT_SCOPE`                | OAuth scope GigaChat               | `GIGACHAT_API_PERS`                                 |
-| `GIGACHAT_AUTH_URL`             | OAuth endpoint GigaChat            | `https://ngw.devices.sberbank.ru:9443/api/v2/oauth` |
-| `GIGACHAT_API_URL`              | API endpoint GigaChat              | `https://gigachat.devices.sberbank.ru/api/v1`       |
-| `GIGACHAT_VERIFY_SSL`           | Проверять SSL сертификаты GigaChat | `false`                                             |
-
-> ⚠️ Не храните реальные секреты в репозитории. Используйте `.env` локально или CI-секреты.
-
-## HTTP API
-
-Базовый префикс настраивается через `AGENT_SERVICE_API_PREFIX` (по умолчанию `/api/v1`).
-
-### Healthcheck
+Health check:
 
 ```bash
-curl -X GET http://0.0.0.0:8000/health
+curl http://localhost:8000/health
 ```
 
-### Сканирование шагов
+### Plugin
 
 ```bash
-curl -X POST http://0.0.0.0:8000/api/v1/steps/scan-steps \
-  -H "Content-Type: application/json" \
-  -d '{"projectRoot": "/path/to/project"}'
-```
-
-Получение сохранённых шагов:
-
-```bash
-curl -X GET "http://0.0.0.0:8000/api/v1/steps/?projectRoot=/path/to/project"
-```
-
-### Генерация `.feature`
-
-```bash
-curl -X POST http://0.0.0.0:8000/api/v1/feature/generate-feature \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectRoot": "/path/to/project",
-    "testCaseText": "1. Открыть страницу\n2. Нажать кнопку",
-    "targetPath": "features/generated.feature",
-    "options": {
-      "createFile": true,
-      "overwriteExisting": false,
-      "language": "ru"
-    }
-  }'
-```
-
-### Сохранение `.feature` файла
-
-```bash
-curl -X POST http://0.0.0.0:8000/api/v1/feature/apply-feature \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectRoot": "/path/to/project",
-    "targetPath": "features/generated.feature",
-    "featureText": "# language: ru\nФункционал: ...",
-    "overwriteExisting": false
-  }'
-```
-
-### Проверка LLM
-
-```bash
-curl -X POST http://0.0.0.0:8000/api/v1/llm/test \
-  -H "Content-Type: application/json" \
-  -d '{"prompt":"ping"}'
-```
-
-## Сборка плагина
-
-```bash
-./gradlew build
 ./ide-plugin/gradlew -p ide-plugin buildPlugin
 ```
+
+Windows:
+
+```powershell
+.\ide-plugin\gradlew.bat -p ide-plugin buildPlugin
+```
+
+## Environment variables
+
+Base prefix: `AGENT_SERVICE_`.
+
+Key settings:
+- `AGENT_SERVICE_API_PREFIX` (default `/api/v1`)
+- `AGENT_SERVICE_HOST` (default `0.0.0.0`)
+- `AGENT_SERVICE_PORT` (default `8000`)
+- `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
+- `GIGACHAT_CLIENT_ID`
+- `GIGACHAT_CLIENT_SECRET`
+- `GIGACHAT_SCOPE` (default `GIGACHAT_API_PERS`)
+- `GIGACHAT_AUTH_URL`
+- `GIGACHAT_API_URL`
+- `GIGACHAT_VERIFY_SSL` (default `false`)
+
+## API overview
+
+Base URL examples below assume `http://localhost:8000/api/v1`.
+
+### Job API
+
+Create job:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/jobs \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectRoot":"/path/to/project",
+    "testCaseText":"Given user opens page",
+    "targetPath":"src/test/resources/features/generated.feature",
+    "createFile":true,
+    "overwriteExisting":false,
+    "profile":"quick",
+    "source":"ide-plugin"
+  }'
+```
+
+Get status/result/events:
+
+```bash
+curl http://localhost:8000/api/v1/jobs/{jobId}
+curl http://localhost:8000/api/v1/jobs/{jobId}/result
+curl -N http://localhost:8000/api/v1/jobs/{jobId}/events
+```
+
+### Chat API (new)
+
+Create/reuse chat session:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/sessions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "projectRoot":"/path/to/project",
+    "source":"ide-plugin",
+    "profile":"quick",
+    "reuseExisting":true
+  }'
+```
+
+Send user message:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/messages \
+  -H "Content-Type: application/json" \
+  -d '{"role":"user","content":"/generate-test Given user logs in"}'
+```
+
+Read history:
+
+```bash
+curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/history
+```
+
+Approve/reject tool call:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/tool-decisions \
+  -H "Content-Type: application/json" \
+  -d '{"toolCallId":"<id>","decision":"approve"}'
+```
+
+SSE stream:
+
+```bash
+curl -N http://localhost:8000/api/v1/chat/sessions/{sessionId}/stream
+```
+
+### Other endpoints (compat/debug)
+
+- `POST /api/v1/steps/scan-steps`
+- `GET /api/v1/steps/?projectRoot=...`
+- `POST /api/v1/feature/generate-feature`
+- `POST /api/v1/feature/apply-feature`
+- `POST /api/v1/llm/test`
+
+## Tooling policy in chat runtime
+
+Default policy is **confirm-before-write**:
+- read-only tools can run automatically;
+- write/external tools require explicit approval;
+- pending tool calls are returned in chat history and UI approval cards.
+
+## Tests
+
+Backend:
+
+```bash
+python -m pytest -p no:cacheprovider tests/test_jobs_api.py tests/test_chat_api.py
+```
+
+Plugin:
+
+```bash
+./ide-plugin/gradlew -p ide-plugin test --no-daemon
+```
+
+## Notes
+
+- Chat runtime currently uses history polling in plugin; SSE endpoint is already available in backend.
+- Job and chat stores are process-local (`RunStateStore` in-memory) plus file-backed memory/artifacts.
+- For production multi-instance deployment, replace in-memory stores with shared persistence.

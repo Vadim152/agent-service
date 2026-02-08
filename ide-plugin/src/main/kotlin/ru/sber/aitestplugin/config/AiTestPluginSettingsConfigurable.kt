@@ -18,7 +18,6 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.components.JBPasswordField
-import com.intellij.ui.components.JBComboBox
 import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto

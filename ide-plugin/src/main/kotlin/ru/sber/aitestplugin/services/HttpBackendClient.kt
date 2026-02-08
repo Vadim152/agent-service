@@ -11,6 +11,13 @@ import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.config.toZephyrAuthHeaders
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
+import ru.sber.aitestplugin.model.ChatHistoryResponseDto
+import ru.sber.aitestplugin.model.ChatMessageAcceptedResponseDto
+import ru.sber.aitestplugin.model.ChatMessageRequestDto
+import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
+import ru.sber.aitestplugin.model.ChatSessionCreateResponseDto
+import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
+import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.JobCreateRequestDto
@@ -91,6 +98,20 @@ class HttpBackendClient(
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
         post("/feature/apply-feature", request)
+
+    override fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto =
+        post("/chat/sessions", request)
+
+    override fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto =
+        post("/chat/sessions/$sessionId/messages", request)
+
+    override fun getChatHistory(sessionId: String): ChatHistoryResponseDto =
+        get("/chat/sessions/$sessionId/history")
+
+    override fun submitChatToolDecision(
+        sessionId: String,
+        request: ChatToolDecisionRequestDto
+    ): ChatToolDecisionResponseDto = post("/chat/sessions/$sessionId/tool-decisions", request)
 
     private inline fun <reified T : Any> post(
         path: String,
