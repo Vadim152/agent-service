@@ -159,6 +159,23 @@ curl http://localhost:8000/health
 curl http://127.0.0.1:8011/internal/health
 ```
 
+### 5. Stop services (Windows)
+
+Stop `opencode-wrapper` and backend if they run in current terminal:
+
+- Press `Ctrl+C` in each terminal.
+
+If OpenCode runtime is left running on `127.0.0.1:4096`, stop it explicitly:
+
+```powershell
+# Find process listening on port 4096
+Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 4096 -State Listen |
+  Select-Object LocalAddress, LocalPort, OwningProcess
+
+# Stop that process (replace PID)
+Stop-Process -Id <PID> -Force
+```
+
 ## Configuration
 
 ### Backend (`AGENT_SERVICE_*`)
