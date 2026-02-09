@@ -37,9 +37,8 @@ class ChatMessageAcceptedResponse(ApiBaseModel):
 
 
 class ChatToolDecisionRequest(ApiBaseModel):
-    tool_call_id: str = Field(..., alias="toolCallId")
-    decision: Literal["approve", "reject"]
-    edited_args: dict[str, Any] | None = Field(default=None, alias="editedArgs")
+    permission_id: str = Field(..., alias="permissionId")
+    decision: Literal["approve_once", "approve_always", "reject"]
 
 
 class ChatToolDecisionResponse(ApiBaseModel):
@@ -64,12 +63,13 @@ class ChatEventDto(ApiBaseModel):
     index: int
 
 
-class ChatPendingToolCallDto(ApiBaseModel):
-    tool_call_id: str = Field(..., alias="toolCallId")
-    tool_name: str = Field(..., alias="toolName")
-    args: dict[str, Any]
-    risk_level: str = Field(..., alias="riskLevel")
-    requires_confirmation: bool = Field(..., alias="requiresConfirmation")
+class ChatPendingPermissionDto(ApiBaseModel):
+    permission_id: str = Field(..., alias="permissionId")
+    title: str
+    kind: str
+    call_id: str | None = Field(default=None, alias="callId")
+    message_id: str | None = Field(default=None, alias="messageId")
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(..., alias="createdAt")
 
 
@@ -81,9 +81,83 @@ class ChatHistoryResponse(ApiBaseModel):
     status: str
     messages: list[ChatMessageDto] = Field(default_factory=list)
     events: list[ChatEventDto] = Field(default_factory=list)
-    pending_tool_calls: list[ChatPendingToolCallDto] = Field(default_factory=list, alias="pendingToolCalls")
+    pending_permissions: list[ChatPendingPermissionDto] = Field(
+        default_factory=list,
+        alias="pendingPermissions",
+    )
     memory_snapshot: dict[str, Any] = Field(default_factory=dict, alias="memorySnapshot")
     updated_at: datetime = Field(..., alias="updatedAt")
+
+
+class ChatTokenTotalsDto(ApiBaseModel):
+    input: int = 0
+    output: int = 0
+    reasoning: int = 0
+    cache_read: int = Field(default=0, alias="cacheRead")
+    cache_write: int = Field(default=0, alias="cacheWrite")
+
+
+class ChatUsageTotalsDto(ApiBaseModel):
+    tokens: ChatTokenTotalsDto = Field(default_factory=ChatTokenTotalsDto)
+    cost: float = 0.0
+
+
+class ChatLimitsDto(ApiBaseModel):
+    context_window: int | None = Field(default=None, alias="contextWindow")
+    used: int = 0
+    percent: float | None = None
+
+
+class ChatRiskDto(ApiBaseModel):
+    level: Literal["low", "medium", "high"]
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ChatSessionStatusResponse(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    activity: str
+    current_action: str = Field(..., alias="currentAction")
+    last_event_at: datetime = Field(..., alias="lastEventAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
+    pending_permissions_count: int = Field(..., alias="pendingPermissionsCount")
+    totals: ChatUsageTotalsDto = Field(default_factory=ChatUsageTotalsDto)
+    limits: ChatLimitsDto = Field(default_factory=ChatLimitsDto)
+    risk: ChatRiskDto
+
+
+class ChatDiffSummaryDto(ApiBaseModel):
+    files: int = 0
+    additions: int = 0
+    deletions: int = 0
+
+
+class ChatDiffFileDto(ApiBaseModel):
+    file: str
+    additions: int = 0
+    deletions: int = 0
+    before: str = ""
+    after: str = ""
+
+
+class ChatSessionDiffResponse(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    summary: ChatDiffSummaryDto = Field(default_factory=ChatDiffSummaryDto)
+    files: list[ChatDiffFileDto] = Field(default_factory=list)
+    updated_at: datetime = Field(..., alias="updatedAt")
+    risk: ChatRiskDto
+
+
+class ChatCommandRequest(ApiBaseModel):
+    command: Literal["compact", "abort", "status", "diff", "help"]
+
+
+class ChatCommandResponse(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    command: str
+    accepted: bool = True
+    result: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime = Field(..., alias="updatedAt")
+    risk: ChatRiskDto
 
 
 __all__ = [
@@ -95,7 +169,16 @@ __all__ = [
     "ChatToolDecisionResponse",
     "ChatMessageDto",
     "ChatEventDto",
-    "ChatPendingToolCallDto",
+    "ChatPendingPermissionDto",
     "ChatHistoryResponse",
+    "ChatTokenTotalsDto",
+    "ChatUsageTotalsDto",
+    "ChatLimitsDto",
+    "ChatRiskDto",
+    "ChatSessionStatusResponse",
+    "ChatDiffSummaryDto",
+    "ChatDiffFileDto",
+    "ChatSessionDiffResponse",
+    "ChatCommandRequest",
+    "ChatCommandResponse",
 ]
-

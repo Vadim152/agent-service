@@ -30,9 +30,8 @@ data class ChatMessageAcceptedResponseDto(
 )
 
 data class ChatToolDecisionRequestDto(
-    val toolCallId: String,
-    val decision: String,
-    val editedArgs: Map<String, Any?>? = null
+    val permissionId: String,
+    val decision: String
 )
 
 data class ChatToolDecisionResponseDto(
@@ -57,12 +56,13 @@ data class ChatEventDto(
     val index: Int
 )
 
-data class ChatPendingToolCallDto(
-    val toolCallId: String,
-    val toolName: String,
-    val args: Map<String, Any?> = emptyMap(),
-    val riskLevel: String,
-    val requiresConfirmation: Boolean,
+data class ChatPendingPermissionDto(
+    val permissionId: String,
+    val title: String,
+    val kind: String,
+    val callId: String? = null,
+    val messageId: String? = null,
+    val metadata: Map<String, Any?> = emptyMap(),
     val createdAt: Instant
 )
 
@@ -74,8 +74,78 @@ data class ChatHistoryResponseDto(
     val status: String,
     val messages: List<ChatMessageDto> = emptyList(),
     val events: List<ChatEventDto> = emptyList(),
-    val pendingToolCalls: List<ChatPendingToolCallDto> = emptyList(),
+    val pendingPermissions: List<ChatPendingPermissionDto> = emptyList(),
     val memorySnapshot: Map<String, Any?> = emptyMap(),
     val updatedAt: Instant
 )
 
+data class ChatTokenTotalsDto(
+    val input: Int = 0,
+    val output: Int = 0,
+    val reasoning: Int = 0,
+    val cacheRead: Int = 0,
+    val cacheWrite: Int = 0
+)
+
+data class ChatUsageTotalsDto(
+    val tokens: ChatTokenTotalsDto = ChatTokenTotalsDto(),
+    val cost: Double = 0.0
+)
+
+data class ChatLimitsDto(
+    val contextWindow: Int? = null,
+    val used: Int = 0,
+    val percent: Double? = null
+)
+
+data class ChatRiskDto(
+    val level: String,
+    val reasons: List<String> = emptyList()
+)
+
+data class ChatSessionStatusResponseDto(
+    val sessionId: String,
+    val activity: String,
+    val currentAction: String,
+    val lastEventAt: Instant,
+    val updatedAt: Instant,
+    val pendingPermissionsCount: Int,
+    val totals: ChatUsageTotalsDto = ChatUsageTotalsDto(),
+    val limits: ChatLimitsDto = ChatLimitsDto(),
+    val risk: ChatRiskDto
+)
+
+data class ChatDiffSummaryDto(
+    val files: Int = 0,
+    val additions: Int = 0,
+    val deletions: Int = 0
+)
+
+data class ChatDiffFileDto(
+    val file: String,
+    val additions: Int = 0,
+    val deletions: Int = 0,
+    val before: String = "",
+    val after: String = ""
+)
+
+data class ChatSessionDiffResponseDto(
+    val sessionId: String,
+    val summary: ChatDiffSummaryDto = ChatDiffSummaryDto(),
+    val files: List<ChatDiffFileDto> = emptyList(),
+    val updatedAt: Instant,
+    val risk: ChatRiskDto
+)
+
+data class ChatCommandRequestDto(
+    val command: String
+)
+
+data class ChatCommandResponseDto(
+    val sessionId: String,
+    val command: String,
+    val accepted: Boolean = true,
+    val result: Map<String, Any?> = emptyMap(),
+    val updatedAt: Instant,
+    val risk: ChatRiskDto
+)

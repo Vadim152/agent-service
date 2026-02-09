@@ -1,230 +1,223 @@
-﻿# agent-service
+# agent-service
 
-`agent-service` is a FastAPI control plane for BDD/test automation and the IntelliJ-based plugin.
+`agent-service` is a FastAPI backend for the Sber IDE plugin.  
+It uses `opencode-wrapper` as a local control layer over OpenCode SDK/runtime.
 
-Current focus:
-- chat-first workflow in plugin ToolWindow;
-- job orchestration for feature generation;
-- approval-gated tool execution;
-- self-healing execution loop for long-running jobs.
-
-## What is implemented
-
-### Core backend
-- `Job API` for async orchestration (`/api/v1/jobs/*`).
-- `ExecutionSupervisor` with attempts, classification/remediation hooks, and incident artifacts.
-- `Orchestrator` based on LangGraph for scan -> parse -> match -> build -> apply.
-- Persistent artifacts in `.agent/job_artifacts`.
-
-### Chat control plane (new)
-- Chat sessions and message processing (`/api/v1/chat/*`).
-- Agent loop with intent routing and tool calling.
-- Confirm-before-write policy for mutating/external tools.
-- Session + project memory abstraction persisted in `.agent/chat_memory`.
-
-### IntelliJ plugin (new UX)
-- ToolWindow is now chat-only UI.
-- Quick command chips (`/scan-steps`, `/generate-test`, `/new-automation`, `/help`).
-- Approval cards for risky tool calls.
-- History polling and status rendering from backend chat session.
-
-Legacy actions are still present for compatibility (`Scan`, `Generate Feature`, `Apply Feature`).
-
-## High-level architecture
+## Architecture
 
 ```text
-IDE Plugin Chat UI
-    -> /api/v1/chat/sessions
-    -> /api/v1/chat/sessions/{id}/messages
-    -> /api/v1/chat/sessions/{id}/history
-    -> /api/v1/chat/sessions/{id}/tool-decisions
-    -> /api/v1/chat/sessions/{id}/stream (SSE)
-
-ChatAgentRuntime
-    -> tool registry (read/write/external risk levels)
-    -> approval gate for mutating calls
-    -> Job API bridge for long-running generation
-
-Job API + ExecutionSupervisor
-    -> Orchestrator (LangGraph)
-    -> StepIndexStore / EmbeddingsStore / ArtifactStore / RunStateStore
+Sber IDE Plugin
+  -> agent-service (FastAPI, public API: /api/v1/*)
+    -> opencode-wrapper (Node.js sidecar, internal API: /internal/*)
+      -> OpenCode SDK
+        -> OpenCode runtime
 ```
 
-## Repository structure
+## What Is Implemented
 
-- `src/app` - startup/config/logging.
-- `src/api` - HTTP routes and schemas.
-- `src/chat` - chat runtime, session state, memory, tool registry.
-- `src/agents` - orchestration agents and LangGraph facade.
-- `src/self_healing` - execution supervisor and remediation components.
-- `src/infrastructure` - stores/adapters (step index, artifacts, run state, LLM).
-- `ide-plugin` - IntelliJ plugin module.
-- `tests` - backend tests.
+- Controlled sidecar wrapper (`opencode-wrapper`) around OpenCode SDK.
+- Session control-plane API in backend:
+  - current activity/state,
+  - usage/cost data,
+  - diff and risk summary,
+  - control commands.
+- Plugin UI focused on 3 operator questions:
+  - what the agent is doing now,
+  - how many resources it consumes,
+  - what it is going to change.
+- Approval flow with explicit decisions:
+  - `approve_once`,
+  - `approve_always`,
+  - `reject`.
 
-## Run locally
+## Public API (`/api/v1`)
 
-### Backend
+Base: `http://localhost:8000/api/v1`
 
-Windows PowerShell:
+### Chat session lifecycle
+
+- `POST /chat/sessions`
+- `POST /chat/sessions/{sessionId}/messages`
+- `GET /chat/sessions/{sessionId}/history`
+- `POST /chat/sessions/{sessionId}/tool-decisions`
+- `GET /chat/sessions/{sessionId}/stream` (SSE)
+
+### Control-plane endpoints
+
+- `GET /chat/sessions/{sessionId}/status`
+- `GET /chat/sessions/{sessionId}/diff`
+- `POST /chat/sessions/{sessionId}/commands`
+
+`commands.command` supports:
+
+- `status`
+- `diff`
+- `compact`
+- `abort`
+- `help`
+
+### Other existing endpoints
+
+- `POST /steps/scan-steps`
+- `GET /steps?projectRoot=...`
+- `POST /feature/generate-feature`
+- `POST /feature/apply-feature`
+- `POST /llm/test`
+
+## Internal Sidecar API (`opencode-wrapper`)
+
+Base: `http://127.0.0.1:8011/internal`
+
+- `GET /health`
+- `POST /sessions`
+- `POST /sessions/{id}/prompt-async`
+- `POST /sessions/{id}/permissions/{permissionId}`
+- `GET /sessions/{id}/history`
+- `GET /sessions/{id}/status`
+- `GET /sessions/{id}/diff`
+- `POST /sessions/{id}/commands`
+- `GET /sessions/{id}/events` (SSE)
+
+## Plugin UI Notes
+
+ToolWindow includes:
+
+- `Now` card:
+  - activity,
+  - current action,
+  - pending approvals.
+- `Cost and Usage` card:
+  - token totals,
+  - estimated cost,
+  - context usage limits.
+- `Planned Changes` card:
+  - diff summary (files/additions/deletions),
+  - risk level and reasons,
+  - changed files list.
+
+Quick command shortcuts in UI:
+
+- `/status`
+- `/diff`
+- `/compact`
+- `/abort`
+- `/help`
+
+## Quick Start
+
+### 1. Requirements
+
+- Python `3.10+`
+- Node.js `20+`
+- OpenCode CLI available (`opencode` or `opencode.cmd` on Windows)
+
+### 2. Install
+
+Backend:
 
 ```powershell
-cd C:\path\to\agent-service
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools
 python -m pip install -e .
-python -m app.main
 ```
 
-Linux/macOS:
-
-```bash
-cd /path/to/agent-service
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools
-python -m pip install -e .
-python -m app.main
-```
-
-Health check:
-
-```bash
-curl http://localhost:8000/health
-```
-
-### Plugin
-
-```bash
-./ide-plugin/gradlew -p ide-plugin buildPlugin
-```
-
-Windows:
+Sidecar:
 
 ```powershell
-.\ide-plugin\gradlew.bat -p ide-plugin buildPlugin
+cd opencode-wrapper
+npm install
+cd ..
 ```
 
-## Environment variables
+### 3. Run
 
-Base prefix: `AGENT_SERVICE_`.
+Start sidecar:
 
-Key settings:
+```powershell
+cd opencode-wrapper
+npm start
+```
+
+Start backend (option A, preferred after `pip install -e .`):
+
+```powershell
+agent-service
+```
+
+Start backend (option B):
+
+```powershell
+$env:PYTHONPATH="src"
+python -m app.main
+```
+
+### 4. Health checks
+
+```powershell
+curl http://localhost:8000/health
+curl http://127.0.0.1:8011/internal/health
+```
+
+## Configuration
+
+### Backend (`AGENT_SERVICE_*`)
+
 - `AGENT_SERVICE_API_PREFIX` (default `/api/v1`)
 - `AGENT_SERVICE_HOST` (default `0.0.0.0`)
 - `AGENT_SERVICE_PORT` (default `8000`)
 - `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
-- `GIGACHAT_CLIENT_ID`
-- `GIGACHAT_CLIENT_SECRET`
-- `GIGACHAT_SCOPE` (default `GIGACHAT_API_PERS`)
-- `GIGACHAT_AUTH_URL`
-- `GIGACHAT_API_URL`
-- `GIGACHAT_VERIFY_SSL` (default `false`)
+- `AGENT_SERVICE_OPENCODE_WRAPPER_URL` (default `http://127.0.0.1:8011`)
+- `AGENT_SERVICE_OPENCODE_TIMEOUT_S` (default `30.0`)
 
-## API overview
+### Sidecar (`OPENCODE_*`)
 
-Base URL examples below assume `http://localhost:8000/api/v1`.
+- `OPENCODE_WRAPPER_HOST` (default `127.0.0.1`)
+- `OPENCODE_WRAPPER_PORT` (default `8011`)
+- `OPENCODE_HOST` (default `127.0.0.1`)
+- `OPENCODE_PORT` (default `4096`)
+- `OPENCODE_STARTUP_TIMEOUT_MS` (default `15000`)
+- `OPENCODE_BIN` (optional custom path to OpenCode binary)
 
-### Job API
-
-Create job:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectRoot":"/path/to/project",
-    "testCaseText":"Given user opens page",
-    "targetPath":"src/test/resources/features/generated.feature",
-    "createFile":true,
-    "overwriteExisting":false,
-    "profile":"quick",
-    "source":"ide-plugin"
-  }'
-```
-
-Get status/result/events:
+## Smoke Example
 
 ```bash
-curl http://localhost:8000/api/v1/jobs/{jobId}
-curl http://localhost:8000/api/v1/jobs/{jobId}/result
-curl -N http://localhost:8000/api/v1/jobs/{jobId}/events
-```
-
-### Chat API (new)
-
-Create/reuse chat session:
-
-```bash
+# 1) create session
 curl -X POST http://localhost:8000/api/v1/chat/sessions \
   -H "Content-Type: application/json" \
-  -d '{
-    "projectRoot":"/path/to/project",
-    "source":"ide-plugin",
-    "profile":"quick",
-    "reuseExisting":true
-  }'
-```
+  -d '{"projectRoot":"C:/path/to/project","source":"ide-plugin","profile":"quick","reuseExisting":true}'
 
-Send user message:
+# 2) read status
+curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/status
 
-```bash
-curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/messages \
+# 3) read diff
+curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/diff
+
+# 4) execute command
+curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/commands \
   -H "Content-Type: application/json" \
-  -d '{"role":"user","content":"/generate-test Given user logs in"}'
+  -d '{"command":"compact"}'
 ```
 
-Read history:
+## Verification
 
-```bash
-curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/history
+Backend tests:
+
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+$env:PYTHONPATH='src'
+python -m pytest -p no:cacheprovider tests/test_chat_api.py tests/test_startup_readiness.py
+python -m pytest -p no:cacheprovider tests/test_jobs_api.py
 ```
 
-Approve/reject tool call:
+Plugin compile check:
 
-```bash
-curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/tool-decisions \
-  -H "Content-Type: application/json" \
-  -d '{"toolCallId":"<id>","decision":"approve"}'
+```powershell
+./ide-plugin/gradlew -p ide-plugin compileKotlin --no-daemon
 ```
 
-SSE stream:
+## Current Limitations
 
-```bash
-curl -N http://localhost:8000/api/v1/chat/sessions/{sessionId}/stream
-```
-
-### Other endpoints (compat/debug)
-
-- `POST /api/v1/steps/scan-steps`
-- `GET /api/v1/steps/?projectRoot=...`
-- `POST /api/v1/feature/generate-feature`
-- `POST /api/v1/feature/apply-feature`
-- `POST /api/v1/llm/test`
-
-## Tooling policy in chat runtime
-
-Default policy is **confirm-before-write**:
-- read-only tools can run automatically;
-- write/external tools require explicit approval;
-- pending tool calls are returned in chat history and UI approval cards.
-
-## Tests
-
-Backend:
-
-```bash
-python -m pytest -p no:cacheprovider tests/test_jobs_api.py tests/test_chat_api.py
-```
-
-Plugin:
-
-```bash
-./ide-plugin/gradlew -p ide-plugin test --no-daemon
-```
-
-## Notes
-
-- Chat runtime currently uses history polling in plugin; SSE endpoint is already available in backend.
-- Job and chat stores are process-local (`RunStateStore` in-memory) plus file-backed memory/artifacts.
-- For production multi-instance deployment, replace in-memory stores with shared persistence.
+- Sidecar state (events, pending permissions, usage aggregates) is in-memory.
+- No durable event replay yet after sidecar restart.
+- For production, persistence + recovery strategy should be added.

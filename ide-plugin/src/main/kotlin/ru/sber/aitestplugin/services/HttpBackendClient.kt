@@ -12,10 +12,14 @@ import ru.sber.aitestplugin.config.toZephyrAuthHeaders
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
+import ru.sber.aitestplugin.model.ChatCommandRequestDto
+import ru.sber.aitestplugin.model.ChatCommandResponseDto
 import ru.sber.aitestplugin.model.ChatMessageAcceptedResponseDto
 import ru.sber.aitestplugin.model.ChatMessageRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateResponseDto
+import ru.sber.aitestplugin.model.ChatSessionDiffResponseDto
+import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
@@ -107,6 +111,17 @@ class HttpBackendClient(
 
     override fun getChatHistory(sessionId: String): ChatHistoryResponseDto =
         get("/chat/sessions/$sessionId/history")
+
+    override fun getChatStatus(sessionId: String): ChatSessionStatusResponseDto =
+        get("/chat/sessions/$sessionId/status")
+
+    override fun getChatDiff(sessionId: String): ChatSessionDiffResponseDto =
+        get("/chat/sessions/$sessionId/diff")
+
+    override fun executeChatCommand(
+        sessionId: String,
+        request: ChatCommandRequestDto
+    ): ChatCommandResponseDto = post("/chat/sessions/$sessionId/commands", request)
 
     override fun submitChatToolDecision(
         sessionId: String,

@@ -10,20 +10,28 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
+import okhttp3.Call
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
+import ru.sber.aitestplugin.model.ChatCommandRequestDto
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
 import ru.sber.aitestplugin.model.ChatMessageRequestDto
-import ru.sber.aitestplugin.model.ChatPendingToolCallDto
+import ru.sber.aitestplugin.model.ChatPendingPermissionDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
+import ru.sber.aitestplugin.model.ChatSessionDiffResponseDto
+import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
 import java.awt.BorderLayout
+import java.awt.Dimension
 import java.awt.FlowLayout
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
@@ -33,7 +41,7 @@ import javax.swing.SwingUtilities
 import javax.swing.Timer
 
 /**
- * Chat-only Tool Window panel.
+ * Main agent ToolWindow focused on: current activity, cost, planned changes, and approvals.
  */
 class AiToolWindowPanel(
     private val project: Project,
@@ -41,18 +49,34 @@ class AiToolWindowPanel(
 ) : JPanel(BorderLayout()) {
     private val logger = Logger.getInstance(AiToolWindowPanel::class.java)
     private val settings = AiTestPluginSettingsService.getInstance().settings
+    private val refreshInFlight = AtomicBoolean(false)
+    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
+    private val streamClient = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+    private val pollTimer = Timer(1500) { refreshControlPlaneAsync() }
+
     private val timelineModel = DefaultListModel<String>()
     private val timeline = JBList(timelineModel)
     private val inputArea = JBTextArea(4, 20)
+    private val changedFilesModel = DefaultListModel<String>()
+    private val changedFilesList = JBList(changedFilesModel)
+
+    private val activityBadge = JBLabel("State: idle")
+    private val currentActionLabel = JBLabel("Action: Idle")
+    private val activityDetailsLabel = JBLabel("Pending approvals: 0")
+    private val costSummaryLabel = JBLabel("Tokens: 0 | Cost: 0.0000")
+    private val limitSummaryLabel = JBLabel("Context: n/a")
+    private val diffSummaryLabel = JBLabel("Diff: 0 files (+0/-0)")
+    private val riskLabel = JBLabel("Risk: low")
     private val statusLabel = JBLabel("Connecting chat session...")
+
     private val approvalPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         border = JBUI.Borders.empty(8, 0)
     }
-    private val refreshInFlight = AtomicBoolean(false)
-    private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
+
     private var sessionId: String? = null
-    private val pollTimer = Timer(1500) { refreshHistoryAsync() }
+    private var streamSessionId: String? = null
+    private var streamCall: Call? = null
 
     init {
         border = JBUI.Borders.empty(8)
@@ -65,10 +89,12 @@ class AiToolWindowPanel(
     override fun addNotify() {
         super.addNotify()
         pollTimer.start()
+        sessionId?.let { startEventStreamAsync(it) }
     }
 
     override fun removeNotify() {
         pollTimer.stop()
+        stopEventStream()
         super.removeNotify()
     }
 
@@ -79,30 +105,86 @@ class AiToolWindowPanel(
     }
 
     fun showUnmappedSteps(unmappedSteps: List<UnmappedStepDto>) {
-        appendLocalSystemMessage(
-            "Legacy action: unmapped steps=${unmappedSteps.size}."
-        )
+        appendLocalSystemMessage("Legacy action: unmapped steps=${unmappedSteps.size}.")
     }
 
     private fun buildCenterPanel(): JPanel {
-        val panel = JPanel(BorderLayout())
-        panel.background = JBColor.PanelBackground
-
-        timeline.emptyText.text = "Chat with automation agent. Try /scan-steps or /generate-test <text>."
-        panel.add(JBScrollPane(timeline), BorderLayout.CENTER)
-        panel.add(approvalPanel, BorderLayout.SOUTH)
-        return panel
+        val center = JPanel(BorderLayout()).apply {
+            background = JBColor.PanelBackground
+        }
+        val dashboard = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(buildNowCard())
+            add(buildCostCard())
+            add(buildChangesCard())
+        }
+        timeline.emptyText.text = "Chat with automation agent and control it via commands."
+        center.add(dashboard, BorderLayout.NORTH)
+        center.add(JBScrollPane(timeline), BorderLayout.CENTER)
+        center.add(approvalPanel, BorderLayout.SOUTH)
+        return center
     }
 
+    private fun buildNowCard(): JPanel =
+        JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(JBColor.border(), 1),
+                JBUI.Borders.empty(8)
+            )
+            isOpaque = false
+            add(activityBadge, BorderLayout.NORTH)
+            add(currentActionLabel, BorderLayout.CENTER)
+            add(activityDetailsLabel, BorderLayout.SOUTH)
+        }
+
+    private fun buildCostCard(): JPanel =
+        JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(JBColor.border(), 1),
+                JBUI.Borders.empty(8)
+            )
+            isOpaque = false
+            add(JBLabel("Cost and Usage"), BorderLayout.NORTH)
+            add(costSummaryLabel, BorderLayout.CENTER)
+            add(limitSummaryLabel, BorderLayout.SOUTH)
+        }
+
+    private fun buildChangesCard(): JPanel =
+        JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.compound(
+                JBUI.Borders.customLine(JBColor.border(), 1),
+                JBUI.Borders.empty(8)
+            )
+            isOpaque = false
+            add(JBLabel("Planned Changes"), BorderLayout.NORTH)
+            add(
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    add(diffSummaryLabel, BorderLayout.NORTH)
+                    add(riskLabel, BorderLayout.CENTER)
+                    add(
+                        JBScrollPane(changedFilesList).apply {
+                            preferredSize = Dimension(100, 84)
+                        },
+                        BorderLayout.SOUTH
+                    )
+                },
+                BorderLayout.CENTER
+            )
+        }
+
     private fun buildBottomPanel(): JPanel {
-        val root = JPanel(BorderLayout())
-        root.background = JBColor.PanelBackground
+        val root = JPanel(BorderLayout()).apply {
+            background = JBColor.PanelBackground
+        }
 
         val chips = JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply {
             isOpaque = false
-            add(createCommandButton("/scan-steps"))
-            add(createCommandButton("/generate-test"))
-            add(createCommandButton("/new-automation"))
+            add(createCommandButton("/status"))
+            add(createCommandButton("/diff"))
+            add(createCommandButton("/compact"))
+            add(createCommandButton("/abort"))
             add(createCommandButton("/help"))
         }
 
@@ -117,7 +199,7 @@ class AiToolWindowPanel(
                     isOpaque = false
                     add(
                         JButton("Send", AllIcons.Actions.Execute).apply {
-                            addActionListener { submitMessage(inputArea.text.trim()) }
+                            addActionListener { submitInput(inputArea.text.trim()) }
                         }
                     )
                 },
@@ -133,22 +215,17 @@ class AiToolWindowPanel(
 
     private fun createCommandButton(command: String): JButton =
         JButton(command).apply {
-            addActionListener {
-                when (command) {
-                    "/generate-test" -> submitMessage("$command Given user opens home page")
-                    "/new-automation" -> submitMessage("$command Create automation from smoke user flow")
-                    else -> submitMessage(command)
-                }
-            }
+            addActionListener { submitInput(command) }
         }
 
     private fun ensureSessionAsync() {
         ApplicationManager.getApplication().executeOnPooledThread {
-            val session = ensureSessionBlocking() ?: return@executeOnPooledThread
+            val activeSession = ensureSessionBlocking() ?: return@executeOnPooledThread
             SwingUtilities.invokeLater {
-                statusLabel.text = "Chat session ${session.take(8)} is active."
+                statusLabel.text = "Chat session ${activeSession.take(8)} is active."
             }
-            refreshHistoryAsync()
+            startEventStreamAsync(activeSession)
+            refreshControlPlaneAsync()
         }
     }
 
@@ -183,11 +260,26 @@ class AiToolWindowPanel(
         }
     }
 
-    private fun submitMessage(message: String) {
-        if (message.isBlank()) return
+    private fun submitInput(input: String) {
+        if (input.isBlank()) return
         inputArea.text = ""
-        appendLocalUserMessage(message)
 
+        val command = input.trim().lowercase()
+        when (command) {
+            "/status" -> submitControlCommand("status")
+            "/diff" -> submitControlCommand("diff")
+            "/compact" -> submitControlCommand("compact")
+            "/abort" -> submitControlCommand("abort")
+            "/help" -> {
+                appendLocalSystemMessage("Commands: /status /diff /compact /abort /help")
+                submitControlCommand("help")
+            }
+            else -> submitChatMessage(input)
+        }
+    }
+
+    private fun submitChatMessage(message: String) {
+        appendLocalUserMessage(message)
         ApplicationManager.getApplication().executeOnPooledThread {
             val activeSession = ensureSessionBlocking() ?: return@executeOnPooledThread
             try {
@@ -198,7 +290,7 @@ class AiToolWindowPanel(
                 SwingUtilities.invokeLater {
                     statusLabel.text = "Message sent. Waiting for agent response..."
                 }
-                refreshHistoryAsync()
+                refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to send chat message", ex)
                 SwingUtilities.invokeLater {
@@ -208,7 +300,26 @@ class AiToolWindowPanel(
         }
     }
 
-    private fun refreshHistoryAsync() {
+    private fun submitControlCommand(command: String) {
+        appendLocalSystemMessage("Command: /$command")
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val activeSession = ensureSessionBlocking() ?: return@executeOnPooledThread
+            try {
+                backendClient.executeChatCommand(activeSession, ChatCommandRequestDto(command = command))
+                SwingUtilities.invokeLater {
+                    statusLabel.text = "Command /$command accepted."
+                }
+                refreshControlPlaneAsync()
+            } catch (ex: Exception) {
+                logger.warn("Failed to execute chat command", ex)
+                SwingUtilities.invokeLater {
+                    statusLabel.text = "Command /$command failed: ${ex.message}"
+                }
+            }
+        }
+    }
+
+    private fun refreshControlPlaneAsync() {
         val activeSession = sessionId ?: return
         if (!refreshInFlight.compareAndSet(false, true)) {
             return
@@ -216,9 +327,18 @@ class AiToolWindowPanel(
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
                 val history = backendClient.getChatHistory(activeSession)
-                SwingUtilities.invokeLater { renderHistory(history) }
-            } catch (_: Exception) {
-                // Keep silent here to avoid noisy status flickering during temporary outages.
+                val status = backendClient.getChatStatus(activeSession)
+                val diff = backendClient.getChatDiff(activeSession)
+                SwingUtilities.invokeLater {
+                    renderHistory(history)
+                    renderStatus(status)
+                    renderCost(status)
+                    renderDiff(diff)
+                }
+            } catch (ex: Exception) {
+                if (logger.isDebugEnabled) {
+                    logger.debug("Control-plane refresh failed", ex)
+                }
             } finally {
                 refreshInFlight.set(false)
             }
@@ -241,13 +361,48 @@ class AiToolWindowPanel(
         if (timelineModel.size > 0) {
             timeline.ensureIndexIsVisible(timelineModel.size - 1)
         }
-        renderPendingApprovals(history.pendingToolCalls)
-        statusLabel.text = "Session ${history.sessionId.take(8)} • ${history.status} • messages ${history.messages.size}"
+        renderPendingApprovals(history.pendingPermissions)
     }
 
-    private fun renderPendingApprovals(pendingCalls: List<ChatPendingToolCallDto>) {
+    private fun renderStatus(status: ChatSessionStatusResponseDto) {
+        activityBadge.text = "State: ${status.activity}"
+        currentActionLabel.text = "Action: ${status.currentAction}"
+        activityDetailsLabel.text = "Pending approvals: ${status.pendingPermissionsCount} | Updated: ${status.updatedAt}"
+        statusLabel.text = "Session ${status.sessionId.take(8)} | ${status.activity} | risk=${status.risk.level}"
+    }
+
+    private fun renderCost(status: ChatSessionStatusResponseDto) {
+        val tokens = status.totals.tokens
+        val totalTokens = tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+        costSummaryLabel.text = "Tokens: $totalTokens (in=${tokens.input}, out=${tokens.output}, reason=${tokens.reasoning}) | Cost: ${"%.4f".format(status.totals.cost)}"
+        val context = status.limits.contextWindow
+        val percent = status.limits.percent?.let { "%.2f".format(it) } ?: "n/a"
+        limitSummaryLabel.text = if (context != null) {
+            "Context: ${status.limits.used}/$context ($percent%)"
+        } else {
+            "Context: used=${status.limits.used} (window n/a)"
+        }
+    }
+
+    private fun renderDiff(diff: ChatSessionDiffResponseDto) {
+        diffSummaryLabel.text =
+            "Diff: ${diff.summary.files} files (+${diff.summary.additions}/-${diff.summary.deletions})"
+        val reasons = if (diff.risk.reasons.isNotEmpty()) diff.risk.reasons.joinToString("; ") else "n/a"
+        riskLabel.text = "Risk: ${diff.risk.level} | $reasons"
+
+        changedFilesModel.clear()
+        if (diff.files.isEmpty()) {
+            changedFilesModel.addElement("No file changes yet.")
+            return
+        }
+        diff.files.forEach { file ->
+            changedFilesModel.addElement("${file.file} (+${file.additions}/-${file.deletions})")
+        }
+    }
+
+    private fun renderPendingApprovals(pendingPermissions: List<ChatPendingPermissionDto>) {
         approvalPanel.removeAll()
-        pendingCalls.forEach { call ->
+        pendingPermissions.forEach { permission ->
             val row = JPanel(BorderLayout()).apply {
                 border = JBUI.Borders.compound(
                     JBUI.Borders.customLine(JBColor.border(), 1),
@@ -255,21 +410,24 @@ class AiToolWindowPanel(
                 )
                 background = JBColor.PanelBackground
             }
-            val details = JBLabel(
-                "Approval required: ${call.toolName} (risk=${call.riskLevel}) args=${call.args}"
-            )
+            val details = JBLabel("Approval required: ${permission.title} (kind=${permission.kind})")
             row.add(details, BorderLayout.CENTER)
             row.add(
                 JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                     isOpaque = false
                     add(
-                        JButton("Approve").apply {
-                            addActionListener { submitToolDecision(call, "approve") }
+                        JButton("Approve once").apply {
+                            addActionListener { submitPermissionDecision(permission, "approve_once") }
+                        }
+                    )
+                    add(
+                        JButton("Approve always").apply {
+                            addActionListener { submitPermissionDecision(permission, "approve_always") }
                         }
                     )
                     add(
                         JButton("Reject").apply {
-                            addActionListener { submitToolDecision(call, "reject") }
+                            addActionListener { submitPermissionDecision(permission, "reject") }
                         }
                     )
                 },
@@ -281,21 +439,21 @@ class AiToolWindowPanel(
         approvalPanel.repaint()
     }
 
-    private fun submitToolDecision(call: ChatPendingToolCallDto, decision: String) {
+    private fun submitPermissionDecision(permission: ChatPendingPermissionDto, decision: String) {
         val activeSession = sessionId ?: return
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
                 backendClient.submitChatToolDecision(
                     activeSession,
                     ChatToolDecisionRequestDto(
-                        toolCallId = call.toolCallId,
+                        permissionId = permission.permissionId,
                         decision = decision
                     )
                 )
                 SwingUtilities.invokeLater {
-                    statusLabel.text = "Decision `$decision` sent for ${call.toolName}."
+                    statusLabel.text = "Decision $decision sent for ${permission.title}."
                 }
-                refreshHistoryAsync()
+                refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to submit tool decision", ex)
                 SwingUtilities.invokeLater {
@@ -303,6 +461,78 @@ class AiToolWindowPanel(
                 }
             }
         }
+    }
+
+    private fun startEventStreamAsync(activeSession: String) {
+        if (streamSessionId == activeSession && streamCall != null) {
+            return
+        }
+        stopEventStream()
+        streamSessionId = activeSession
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val base = settings.backendUrl.trimEnd('/')
+            val request = Request.Builder()
+                .url("$base/chat/sessions/$activeSession/stream")
+                .get()
+                .build()
+            val call = streamClient.newCall(request)
+            streamCall = call
+            try {
+                call.execute().use { response ->
+                    if (!response.isSuccessful) {
+                        SwingUtilities.invokeLater {
+                            statusLabel.text = "Stream failed: HTTP ${response.code}"
+                        }
+                        scheduleStreamReconnect(activeSession)
+                        return@use
+                    }
+                    val source = response.body?.source() ?: run {
+                        scheduleStreamReconnect(activeSession)
+                        return@use
+                    }
+                    var hasData = false
+                    while (!source.exhausted() && isDisplayable && sessionId == activeSession) {
+                        val line = source.readUtf8Line() ?: break
+                        when {
+                            line.startsWith("data:") -> hasData = true
+                            line.isBlank() -> {
+                                if (hasData) {
+                                    hasData = false
+                                    refreshControlPlaneAsync()
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (ex: Exception) {
+                if (logger.isDebugEnabled) {
+                    logger.debug("Chat stream disconnected", ex)
+                }
+                scheduleStreamReconnect(activeSession)
+            } finally {
+                if (streamCall == call) {
+                    streamCall = null
+                }
+            }
+        }
+    }
+
+    private fun scheduleStreamReconnect(activeSession: String) {
+        if (!isDisplayable || sessionId != activeSession) {
+            return
+        }
+        ApplicationManager.getApplication().executeOnPooledThread {
+            Thread.sleep(1200)
+            if (isDisplayable && sessionId == activeSession) {
+                startEventStreamAsync(activeSession)
+            }
+        }
+    }
+
+    private fun stopEventStream() {
+        streamCall?.cancel()
+        streamCall = null
+        streamSessionId = null
     }
 
     private fun appendLocalUserMessage(content: String) {
