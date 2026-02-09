@@ -89,6 +89,77 @@ class ChatHistoryResponse(ApiBaseModel):
     updated_at: datetime = Field(..., alias="updatedAt")
 
 
+class ChatTokenTotalsDto(ApiBaseModel):
+    input: int = 0
+    output: int = 0
+    reasoning: int = 0
+    cache_read: int = Field(default=0, alias="cacheRead")
+    cache_write: int = Field(default=0, alias="cacheWrite")
+
+
+class ChatUsageTotalsDto(ApiBaseModel):
+    tokens: ChatTokenTotalsDto = Field(default_factory=ChatTokenTotalsDto)
+    cost: float = 0.0
+
+
+class ChatLimitsDto(ApiBaseModel):
+    context_window: int | None = Field(default=None, alias="contextWindow")
+    used: int = 0
+    percent: float | None = None
+
+
+class ChatRiskDto(ApiBaseModel):
+    level: Literal["low", "medium", "high"]
+    reasons: list[str] = Field(default_factory=list)
+
+
+class ChatSessionStatusResponse(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    activity: str
+    current_action: str = Field(..., alias="currentAction")
+    last_event_at: datetime = Field(..., alias="lastEventAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
+    pending_permissions_count: int = Field(..., alias="pendingPermissionsCount")
+    totals: ChatUsageTotalsDto = Field(default_factory=ChatUsageTotalsDto)
+    limits: ChatLimitsDto = Field(default_factory=ChatLimitsDto)
+    risk: ChatRiskDto
+
+
+class ChatDiffSummaryDto(ApiBaseModel):
+    files: int = 0
+    additions: int = 0
+    deletions: int = 0
+
+
+class ChatDiffFileDto(ApiBaseModel):
+    file: str
+    additions: int = 0
+    deletions: int = 0
+    before: str = ""
+    after: str = ""
+
+
+class ChatSessionDiffResponse(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    summary: ChatDiffSummaryDto = Field(default_factory=ChatDiffSummaryDto)
+    files: list[ChatDiffFileDto] = Field(default_factory=list)
+    updated_at: datetime = Field(..., alias="updatedAt")
+    risk: ChatRiskDto
+
+
+class ChatCommandRequest(ApiBaseModel):
+    command: Literal["compact", "abort", "status", "diff", "help"]
+
+
+class ChatCommandResponse(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    command: str
+    accepted: bool = True
+    result: dict[str, Any] = Field(default_factory=dict)
+    updated_at: datetime = Field(..., alias="updatedAt")
+    risk: ChatRiskDto
+
+
 __all__ = [
     "ChatSessionCreateRequest",
     "ChatSessionCreateResponse",
@@ -100,4 +171,14 @@ __all__ = [
     "ChatEventDto",
     "ChatPendingPermissionDto",
     "ChatHistoryResponse",
+    "ChatTokenTotalsDto",
+    "ChatUsageTotalsDto",
+    "ChatLimitsDto",
+    "ChatRiskDto",
+    "ChatSessionStatusResponse",
+    "ChatDiffSummaryDto",
+    "ChatDiffFileDto",
+    "ChatSessionDiffResponse",
+    "ChatCommandRequest",
+    "ChatCommandResponse",
 ]

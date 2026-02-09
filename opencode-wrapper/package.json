@@ -1,0 +1,11 @@
+{
+  "name": "opencode-wrapper",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.53"
+  }
+}

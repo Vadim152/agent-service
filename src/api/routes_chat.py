@@ -11,16 +11,26 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from api.chat_schemas import (
+    ChatCommandRequest,
+    ChatCommandResponse,
+    ChatDiffFileDto,
+    ChatDiffSummaryDto,
     ChatEventDto,
     ChatHistoryResponse,
+    ChatLimitsDto,
     ChatMessageAcceptedResponse,
     ChatMessageDto,
     ChatMessageRequest,
     ChatPendingPermissionDto,
+    ChatRiskDto,
+    ChatSessionDiffResponse,
     ChatSessionCreateRequest,
     ChatSessionCreateResponse,
+    ChatSessionStatusResponse,
+    ChatTokenTotalsDto,
     ChatToolDecisionRequest,
     ChatToolDecisionResponse,
+    ChatUsageTotalsDto,
 )
 from infrastructure.opencode_sidecar_client import OpencodeSidecarError
 
@@ -46,6 +56,53 @@ def _sidecar_to_http_error(exc: OpencodeSidecarError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
+def _parse_iso_datetime(value: str | None) -> datetime:
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.utcnow()
+    if raw.endswith("Z"):
+        raw = f"{raw[:-1]}+00:00"
+    return datetime.fromisoformat(raw)
+
+
+def _build_risk(
+    *,
+    pending_permissions_count: int,
+    files_changed: int,
+    lines_changed: int,
+    activity: str,
+) -> ChatRiskDto:
+    reasons: list[str] = []
+    high = False
+    medium = False
+
+    if pending_permissions_count > 0:
+        reasons.append(f"Pending approvals: {pending_permissions_count}")
+        medium = True
+    if files_changed > 5:
+        reasons.append(f"Large file scope: {files_changed} files")
+        high = True
+    if lines_changed > 200:
+        reasons.append(f"Large diff volume: {lines_changed} lines")
+        high = True
+    if lines_changed > 0 and not high:
+        reasons.append(f"Diff lines: {lines_changed}")
+        medium = True
+    if activity == "error":
+        reasons.append("Agent reported an error state")
+        high = True
+
+    if high:
+        level = "high"
+    elif medium:
+        level = "medium"
+    else:
+        level = "low"
+        reasons.append("No pending approvals or high-impact changes")
+
+    return ChatRiskDto(level=level, reasons=reasons)
+
+
 @router.post("/sessions", response_model=ChatSessionCreateResponse)
 async def create_chat_session(payload: ChatSessionCreateRequest, request: Request) -> ChatSessionCreateResponse:
     runtime = _get_runtime(request)
@@ -59,7 +116,7 @@ async def create_chat_session(payload: ChatSessionCreateRequest, request: Reques
     except OpencodeSidecarError as exc:
         raise _sidecar_to_http_error(exc) from exc
 
-    created_at = datetime.fromisoformat(str(session["createdAt"]))
+    created_at = _parse_iso_datetime(str(session["createdAt"]))
     return ChatSessionCreateResponse(
         session_id=str(session["sessionId"]),
         created_at=created_at,
@@ -158,7 +215,141 @@ async def get_chat_history(
         events=events,
         pending_permissions=pending_permissions,
         memory_snapshot={},
-        updated_at=datetime.fromisoformat(history["updatedAt"]),
+        updated_at=_parse_iso_datetime(history["updatedAt"]),
+    )
+
+
+@router.get("/sessions/{session_id}/status", response_model=ChatSessionStatusResponse)
+async def get_chat_status(session_id: str, request: Request) -> ChatSessionStatusResponse:
+    runtime = _get_runtime(request)
+    try:
+        exists = await runtime.has_session(session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
+
+    try:
+        status_payload = await runtime.get_status(session_id=session_id)
+        diff_payload = await runtime.get_diff(session_id=session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+
+    summary = diff_payload.get("summary", {})
+    files_changed = int(summary.get("files", 0))
+    lines_changed = int(summary.get("additions", 0)) + int(summary.get("deletions", 0))
+    pending_permissions_count = int(status_payload.get("pendingPermissionsCount", 0))
+    activity = str(status_payload.get("activity", "idle"))
+    risk = _build_risk(
+        pending_permissions_count=pending_permissions_count,
+        files_changed=files_changed,
+        lines_changed=lines_changed,
+        activity=activity,
+    )
+
+    tokens = status_payload.get("totals", {}).get("tokens", {})
+    totals = ChatUsageTotalsDto(
+        tokens=ChatTokenTotalsDto(
+            input=int(tokens.get("input", 0)),
+            output=int(tokens.get("output", 0)),
+            reasoning=int(tokens.get("reasoning", 0)),
+            cache_read=int(tokens.get("cacheRead", 0)),
+            cache_write=int(tokens.get("cacheWrite", 0)),
+        ),
+        cost=float(status_payload.get("totals", {}).get("cost", 0.0)),
+    )
+    limits_payload = status_payload.get("limits", {})
+    limits = ChatLimitsDto(
+        context_window=limits_payload.get("contextWindow"),
+        used=int(limits_payload.get("used", 0)),
+        percent=limits_payload.get("percent"),
+    )
+    return ChatSessionStatusResponse(
+        session_id=status_payload["sessionId"],
+        activity=activity,
+        current_action=str(status_payload.get("currentAction", "Idle")),
+        last_event_at=_parse_iso_datetime(str(status_payload.get("lastEventAt"))),
+        updated_at=_parse_iso_datetime(str(status_payload.get("updatedAt"))),
+        pending_permissions_count=pending_permissions_count,
+        totals=totals,
+        limits=limits,
+        risk=risk,
+    )
+
+
+@router.get("/sessions/{session_id}/diff", response_model=ChatSessionDiffResponse)
+async def get_chat_diff(session_id: str, request: Request) -> ChatSessionDiffResponse:
+    runtime = _get_runtime(request)
+    try:
+        exists = await runtime.has_session(session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
+
+    try:
+        diff_payload = await runtime.get_diff(session_id=session_id)
+        status_payload = await runtime.get_status(session_id=session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+
+    summary_payload = diff_payload.get("summary", {})
+    summary = ChatDiffSummaryDto(
+        files=int(summary_payload.get("files", 0)),
+        additions=int(summary_payload.get("additions", 0)),
+        deletions=int(summary_payload.get("deletions", 0)),
+    )
+    files = [ChatDiffFileDto.model_validate(item) for item in diff_payload.get("files", [])]
+    risk = _build_risk(
+        pending_permissions_count=int(status_payload.get("pendingPermissionsCount", 0)),
+        files_changed=summary.files,
+        lines_changed=summary.additions + summary.deletions,
+        activity=str(status_payload.get("activity", "idle")),
+    )
+    return ChatSessionDiffResponse(
+        session_id=diff_payload["sessionId"],
+        summary=summary,
+        files=files,
+        updated_at=_parse_iso_datetime(str(diff_payload.get("updatedAt"))),
+        risk=risk,
+    )
+
+
+@router.post("/sessions/{session_id}/commands", response_model=ChatCommandResponse)
+async def execute_chat_command(
+    session_id: str,
+    payload: ChatCommandRequest,
+    request: Request,
+) -> ChatCommandResponse:
+    runtime = _get_runtime(request)
+    try:
+        exists = await runtime.has_session(session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+    if not exists:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
+
+    try:
+        command_result = await runtime.execute_command(session_id=session_id, command=payload.command)
+        status_payload = await runtime.get_status(session_id=session_id)
+        diff_payload = await runtime.get_diff(session_id=session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+
+    summary_payload = diff_payload.get("summary", {})
+    risk = _build_risk(
+        pending_permissions_count=int(status_payload.get("pendingPermissionsCount", 0)),
+        files_changed=int(summary_payload.get("files", 0)),
+        lines_changed=int(summary_payload.get("additions", 0)) + int(summary_payload.get("deletions", 0)),
+        activity=str(status_payload.get("activity", "idle")),
+    )
+    return ChatCommandResponse(
+        session_id=command_result.get("sessionId", session_id),
+        command=str(command_result.get("command", payload.command)),
+        accepted=bool(command_result.get("accepted", True)),
+        result=command_result.get("result", {}),
+        updated_at=_parse_iso_datetime(str(command_result.get("updatedAt"))),
+        risk=risk,
     )
 
 

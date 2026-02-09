@@ -3,10 +3,14 @@ package ru.sber.aitestplugin.services
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
+import ru.sber.aitestplugin.model.ChatCommandRequestDto
+import ru.sber.aitestplugin.model.ChatCommandResponseDto
 import ru.sber.aitestplugin.model.ChatMessageAcceptedResponseDto
 import ru.sber.aitestplugin.model.ChatMessageRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateResponseDto
+import ru.sber.aitestplugin.model.ChatSessionDiffResponseDto
+import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
@@ -42,6 +46,12 @@ interface BackendClient {
     fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto
 
     fun getChatHistory(sessionId: String): ChatHistoryResponseDto
+
+    fun getChatStatus(sessionId: String): ChatSessionStatusResponseDto
+
+    fun getChatDiff(sessionId: String): ChatSessionDiffResponseDto
+
+    fun executeChatCommand(sessionId: String, request: ChatCommandRequestDto): ChatCommandResponseDto
 
     fun submitChatToolDecision(sessionId: String, request: ChatToolDecisionRequestDto): ChatToolDecisionResponseDto
 }

@@ -31,6 +31,7 @@ class _FakeSidecarClient:
         self.sessions_by_id: dict[str, dict[str, Any]] = {}
         self.sessions_by_root: dict[str, str] = {}
         self.permission_decisions: list[dict[str, str]] = []
+        self.commands: list[dict[str, str]] = []
         self._session_seq = 0
 
     async def create_session(
@@ -158,6 +159,66 @@ class _FakeSidecarClient:
             "updatedAt": session["updatedAt"],
         }
 
+    async def get_status(self, *, session_id: str) -> dict[str, Any]:
+        session = self.sessions_by_id.get(session_id)
+        if not session:
+            raise OpencodeSidecarError("Session not found", status_code=404)
+        return {
+            "sessionId": session_id,
+            "activity": "waiting_permission" if session["pendingPermissions"] else "idle",
+            "currentAction": "Waiting for approval" if session["pendingPermissions"] else "Idle",
+            "lastEventAt": session["updatedAt"],
+            "updatedAt": session["updatedAt"],
+            "pendingPermissionsCount": len(session["pendingPermissions"]),
+            "totals": {
+                "tokens": {
+                    "input": 12,
+                    "output": 34,
+                    "reasoning": 5,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                },
+                "cost": 0.123,
+            },
+            "limits": {
+                "contextWindow": 200000,
+                "used": 51,
+                "percent": 0.03,
+            },
+        }
+
+    async def get_diff(self, *, session_id: str) -> dict[str, Any]:
+        session = self.sessions_by_id.get(session_id)
+        if not session:
+            raise OpencodeSidecarError("Session not found", status_code=404)
+        return {
+            "sessionId": session_id,
+            "summary": {"files": 1, "additions": 12, "deletions": 2},
+            "files": [
+                {
+                    "file": "features/login.feature",
+                    "before": "old",
+                    "after": "new",
+                    "additions": 12,
+                    "deletions": 2,
+                }
+            ],
+            "updatedAt": session["updatedAt"],
+        }
+
+    async def execute_command(self, *, session_id: str, command: str) -> dict[str, Any]:
+        session = self.sessions_by_id.get(session_id)
+        if not session:
+            raise OpencodeSidecarError("Session not found", status_code=404)
+        self.commands.append({"sessionId": session_id, "command": command})
+        return {
+            "sessionId": session_id,
+            "command": command,
+            "accepted": True,
+            "result": {"ok": True, "command": command},
+            "updatedAt": session["updatedAt"],
+        }
+
     async def stream_events(self, *, session_id: str, from_index: int = 0):
         _ = from_index
         if session_id not in self.sessions_by_id:
@@ -243,3 +304,59 @@ def test_permission_decision_maps_to_sidecar_response() -> None:
 
     _wait_until(lambda: len(sidecar.permission_decisions) == 1)
     assert sidecar.permission_decisions[0]["response"] == "once"
+
+
+def test_status_and_diff_endpoints_return_control_plane() -> None:
+    app, _ = _build_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+    client.post(f"/chat/sessions/{session_id}/messages", json={"content": "plan login"})
+
+    _wait_until(
+        lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1
+    )
+
+    status_response = client.get(f"/chat/sessions/{session_id}/status")
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["pendingPermissionsCount"] == 1
+    assert status_payload["risk"]["level"] in {"medium", "high"}
+    assert status_payload["totals"]["tokens"]["output"] == 34
+
+    diff_response = client.get(f"/chat/sessions/{session_id}/diff")
+    assert diff_response.status_code == 200
+    diff_payload = diff_response.json()
+    assert diff_payload["summary"]["files"] == 1
+    assert diff_payload["files"][0]["file"] == "features/login.feature"
+    assert diff_payload["risk"]["level"] in {"medium", "high"}
+
+
+def test_commands_endpoint_executes_runtime_command() -> None:
+    app, sidecar = _build_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/commands",
+        json={"command": "compact"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["accepted"] is True
+    assert payload["command"] == "compact"
+    assert sidecar.commands[0]["command"] == "compact"
+
+
+def test_commands_endpoint_rejects_unknown_command() -> None:
+    app, _ = _build_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/commands",
+        json={"command": "unknown"},
+    )
+    assert response.status_code == 422

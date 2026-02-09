@@ -1,67 +1,117 @@
 # agent-service
 
-`agent-service` is a FastAPI backend for the Sber IDE plugin, implemented as a controlled wrapper over OpenCode SDK.
+`agent-service` is a FastAPI backend for the Sber IDE plugin.  
+It uses `opencode-wrapper` as a local control layer over OpenCode SDK/runtime.
 
 ## Architecture
 
 ```text
 Sber IDE Plugin
-  -> agent-service (FastAPI, public API /api/v1/*)
-    -> opencode-wrapper (Node sidecar, local/internal API)
-      -> OpenCode runtime
+  -> agent-service (FastAPI, public API: /api/v1/*)
+    -> opencode-wrapper (Node.js sidecar, internal API: /internal/*)
+      -> OpenCode SDK
+        -> OpenCode runtime
 ```
 
-### Component responsibilities
+## What Is Implemented
 
-- `ide-plugin`
-  - chat UI
-  - sends user messages
-  - renders pending approvals
-  - sends permission decisions
-- `agent-service`
-  - public API entry point for IDE
-  - request validation and API contract
-  - bridges chat/session operations to sidecar
-- `opencode-wrapper`
-  - starts OpenCode server via SDK
-  - consumes OpenCode event stream
-  - exposes a simplified internal API for Python
+- Controlled sidecar wrapper (`opencode-wrapper`) around OpenCode SDK.
+- Session control-plane API in backend:
+  - current activity/state,
+  - usage/cost data,
+  - diff and risk summary,
+  - control commands.
+- Plugin UI focused on 3 operator questions:
+  - what the agent is doing now,
+  - how many resources it consumes,
+  - what it is going to change.
+- Approval flow with explicit decisions:
+  - `approve_once`,
+  - `approve_always`,
+  - `reject`.
 
-## Current API surface
+## Public API (`/api/v1`)
 
-### Public API (`/api/v1`)
+Base: `http://localhost:8000/api/v1`
 
-- Chat:
-  - `POST /chat/sessions`
-  - `POST /chat/sessions/{sessionId}/messages`
-  - `GET /chat/sessions/{sessionId}/history`
-  - `POST /chat/sessions/{sessionId}/tool-decisions`
-  - `GET /chat/sessions/{sessionId}/stream`
-- Compatibility/debug:
-  - `POST /steps/scan-steps`
-  - `GET /steps/?projectRoot=...`
-  - `POST /feature/generate-feature`
-  - `POST /feature/apply-feature`
-  - `POST /llm/test`
+### Chat session lifecycle
 
-### Internal sidecar API (`opencode-wrapper`, localhost only)
+- `POST /chat/sessions`
+- `POST /chat/sessions/{sessionId}/messages`
+- `GET /chat/sessions/{sessionId}/history`
+- `POST /chat/sessions/{sessionId}/tool-decisions`
+- `GET /chat/sessions/{sessionId}/stream` (SSE)
 
-- `GET /internal/health`
-- `POST /internal/sessions`
-- `POST /internal/sessions/{id}/prompt-async`
-- `POST /internal/sessions/{id}/permissions/{permissionId}`
-- `GET /internal/sessions/{id}/history`
-- `GET /internal/sessions/{id}/events` (SSE)
+### Control-plane endpoints
 
-## Quick start
+- `GET /chat/sessions/{sessionId}/status`
+- `GET /chat/sessions/{sessionId}/diff`
+- `POST /chat/sessions/{sessionId}/commands`
 
-## 1) Requirements
+`commands.command` supports:
 
-- Python 3.10+
-- Node.js 20+
-- `opencode` CLI available in `PATH`
+- `status`
+- `diff`
+- `compact`
+- `abort`
+- `help`
 
-## 2) Install dependencies
+### Other existing endpoints
+
+- `POST /steps/scan-steps`
+- `GET /steps?projectRoot=...`
+- `POST /feature/generate-feature`
+- `POST /feature/apply-feature`
+- `POST /llm/test`
+
+## Internal Sidecar API (`opencode-wrapper`)
+
+Base: `http://127.0.0.1:8011/internal`
+
+- `GET /health`
+- `POST /sessions`
+- `POST /sessions/{id}/prompt-async`
+- `POST /sessions/{id}/permissions/{permissionId}`
+- `GET /sessions/{id}/history`
+- `GET /sessions/{id}/status`
+- `GET /sessions/{id}/diff`
+- `POST /sessions/{id}/commands`
+- `GET /sessions/{id}/events` (SSE)
+
+## Plugin UI Notes
+
+ToolWindow includes:
+
+- `Now` card:
+  - activity,
+  - current action,
+  - pending approvals.
+- `Cost and Usage` card:
+  - token totals,
+  - estimated cost,
+  - context usage limits.
+- `Planned Changes` card:
+  - diff summary (files/additions/deletions),
+  - risk level and reasons,
+  - changed files list.
+
+Quick command shortcuts in UI:
+
+- `/status`
+- `/diff`
+- `/compact`
+- `/abort`
+- `/help`
+
+## Quick Start
+
+### 1. Requirements
+
+- Python `3.10+`
+- Node.js `20+`
+- OpenCode CLI available (`opencode` or `opencode.cmd` on Windows)
+
+### 2. Install
 
 Backend:
 
@@ -80,23 +130,29 @@ npm install
 cd ..
 ```
 
-## 3) Run services
+### 3. Run
 
-Start sidecar first:
+Start sidecar:
 
 ```powershell
 cd opencode-wrapper
 npm start
 ```
 
-Start backend second:
+Start backend (option A, preferred after `pip install -e .`):
 
 ```powershell
-cd C:\Users\BaguM\IdeaProjects\agent-service
+agent-service
+```
+
+Start backend (option B):
+
+```powershell
+$env:PYTHONPATH="src"
 python -m app.main
 ```
 
-Health checks:
+### 4. Health checks
 
 ```powershell
 curl http://localhost:8000/health
@@ -105,101 +161,51 @@ curl http://127.0.0.1:8011/internal/health
 
 ## Configuration
 
-Backend env prefix: `AGENT_SERVICE_`.
+### Backend (`AGENT_SERVICE_*`)
 
-Key backend settings:
+- `AGENT_SERVICE_API_PREFIX` (default `/api/v1`)
+- `AGENT_SERVICE_HOST` (default `0.0.0.0`)
+- `AGENT_SERVICE_PORT` (default `8000`)
+- `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
+- `AGENT_SERVICE_OPENCODE_WRAPPER_URL` (default `http://127.0.0.1:8011`)
+- `AGENT_SERVICE_OPENCODE_TIMEOUT_S` (default `30.0`)
 
-- `AGENT_SERVICE_API_PREFIX` (default: `/api/v1`)
-- `AGENT_SERVICE_HOST` (default: `0.0.0.0`)
-- `AGENT_SERVICE_PORT` (default: `8000`)
-- `AGENT_SERVICE_STEPS_INDEX_DIR` (default: `.agent/steps_index`)
-- `AGENT_SERVICE_OPENCODE_WRAPPER_URL` (default: `http://127.0.0.1:8011`)
-- `AGENT_SERVICE_OPENCODE_TIMEOUT_S` (default: `30.0`)
+### Sidecar (`OPENCODE_*`)
 
-Sidecar settings:
+- `OPENCODE_WRAPPER_HOST` (default `127.0.0.1`)
+- `OPENCODE_WRAPPER_PORT` (default `8011`)
+- `OPENCODE_HOST` (default `127.0.0.1`)
+- `OPENCODE_PORT` (default `4096`)
+- `OPENCODE_STARTUP_TIMEOUT_MS` (default `15000`)
+- `OPENCODE_BIN` (optional custom path to OpenCode binary)
 
-- `OPENCODE_WRAPPER_HOST` (default: `127.0.0.1`)
-- `OPENCODE_WRAPPER_PORT` (default: `8011`)
-- `OPENCODE_HOST` (default: `127.0.0.1`)
-- `OPENCODE_PORT` (default: `4096`)
-- `OPENCODE_STARTUP_TIMEOUT_MS` (default: `15000`)
-
-## Chat API examples
-
-Base URL: `http://localhost:8000/api/v1`.
-
-Create or reuse session:
+## Smoke Example
 
 ```bash
+# 1) create session
 curl -X POST http://localhost:8000/api/v1/chat/sessions \
   -H "Content-Type: application/json" \
-  -d '{
-    "projectRoot": "C:/path/to/project",
-    "source": "ide-plugin",
-    "profile": "quick",
-    "reuseExisting": true
-  }'
-```
+  -d '{"projectRoot":"C:/path/to/project","source":"ide-plugin","profile":"quick","reuseExisting":true}'
 
-Send user message:
+# 2) read status
+curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/status
 
-```bash
-curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/messages \
+# 3) read diff
+curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/diff
+
+# 4) execute command
+curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/commands \
   -H "Content-Type: application/json" \
-  -d '{
-    "role": "user",
-    "content": "Generate an automation plan for login flow"
-  }'
+  -d '{"command":"compact"}'
 ```
 
-Get history:
+## Verification
 
-```bash
-curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/history
-```
-
-Reply to permission:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/tool-decisions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "permissionId": "perm-123",
-    "decision": "approve_once"
-  }'
-```
-
-Allowed `decision` values:
-
-- `approve_once`
-- `approve_always`
-- `reject`
-
-SSE stream:
-
-```bash
-curl -N http://localhost:8000/api/v1/chat/sessions/{sessionId}/stream
-```
-
-## Plugin
-
-Build plugin:
-
-```powershell
-./ide-plugin/gradlew -p ide-plugin buildPlugin
-```
-
-Notes:
-
-- ToolWindow is chat-first.
-- Approval cards use `pendingPermissions`.
-
-## Tests
-
-Backend:
+Backend tests:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE='1'
+$env:PYTHONPATH='src'
 python -m pytest -p no:cacheprovider tests/test_chat_api.py tests/test_startup_readiness.py
 python -m pytest -p no:cacheprovider tests/test_jobs_api.py
 ```
@@ -210,8 +216,8 @@ Plugin compile check:
 ./ide-plugin/gradlew -p ide-plugin compileKotlin --no-daemon
 ```
 
-## Current limitations
+## Current Limitations
 
-- Sidecar stores session events/pending permissions in process memory.
-- Production deployment needs durable persistence and stream replay strategy.
-- Jobs router is no longer included in the default public API router.
+- Sidecar state (events, pending permissions, usage aggregates) is in-memory.
+- No durable event replay yet after sidecar restart.
+- For production, persistence + recovery strategy should be added.

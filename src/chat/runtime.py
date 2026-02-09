@@ -88,6 +88,21 @@ class ChatAgentRuntime:
         self._known_sessions.add(session_id)
         return await self.sidecar_client.get_history(session_id=session_id, limit=limit)
 
+    async def get_status(self, *, session_id: str) -> dict[str, Any]:
+        self._known_sessions.add(session_id)
+        return await self.sidecar_client.get_status(session_id=session_id)
+
+    async def get_diff(self, *, session_id: str) -> dict[str, Any]:
+        self._known_sessions.add(session_id)
+        return await self.sidecar_client.get_diff(session_id=session_id)
+
+    async def execute_command(self, *, session_id: str, command: str) -> dict[str, Any]:
+        self._known_sessions.add(session_id)
+        return await self.sidecar_client.execute_command(
+            session_id=session_id,
+            command=command,
+        )
+
     async def stream_events(
         self,
         *,
