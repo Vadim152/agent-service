@@ -37,9 +37,8 @@ class ChatMessageAcceptedResponse(ApiBaseModel):
 
 
 class ChatToolDecisionRequest(ApiBaseModel):
-    tool_call_id: str = Field(..., alias="toolCallId")
-    decision: Literal["approve", "reject"]
-    edited_args: dict[str, Any] | None = Field(default=None, alias="editedArgs")
+    permission_id: str = Field(..., alias="permissionId")
+    decision: Literal["approve_once", "approve_always", "reject"]
 
 
 class ChatToolDecisionResponse(ApiBaseModel):
@@ -64,12 +63,13 @@ class ChatEventDto(ApiBaseModel):
     index: int
 
 
-class ChatPendingToolCallDto(ApiBaseModel):
-    tool_call_id: str = Field(..., alias="toolCallId")
-    tool_name: str = Field(..., alias="toolName")
-    args: dict[str, Any]
-    risk_level: str = Field(..., alias="riskLevel")
-    requires_confirmation: bool = Field(..., alias="requiresConfirmation")
+class ChatPendingPermissionDto(ApiBaseModel):
+    permission_id: str = Field(..., alias="permissionId")
+    title: str
+    kind: str
+    call_id: str | None = Field(default=None, alias="callId")
+    message_id: str | None = Field(default=None, alias="messageId")
+    metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(..., alias="createdAt")
 
 
@@ -81,7 +81,10 @@ class ChatHistoryResponse(ApiBaseModel):
     status: str
     messages: list[ChatMessageDto] = Field(default_factory=list)
     events: list[ChatEventDto] = Field(default_factory=list)
-    pending_tool_calls: list[ChatPendingToolCallDto] = Field(default_factory=list, alias="pendingToolCalls")
+    pending_permissions: list[ChatPendingPermissionDto] = Field(
+        default_factory=list,
+        alias="pendingPermissions",
+    )
     memory_snapshot: dict[str, Any] = Field(default_factory=dict, alias="memorySnapshot")
     updated_at: datetime = Field(..., alias="updatedAt")
 
@@ -95,7 +98,6 @@ __all__ = [
     "ChatToolDecisionResponse",
     "ChatMessageDto",
     "ChatEventDto",
-    "ChatPendingToolCallDto",
+    "ChatPendingPermissionDto",
     "ChatHistoryResponse",
 ]
-

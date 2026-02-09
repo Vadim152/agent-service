@@ -23,20 +23,4 @@
         <notificationGroup id="AI Cucumber Assistant" displayType="BALLOON" isLogByDefault="true" />
     </extensions>
 
-    <actions>
-        <action id="ru.sber.aitestplugin.actions.ScanStepsAction"
-                class="ru.sber.aitestplugin.actions.ScanStepsAction"
-                text="Scan Cucumber Steps"
-                description="Scan project for Cucumber step definitions via backend" />
-        <action id="ru.sber.aitestplugin.actions.GenerateFeatureFromSelectionAction"
-                class="ru.sber.aitestplugin.actions.GenerateFeatureFromSelectionAction"
-                text="Generate Feature from Test Case"
-                description="Generate Gherkin feature using selected testcase text">
-            <add-to-group group-id="EditorPopupMenu" anchor="first" />
-        </action>
-        <action id="ru.sber.aitestplugin.actions.ApplyFeatureAction"
-                class="ru.sber.aitestplugin.actions.ApplyFeatureAction"
-                text="Apply Feature"
-                description="Send current feature file to backend for application" />
-    </actions>
 </idea-plugin>

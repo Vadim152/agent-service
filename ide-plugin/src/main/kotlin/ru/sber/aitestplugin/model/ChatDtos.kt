@@ -30,9 +30,8 @@ data class ChatMessageAcceptedResponseDto(
 )
 
 data class ChatToolDecisionRequestDto(
-    val toolCallId: String,
-    val decision: String,
-    val editedArgs: Map<String, Any?>? = null
+    val permissionId: String,
+    val decision: String
 )
 
 data class ChatToolDecisionResponseDto(
@@ -57,12 +56,13 @@ data class ChatEventDto(
     val index: Int
 )
 
-data class ChatPendingToolCallDto(
-    val toolCallId: String,
-    val toolName: String,
-    val args: Map<String, Any?> = emptyMap(),
-    val riskLevel: String,
-    val requiresConfirmation: Boolean,
+data class ChatPendingPermissionDto(
+    val permissionId: String,
+    val title: String,
+    val kind: String,
+    val callId: String? = null,
+    val messageId: String? = null,
+    val metadata: Map<String, Any?> = emptyMap(),
     val createdAt: Instant
 )
 
@@ -74,8 +74,7 @@ data class ChatHistoryResponseDto(
     val status: String,
     val messages: List<ChatMessageDto> = emptyList(),
     val events: List<ChatEventDto> = emptyList(),
-    val pendingToolCalls: List<ChatPendingToolCallDto> = emptyList(),
+    val pendingPermissions: List<ChatPendingPermissionDto> = emptyList(),
     val memorySnapshot: Map<String, Any?> = emptyMap(),
     val updatedAt: Instant
 )
-

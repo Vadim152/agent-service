@@ -13,7 +13,7 @@ import com.intellij.util.ui.JBUI
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
 import ru.sber.aitestplugin.model.ChatMessageRequestDto
-import ru.sber.aitestplugin.model.ChatPendingToolCallDto
+import ru.sber.aitestplugin.model.ChatPendingPermissionDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
@@ -241,13 +241,13 @@ class AiToolWindowPanel(
         if (timelineModel.size > 0) {
             timeline.ensureIndexIsVisible(timelineModel.size - 1)
         }
-        renderPendingApprovals(history.pendingToolCalls)
+        renderPendingApprovals(history.pendingPermissions)
         statusLabel.text = "Session ${history.sessionId.take(8)} • ${history.status} • messages ${history.messages.size}"
     }
 
-    private fun renderPendingApprovals(pendingCalls: List<ChatPendingToolCallDto>) {
+    private fun renderPendingApprovals(pendingPermissions: List<ChatPendingPermissionDto>) {
         approvalPanel.removeAll()
-        pendingCalls.forEach { call ->
+        pendingPermissions.forEach { permission ->
             val row = JPanel(BorderLayout()).apply {
                 border = JBUI.Borders.compound(
                     JBUI.Borders.customLine(JBColor.border(), 1),
@@ -256,7 +256,7 @@ class AiToolWindowPanel(
                 background = JBColor.PanelBackground
             }
             val details = JBLabel(
-                "Approval required: ${call.toolName} (risk=${call.riskLevel}) args=${call.args}"
+                "Approval required: ${permission.title} (kind=${permission.kind})"
             )
             row.add(details, BorderLayout.CENTER)
             row.add(
@@ -264,12 +264,12 @@ class AiToolWindowPanel(
                     isOpaque = false
                     add(
                         JButton("Approve").apply {
-                            addActionListener { submitToolDecision(call, "approve") }
+                            addActionListener { submitPermissionDecision(permission, "approve_once") }
                         }
                     )
                     add(
                         JButton("Reject").apply {
-                            addActionListener { submitToolDecision(call, "reject") }
+                            addActionListener { submitPermissionDecision(permission, "reject") }
                         }
                     )
                 },
@@ -281,19 +281,19 @@ class AiToolWindowPanel(
         approvalPanel.repaint()
     }
 
-    private fun submitToolDecision(call: ChatPendingToolCallDto, decision: String) {
+    private fun submitPermissionDecision(permission: ChatPendingPermissionDto, decision: String) {
         val activeSession = sessionId ?: return
         ApplicationManager.getApplication().executeOnPooledThread {
             try {
                 backendClient.submitChatToolDecision(
                     activeSession,
                     ChatToolDecisionRequestDto(
-                        toolCallId = call.toolCallId,
+                        permissionId = permission.permissionId,
                         decision = decision
                     )
                 )
                 SwingUtilities.invokeLater {
-                    statusLabel.text = "Decision `$decision` sent for ${call.toolName}."
+                    statusLabel.text = "Decision `$decision` sent for ${permission.title}."
                 }
                 refreshHistoryAsync()
             } catch (ex: Exception) {

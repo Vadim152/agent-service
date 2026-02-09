@@ -1,168 +1,143 @@
-﻿# agent-service
+# agent-service
 
-`agent-service` is a FastAPI control plane for BDD/test automation and the IntelliJ-based plugin.
+`agent-service` is a FastAPI backend for the Sber IDE plugin, implemented as a controlled wrapper over OpenCode SDK.
 
-Current focus:
-- chat-first workflow in plugin ToolWindow;
-- job orchestration for feature generation;
-- approval-gated tool execution;
-- self-healing execution loop for long-running jobs.
-
-## What is implemented
-
-### Core backend
-- `Job API` for async orchestration (`/api/v1/jobs/*`).
-- `ExecutionSupervisor` with attempts, classification/remediation hooks, and incident artifacts.
-- `Orchestrator` based on LangGraph for scan -> parse -> match -> build -> apply.
-- Persistent artifacts in `.agent/job_artifacts`.
-
-### Chat control plane (new)
-- Chat sessions and message processing (`/api/v1/chat/*`).
-- Agent loop with intent routing and tool calling.
-- Confirm-before-write policy for mutating/external tools.
-- Session + project memory abstraction persisted in `.agent/chat_memory`.
-
-### IntelliJ plugin (new UX)
-- ToolWindow is now chat-only UI.
-- Quick command chips (`/scan-steps`, `/generate-test`, `/new-automation`, `/help`).
-- Approval cards for risky tool calls.
-- History polling and status rendering from backend chat session.
-
-Legacy actions are still present for compatibility (`Scan`, `Generate Feature`, `Apply Feature`).
-
-## High-level architecture
+## Architecture
 
 ```text
-IDE Plugin Chat UI
-    -> /api/v1/chat/sessions
-    -> /api/v1/chat/sessions/{id}/messages
-    -> /api/v1/chat/sessions/{id}/history
-    -> /api/v1/chat/sessions/{id}/tool-decisions
-    -> /api/v1/chat/sessions/{id}/stream (SSE)
-
-ChatAgentRuntime
-    -> tool registry (read/write/external risk levels)
-    -> approval gate for mutating calls
-    -> Job API bridge for long-running generation
-
-Job API + ExecutionSupervisor
-    -> Orchestrator (LangGraph)
-    -> StepIndexStore / EmbeddingsStore / ArtifactStore / RunStateStore
+Sber IDE Plugin
+  -> agent-service (FastAPI, public API /api/v1/*)
+    -> opencode-wrapper (Node sidecar, local/internal API)
+      -> OpenCode runtime
 ```
 
-## Repository structure
+### Component responsibilities
 
-- `src/app` - startup/config/logging.
-- `src/api` - HTTP routes and schemas.
-- `src/chat` - chat runtime, session state, memory, tool registry.
-- `src/agents` - orchestration agents and LangGraph facade.
-- `src/self_healing` - execution supervisor and remediation components.
-- `src/infrastructure` - stores/adapters (step index, artifacts, run state, LLM).
-- `ide-plugin` - IntelliJ plugin module.
-- `tests` - backend tests.
+- `ide-plugin`
+  - chat UI
+  - sends user messages
+  - renders pending approvals
+  - sends permission decisions
+- `agent-service`
+  - public API entry point for IDE
+  - request validation and API contract
+  - bridges chat/session operations to sidecar
+- `opencode-wrapper`
+  - starts OpenCode server via SDK
+  - consumes OpenCode event stream
+  - exposes a simplified internal API for Python
 
-## Run locally
+## Current API surface
 
-### Backend
+### Public API (`/api/v1`)
 
-Windows PowerShell:
+- Chat:
+  - `POST /chat/sessions`
+  - `POST /chat/sessions/{sessionId}/messages`
+  - `GET /chat/sessions/{sessionId}/history`
+  - `POST /chat/sessions/{sessionId}/tool-decisions`
+  - `GET /chat/sessions/{sessionId}/stream`
+- Compatibility/debug:
+  - `POST /steps/scan-steps`
+  - `GET /steps/?projectRoot=...`
+  - `POST /feature/generate-feature`
+  - `POST /feature/apply-feature`
+  - `POST /llm/test`
+
+### Internal sidecar API (`opencode-wrapper`, localhost only)
+
+- `GET /internal/health`
+- `POST /internal/sessions`
+- `POST /internal/sessions/{id}/prompt-async`
+- `POST /internal/sessions/{id}/permissions/{permissionId}`
+- `GET /internal/sessions/{id}/history`
+- `GET /internal/sessions/{id}/events` (SSE)
+
+## Quick start
+
+## 1) Requirements
+
+- Python 3.10+
+- Node.js 20+
+- `opencode` CLI available in `PATH`
+
+## 2) Install dependencies
+
+Backend:
 
 ```powershell
-cd C:\path\to\agent-service
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools
 python -m pip install -e .
-python -m app.main
 ```
 
-Linux/macOS:
-
-```bash
-cd /path/to/agent-service
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip setuptools
-python -m pip install -e .
-python -m app.main
-```
-
-Health check:
-
-```bash
-curl http://localhost:8000/health
-```
-
-### Plugin
-
-```bash
-./ide-plugin/gradlew -p ide-plugin buildPlugin
-```
-
-Windows:
+Sidecar:
 
 ```powershell
-.\ide-plugin\gradlew.bat -p ide-plugin buildPlugin
+cd opencode-wrapper
+npm install
+cd ..
 ```
 
-## Environment variables
+## 3) Run services
 
-Base prefix: `AGENT_SERVICE_`.
+Start sidecar first:
 
-Key settings:
-- `AGENT_SERVICE_API_PREFIX` (default `/api/v1`)
-- `AGENT_SERVICE_HOST` (default `0.0.0.0`)
-- `AGENT_SERVICE_PORT` (default `8000`)
-- `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
-- `GIGACHAT_CLIENT_ID`
-- `GIGACHAT_CLIENT_SECRET`
-- `GIGACHAT_SCOPE` (default `GIGACHAT_API_PERS`)
-- `GIGACHAT_AUTH_URL`
-- `GIGACHAT_API_URL`
-- `GIGACHAT_VERIFY_SSL` (default `false`)
-
-## API overview
-
-Base URL examples below assume `http://localhost:8000/api/v1`.
-
-### Job API
-
-Create job:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "projectRoot":"/path/to/project",
-    "testCaseText":"Given user opens page",
-    "targetPath":"src/test/resources/features/generated.feature",
-    "createFile":true,
-    "overwriteExisting":false,
-    "profile":"quick",
-    "source":"ide-plugin"
-  }'
+```powershell
+cd opencode-wrapper
+npm start
 ```
 
-Get status/result/events:
+Start backend second:
 
-```bash
-curl http://localhost:8000/api/v1/jobs/{jobId}
-curl http://localhost:8000/api/v1/jobs/{jobId}/result
-curl -N http://localhost:8000/api/v1/jobs/{jobId}/events
+```powershell
+cd C:\Users\BaguM\IdeaProjects\agent-service
+python -m app.main
 ```
 
-### Chat API (new)
+Health checks:
 
-Create/reuse chat session:
+```powershell
+curl http://localhost:8000/health
+curl http://127.0.0.1:8011/internal/health
+```
+
+## Configuration
+
+Backend env prefix: `AGENT_SERVICE_`.
+
+Key backend settings:
+
+- `AGENT_SERVICE_API_PREFIX` (default: `/api/v1`)
+- `AGENT_SERVICE_HOST` (default: `0.0.0.0`)
+- `AGENT_SERVICE_PORT` (default: `8000`)
+- `AGENT_SERVICE_STEPS_INDEX_DIR` (default: `.agent/steps_index`)
+- `AGENT_SERVICE_OPENCODE_WRAPPER_URL` (default: `http://127.0.0.1:8011`)
+- `AGENT_SERVICE_OPENCODE_TIMEOUT_S` (default: `30.0`)
+
+Sidecar settings:
+
+- `OPENCODE_WRAPPER_HOST` (default: `127.0.0.1`)
+- `OPENCODE_WRAPPER_PORT` (default: `8011`)
+- `OPENCODE_HOST` (default: `127.0.0.1`)
+- `OPENCODE_PORT` (default: `4096`)
+- `OPENCODE_STARTUP_TIMEOUT_MS` (default: `15000`)
+
+## Chat API examples
+
+Base URL: `http://localhost:8000/api/v1`.
+
+Create or reuse session:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat/sessions \
   -H "Content-Type: application/json" \
   -d '{
-    "projectRoot":"/path/to/project",
-    "source":"ide-plugin",
-    "profile":"quick",
-    "reuseExisting":true
+    "projectRoot": "C:/path/to/project",
+    "source": "ide-plugin",
+    "profile": "quick",
+    "reuseExisting": true
   }'
 ```
 
@@ -171,22 +146,34 @@ Send user message:
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/messages \
   -H "Content-Type: application/json" \
-  -d '{"role":"user","content":"/generate-test Given user logs in"}'
+  -d '{
+    "role": "user",
+    "content": "Generate an automation plan for login flow"
+  }'
 ```
 
-Read history:
+Get history:
 
 ```bash
 curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/history
 ```
 
-Approve/reject tool call:
+Reply to permission:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/tool-decisions \
   -H "Content-Type: application/json" \
-  -d '{"toolCallId":"<id>","decision":"approve"}'
+  -d '{
+    "permissionId": "perm-123",
+    "decision": "approve_once"
+  }'
 ```
+
+Allowed `decision` values:
+
+- `approve_once`
+- `approve_always`
+- `reject`
 
 SSE stream:
 
@@ -194,37 +181,37 @@ SSE stream:
 curl -N http://localhost:8000/api/v1/chat/sessions/{sessionId}/stream
 ```
 
-### Other endpoints (compat/debug)
+## Plugin
 
-- `POST /api/v1/steps/scan-steps`
-- `GET /api/v1/steps/?projectRoot=...`
-- `POST /api/v1/feature/generate-feature`
-- `POST /api/v1/feature/apply-feature`
-- `POST /api/v1/llm/test`
+Build plugin:
 
-## Tooling policy in chat runtime
+```powershell
+./ide-plugin/gradlew -p ide-plugin buildPlugin
+```
 
-Default policy is **confirm-before-write**:
-- read-only tools can run automatically;
-- write/external tools require explicit approval;
-- pending tool calls are returned in chat history and UI approval cards.
+Notes:
+
+- ToolWindow is chat-first.
+- Approval cards use `pendingPermissions`.
 
 ## Tests
 
 Backend:
 
-```bash
-python -m pytest -p no:cacheprovider tests/test_jobs_api.py tests/test_chat_api.py
+```powershell
+$env:PYTHONDONTWRITEBYTECODE='1'
+python -m pytest -p no:cacheprovider tests/test_chat_api.py tests/test_startup_readiness.py
+python -m pytest -p no:cacheprovider tests/test_jobs_api.py
 ```
 
-Plugin:
+Plugin compile check:
 
-```bash
-./ide-plugin/gradlew -p ide-plugin test --no-daemon
+```powershell
+./ide-plugin/gradlew -p ide-plugin compileKotlin --no-daemon
 ```
 
-## Notes
+## Current limitations
 
-- Chat runtime currently uses history polling in plugin; SSE endpoint is already available in backend.
-- Job and chat stores are process-local (`RunStateStore` in-memory) plus file-backed memory/artifacts.
-- For production multi-instance deployment, replace in-memory stores with shared persistence.
+- Sidecar stores session events/pending permissions in process memory.
+- Production deployment needs durable persistence and stream replay strategy.
+- Jobs router is no longer included in the default public API router.
