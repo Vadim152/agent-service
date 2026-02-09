@@ -16,6 +16,7 @@ import okhttp3.Request
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.ChatCommandRequestDto
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
+import ru.sber.aitestplugin.model.ChatMessageDto
 import ru.sber.aitestplugin.model.ChatMessageRequestDto
 import ru.sber.aitestplugin.model.ChatPendingPermissionDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
@@ -246,9 +247,15 @@ class AiToolWindowPanel(
                     projectRoot = projectRoot,
                     source = "ide-plugin",
                     profile = "quick",
-                    reuseExisting = true
+                    reuseExisting = false
                 )
             )
+            if (!created.reused) {
+                SwingUtilities.invokeLater {
+                    timelineModel.clear()
+                    renderPendingApprovals(emptyList())
+                }
+            }
             sessionId = created.sessionId
             created.sessionId
         } catch (ex: Exception) {
@@ -347,7 +354,7 @@ class AiToolWindowPanel(
 
     private fun renderHistory(history: ChatHistoryResponseDto) {
         timelineModel.clear()
-        history.messages
+        sanitizeHistoryMessages(history.messages)
             .sortedBy { it.createdAt }
             .forEach { message ->
                 val time = timeFormatter.format(message.createdAt)
@@ -366,9 +373,40 @@ class AiToolWindowPanel(
 
     private fun renderStatus(status: ChatSessionStatusResponseDto) {
         activityBadge.text = "State: ${status.activity}"
-        currentActionLabel.text = "Action: ${status.currentAction}"
+        val retryDetails = if (status.lastRetryMessage != null && status.lastRetryAttempt != null) {
+            " | retry #${status.lastRetryAttempt}: ${status.lastRetryMessage}"
+        } else {
+            ""
+        }
+        currentActionLabel.text = "Action: ${status.currentAction}$retryDetails"
         activityDetailsLabel.text = "Pending approvals: ${status.pendingPermissionsCount} | Updated: ${status.updatedAt}"
         statusLabel.text = "Session ${status.sessionId.take(8)} | ${status.activity} | risk=${status.risk.level}"
+    }
+
+    private fun sanitizeHistoryMessages(messages: List<ChatMessageDto>): List<ChatMessageDto> {
+        val sanitized = mutableListOf<ChatMessageDto>()
+        var lastAssistantNormalized: String? = null
+
+        for (message in messages) {
+            if (message.role.equals("assistant", ignoreCase = true)) {
+                val normalizedContent = message.content.trim()
+                if (normalizedContent.isBlank()) {
+                    continue
+                }
+                if (lastAssistantNormalized == normalizedContent) {
+                    if (sanitized.isNotEmpty()) {
+                        sanitized[sanitized.lastIndex] = message
+                    }
+                    continue
+                }
+                lastAssistantNormalized = normalizedContent
+                sanitized += message
+                continue
+            }
+            lastAssistantNormalized = null
+            sanitized += message
+        }
+        return sanitized
     }
 
     private fun renderCost(status: ChatSessionStatusResponseDto) {

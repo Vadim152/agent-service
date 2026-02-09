@@ -6,7 +6,7 @@ data class ChatSessionCreateRequestDto(
     val projectRoot: String,
     val source: String = "ide-plugin",
     val profile: String = "quick",
-    val reuseExisting: Boolean = true
+    val reuseExisting: Boolean = false
 )
 
 data class ChatSessionCreateResponseDto(
@@ -112,6 +112,9 @@ data class ChatSessionStatusResponseDto(
     val pendingPermissionsCount: Int,
     val totals: ChatUsageTotalsDto = ChatUsageTotalsDto(),
     val limits: ChatLimitsDto = ChatLimitsDto(),
+    val lastRetryMessage: String? = null,
+    val lastRetryAttempt: Int? = null,
+    val lastRetryAt: Instant? = null,
     val risk: ChatRiskDto
 )
 

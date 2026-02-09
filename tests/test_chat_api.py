@@ -32,6 +32,7 @@ class _FakeSidecarClient:
         self.sessions_by_root: dict[str, str] = {}
         self.permission_decisions: list[dict[str, str]] = []
         self.commands: list[dict[str, str]] = []
+        self.status_overrides: dict[str, dict[str, Any]] = {}
         self._session_seq = 0
 
     async def create_session(
@@ -163,7 +164,7 @@ class _FakeSidecarClient:
         session = self.sessions_by_id.get(session_id)
         if not session:
             raise OpencodeSidecarError("Session not found", status_code=404)
-        return {
+        payload = {
             "sessionId": session_id,
             "activity": "waiting_permission" if session["pendingPermissions"] else "idle",
             "currentAction": "Waiting for approval" if session["pendingPermissions"] else "Idle",
@@ -186,6 +187,8 @@ class _FakeSidecarClient:
                 "percent": 0.03,
             },
         }
+        payload.update(self.status_overrides.get(session_id, {}))
+        return payload
 
     async def get_diff(self, *, session_id: str) -> dict[str, Any]:
         session = self.sessions_by_id.get(session_id)
@@ -323,6 +326,9 @@ def test_status_and_diff_endpoints_return_control_plane() -> None:
     assert status_payload["pendingPermissionsCount"] == 1
     assert status_payload["risk"]["level"] in {"medium", "high"}
     assert status_payload["totals"]["tokens"]["output"] == 34
+    assert status_payload["lastRetryMessage"] is None
+    assert status_payload["lastRetryAttempt"] is None
+    assert status_payload["lastRetryAt"] is None
 
     diff_response = client.get(f"/chat/sessions/{session_id}/diff")
     assert diff_response.status_code == 200
@@ -360,3 +366,26 @@ def test_commands_endpoint_rejects_unknown_command() -> None:
         json={"command": "unknown"},
     )
     assert response.status_code == 422
+
+
+def test_status_exposes_retry_metadata_when_present() -> None:
+    app, sidecar = _build_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    sidecar.status_overrides[session_id] = {
+        "activity": "retry",
+        "currentAction": "Too Many Requests: Rate limit exceeded (attempt 2)",
+        "lastRetryMessage": "Too Many Requests: Rate limit exceeded",
+        "lastRetryAttempt": 2,
+        "lastRetryAt": _utcnow(),
+    }
+
+    response = client.get(f"/chat/sessions/{session_id}/status")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["activity"] == "retry"
+    assert payload["lastRetryMessage"] == "Too Many Requests: Rate limit exceeded"
+    assert payload["lastRetryAttempt"] == 2
+    assert payload["lastRetryAt"] is not None

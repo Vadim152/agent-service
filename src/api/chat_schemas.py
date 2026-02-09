@@ -122,6 +122,9 @@ class ChatSessionStatusResponse(ApiBaseModel):
     pending_permissions_count: int = Field(..., alias="pendingPermissionsCount")
     totals: ChatUsageTotalsDto = Field(default_factory=ChatUsageTotalsDto)
     limits: ChatLimitsDto = Field(default_factory=ChatLimitsDto)
+    last_retry_message: str | None = Field(default=None, alias="lastRetryMessage")
+    last_retry_attempt: int | None = Field(default=None, alias="lastRetryAttempt")
+    last_retry_at: datetime | None = Field(default=None, alias="lastRetryAt")
     risk: ChatRiskDto
 
 

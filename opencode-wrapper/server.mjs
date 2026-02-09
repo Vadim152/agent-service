@@ -256,6 +256,12 @@ function setSessionActivity(session, activity, currentAction) {
   session.updatedAt = nowIso();
 }
 
+function clearRetryState(session) {
+  session.lastRetryMessage = null;
+  session.lastRetryAttempt = null;
+  session.lastRetryAt = null;
+}
+
 function recalculateTotals(sessionId) {
   const usageMap = ensureMessageUsageMap(sessionId);
   const totals = createEmptyTotals();
@@ -345,15 +351,20 @@ function handleSessionStatus(payload) {
   }
   const type = String(status.type ?? "idle");
   if (type === "busy") {
+    clearRetryState(session);
     setSessionActivity(session, "busy", "Processing request");
     return;
   }
   if (type === "retry") {
     const attempt = toNumber(status.attempt, 0);
     const message = typeof status.message === "string" ? status.message : "Retrying";
+    session.lastRetryMessage = message;
+    session.lastRetryAttempt = attempt;
+    session.lastRetryAt = nowIso();
     setSessionActivity(session, "retry", `${message} (attempt ${attempt})`);
     return;
   }
+  clearRetryState(session);
   setSessionActivity(session, "idle", "Idle");
 }
 
@@ -571,6 +582,9 @@ function buildStatus(session) {
     pendingPermissionsCount: pending.size,
     totals: session.totals ?? createEmptyTotals(),
     limits: buildLimits(session),
+    lastRetryMessage: session.lastRetryMessage ?? null,
+    lastRetryAttempt: session.lastRetryAttempt ?? null,
+    lastRetryAt: session.lastRetryAt ?? null,
   };
 }
 
@@ -752,6 +766,9 @@ async function handleRequest(req, res) {
       currentAction: "Idle",
       totals: createEmptyTotals(),
       contextWindow: null,
+      lastRetryMessage: null,
+      lastRetryAttempt: null,
+      lastRetryAt: null,
     };
     sessionState.set(sessionId, session);
     sessionsByProject.set(projectRoot, sessionId);

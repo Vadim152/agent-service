@@ -42,11 +42,19 @@ Base: `http://localhost:8000/api/v1`
 - `POST /chat/sessions/{sessionId}/tool-decisions`
 - `GET /chat/sessions/{sessionId}/stream` (SSE)
 
+Default plugin behavior: each new ToolWindow chat uses a fresh session (`reuseExisting=false`) to avoid old-history spam.
+
 ### Control-plane endpoints
 
 - `GET /chat/sessions/{sessionId}/status`
 - `GET /chat/sessions/{sessionId}/diff`
 - `POST /chat/sessions/{sessionId}/commands`
+
+`status` also includes retry diagnostics when provider is rate-limited:
+
+- `lastRetryMessage`
+- `lastRetryAttempt`
+- `lastRetryAt`
 
 `commands.command` supports:
 
@@ -102,6 +110,11 @@ Quick command shortcuts in UI:
 - `/compact`
 - `/abort`
 - `/help`
+
+Timeline rendering guards:
+
+- empty assistant messages are hidden
+- consecutive duplicate assistant messages are collapsed
 
 ## Quick Start
 
@@ -202,7 +215,7 @@ Stop-Process -Id <PID> -Force
 # 1) create session
 curl -X POST http://localhost:8000/api/v1/chat/sessions \
   -H "Content-Type: application/json" \
-  -d '{"projectRoot":"C:/path/to/project","source":"ide-plugin","profile":"quick","reuseExisting":true}'
+  -d '{"projectRoot":"C:/path/to/project","source":"ide-plugin","profile":"quick","reuseExisting":false}'
 
 # 2) read status
 curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/status

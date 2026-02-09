@@ -273,6 +273,17 @@ async def get_chat_status(session_id: str, request: Request) -> ChatSessionStatu
         pending_permissions_count=pending_permissions_count,
         totals=totals,
         limits=limits,
+        last_retry_message=status_payload.get("lastRetryMessage"),
+        last_retry_attempt=(
+            int(status_payload["lastRetryAttempt"])
+            if status_payload.get("lastRetryAttempt") is not None
+            else None
+        ),
+        last_retry_at=(
+            _parse_iso_datetime(str(status_payload.get("lastRetryAt")))
+            if status_payload.get("lastRetryAt")
+            else None
+        ),
         risk=risk,
     )
 
