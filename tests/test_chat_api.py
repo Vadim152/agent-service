@@ -66,6 +66,8 @@ class _FakeSidecarClient:
             "messages": [],
             "events": [],
             "pendingPermissions": [],
+            "activity": "idle",
+            "currentAction": "Idle",
             "updatedAt": _utcnow(),
         }
         self.sessions_by_id[session_id] = session
@@ -118,6 +120,8 @@ class _FakeSidecarClient:
                 "createdAt": _utcnow(),
             }
         ]
+        session["activity"] = "waiting_permission"
+        session["currentAction"] = "Waiting for approval"
         session["updatedAt"] = _utcnow()
         return {"sessionId": session_id, "accepted": True}
 
@@ -166,8 +170,8 @@ class _FakeSidecarClient:
             raise OpencodeSidecarError("Session not found", status_code=404)
         payload = {
             "sessionId": session_id,
-            "activity": "waiting_permission" if session["pendingPermissions"] else "idle",
-            "currentAction": "Waiting for approval" if session["pendingPermissions"] else "Idle",
+            "activity": session["activity"],
+            "currentAction": session["currentAction"],
             "lastEventAt": session["updatedAt"],
             "updatedAt": session["updatedAt"],
             "pendingPermissionsCount": len(session["pendingPermissions"]),
@@ -208,6 +212,31 @@ class _FakeSidecarClient:
             ],
             "updatedAt": session["updatedAt"],
         }
+
+    async def get_sessions(self, *, project_root: str, limit: int = 50) -> dict[str, Any]:
+        filtered = [
+            item
+            for item in self.sessions_by_id.values()
+            if item["projectRoot"] == project_root
+        ]
+        filtered.sort(key=lambda item: item["updatedAt"], reverse=True)
+        rows = [
+            {
+                "sessionId": item["sessionId"],
+                "projectRoot": item["projectRoot"],
+                "source": item["source"],
+                "profile": item["profile"],
+                "status": "active",
+                "activity": item["activity"],
+                "currentAction": item["currentAction"],
+                "createdAt": item["createdAt"],
+                "updatedAt": item["updatedAt"],
+                "lastMessagePreview": None,
+                "pendingPermissionsCount": len(item["pendingPermissions"]),
+            }
+            for item in filtered[: max(1, min(limit, 200))]
+        ]
+        return {"items": rows, "total": len(filtered)}
 
     async def execute_command(self, *, session_id: str, command: str) -> dict[str, Any]:
         session = self.sessions_by_id.get(session_id)
@@ -265,6 +294,36 @@ def test_chat_session_create_and_reuse() -> None:
     assert second_payload["sessionId"] == first_payload["sessionId"]
 
 
+def test_list_chat_sessions_for_project() -> None:
+    app, _ = _build_app()
+    client = TestClient(app)
+
+    first = client.post(
+        "/chat/sessions",
+        json={"projectRoot": "/tmp/project-a", "reuseExisting": False},
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        "/chat/sessions",
+        json={"projectRoot": "/tmp/project-a", "reuseExisting": False},
+    )
+    assert second.status_code == 200
+
+    third = client.post(
+        "/chat/sessions",
+        json={"projectRoot": "/tmp/project-b", "reuseExisting": False},
+    )
+    assert third.status_code == 200
+
+    listed = client.get("/chat/sessions", params={"projectRoot": "/tmp/project-a", "limit": 10})
+    assert listed.status_code == 200
+    payload = listed.json()
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 2
+    assert all(item["projectRoot"] == "/tmp/project-a" for item in payload["items"])
+
+
 def test_send_message_and_read_history() -> None:
     app, _ = _build_app()
     client = TestClient(app)
@@ -285,6 +344,28 @@ def test_send_message_and_read_history() -> None:
     history = client.get(f"/chat/sessions/{session_id}/history").json()
     assert len(history["pendingPermissions"]) == 1
     assert history["pendingPermissions"][0]["permissionId"] == "perm-1"
+
+
+def test_send_message_rejects_when_session_is_busy() -> None:
+    app, sidecar = _build_app()
+    client = TestClient(app)
+
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+    sidecar.status_overrides[session_id] = {
+        "activity": "busy",
+        "currentAction": "Processing request",
+    }
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "hello again"},
+    )
+    assert response.status_code == 409
+    assert "Session is busy" in response.json()["detail"]
+
+    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    assert history["messages"] == []
 
 
 def test_permission_decision_maps_to_sidecar_response() -> None:

@@ -16,6 +16,25 @@ data class ChatSessionCreateResponseDto(
     val memorySnapshot: Map<String, Any?> = emptyMap()
 )
 
+data class ChatSessionListItemDto(
+    val sessionId: String,
+    val projectRoot: String,
+    val source: String = "ide-plugin",
+    val profile: String = "quick",
+    val status: String = "active",
+    val activity: String = "idle",
+    val currentAction: String = "Idle",
+    val createdAt: Instant,
+    val updatedAt: Instant,
+    val lastMessagePreview: String? = null,
+    val pendingPermissionsCount: Int = 0
+)
+
+data class ChatSessionsListResponseDto(
+    val items: List<ChatSessionListItemDto> = emptyList(),
+    val total: Int = 0
+)
+
 data class ChatMessageRequestDto(
     val messageId: String? = null,
     val role: String = "user",

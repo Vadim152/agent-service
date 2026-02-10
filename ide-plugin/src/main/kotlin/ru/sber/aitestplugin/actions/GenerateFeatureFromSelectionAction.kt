@@ -24,7 +24,6 @@ import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.JBColor
-import com.intellij.openapi.wm.ToolWindowManager
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
@@ -33,6 +32,7 @@ import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
 import ru.sber.aitestplugin.ui.dialogs.GenerateFeatureDialog
+import ru.sber.aitestplugin.ui.toolwindow.ToolWindowIds
 import java.awt.Color
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -250,7 +250,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
     }
 
     private fun updateToolWindowUnmapped(project: Project, unmappedSteps: List<UnmappedStepDto>) {
-        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("AI Cucumber Assistant")
+        val toolWindow = ToolWindowIds.findToolWindow(project)
         val panel = toolWindow?.contentManager?.contents
             ?.mapNotNull { it.component as? ru.sber.aitestplugin.ui.toolwindow.AiToolWindowPanel }
             ?.firstOrNull()

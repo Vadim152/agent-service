@@ -23,6 +23,25 @@ class ChatSessionCreateResponse(ApiBaseModel):
     memory_snapshot: dict[str, Any] = Field(default_factory=dict, alias="memorySnapshot")
 
 
+class ChatSessionListItemDto(ApiBaseModel):
+    session_id: str = Field(..., alias="sessionId")
+    project_root: str = Field(..., alias="projectRoot")
+    source: str = "ide-plugin"
+    profile: str = "quick"
+    status: str = "active"
+    activity: str = "idle"
+    current_action: str = Field(default="Idle", alias="currentAction")
+    created_at: datetime = Field(..., alias="createdAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
+    last_message_preview: str | None = Field(default=None, alias="lastMessagePreview")
+    pending_permissions_count: int = Field(default=0, alias="pendingPermissionsCount")
+
+
+class ChatSessionsListResponse(ApiBaseModel):
+    items: list[ChatSessionListItemDto] = Field(default_factory=list)
+    total: int = 0
+
+
 class ChatMessageRequest(ApiBaseModel):
     message_id: str | None = Field(default=None, alias="messageId")
     role: Literal["user"] = "user"
@@ -166,6 +185,8 @@ class ChatCommandResponse(ApiBaseModel):
 __all__ = [
     "ChatSessionCreateRequest",
     "ChatSessionCreateResponse",
+    "ChatSessionListItemDto",
+    "ChatSessionsListResponse",
     "ChatMessageRequest",
     "ChatMessageAcceptedResponse",
     "ChatToolDecisionRequest",

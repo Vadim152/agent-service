@@ -124,6 +124,14 @@ function toNumber(value, fallback = 0) {
   return fallback;
 }
 
+function toTimestamp(value) {
+  const parsed = Date.parse(String(value ?? ""));
+  if (Number.isNaN(parsed)) {
+    return 0;
+  }
+  return parsed;
+}
+
 function writeJson(res, status, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -633,6 +641,38 @@ function buildHistory(session, limit) {
   };
 }
 
+function buildSessionsList(projectRoot, limit) {
+  const boundedLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 200) : 50;
+  const allSessions = Array.from(sessionState.values()).filter(
+    (session) => String(session?.projectRoot ?? "") === projectRoot,
+  );
+  allSessions.sort(
+    (left, right) =>
+      toTimestamp(right?.updatedAt ?? right?.createdAt) -
+      toTimestamp(left?.updatedAt ?? left?.createdAt),
+  );
+  const items = allSessions.slice(0, boundedLimit).map((session) => {
+    const pending = ensurePendingPermissions(session.sessionId);
+    return {
+      sessionId: session.sessionId,
+      projectRoot: session.projectRoot,
+      source: session.source ?? "ide-plugin",
+      profile: session.profile ?? "quick",
+      status: "active",
+      activity: session.activity ?? "idle",
+      currentAction: session.currentAction ?? "Idle",
+      createdAt: session.createdAt ?? nowIso(),
+      updatedAt: session.updatedAt ?? nowIso(),
+      lastMessagePreview: null,
+      pendingPermissionsCount: pending.size,
+    };
+  });
+  return {
+    items,
+    total: allSessions.length,
+  };
+}
+
 function writeSseEvent(res, eventType, payload) {
   res.write(`event: ${eventType}\n`);
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -716,6 +756,15 @@ async function handleRequest(req, res) {
       opencode: opencodeRuntime?.url ?? null,
       startedAt: nowIso(),
     });
+  }
+
+  if (req.method === "GET" && pathname === "/internal/sessions") {
+    const projectRoot = String(requestUrl.searchParams.get("directory") ?? "").trim();
+    if (!projectRoot) {
+      return writeJson(res, 422, { detail: "directory is required" });
+    }
+    const limit = Number.parseInt(requestUrl.searchParams.get("limit") ?? "50", 10);
+    return writeJson(res, 200, buildSessionsList(projectRoot, limit));
   }
 
   if (req.method === "POST" && pathname === "/internal/sessions") {

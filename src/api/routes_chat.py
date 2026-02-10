@@ -26,6 +26,8 @@ from api.chat_schemas import (
     ChatSessionDiffResponse,
     ChatSessionCreateRequest,
     ChatSessionCreateResponse,
+    ChatSessionListItemDto,
+    ChatSessionsListResponse,
     ChatSessionStatusResponse,
     ChatTokenTotalsDto,
     ChatToolDecisionRequest,
@@ -125,6 +127,44 @@ async def create_chat_session(payload: ChatSessionCreateRequest, request: Reques
     )
 
 
+@router.get("/sessions", response_model=ChatSessionsListResponse)
+async def list_chat_sessions(
+    request: Request,
+    projectRoot: str,
+    limit: int = 50,
+) -> ChatSessionsListResponse:
+    runtime = _get_runtime(request)
+    bounded_limit = max(1, min(limit, 200))
+    try:
+        payload = await runtime.list_sessions(project_root=projectRoot, limit=bounded_limit)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+
+    raw_items = payload.get("items", [])
+    items = [
+        ChatSessionListItemDto(
+            session_id=str(item.get("sessionId", "")),
+            project_root=str(item.get("projectRoot", projectRoot)),
+            source=str(item.get("source", "ide-plugin")),
+            profile=str(item.get("profile", "quick")),
+            status=str(item.get("status", "active")),
+            activity=str(item.get("activity", "idle")),
+            current_action=str(item.get("currentAction", "Idle")),
+            created_at=_parse_iso_datetime(str(item.get("createdAt"))),
+            updated_at=_parse_iso_datetime(str(item.get("updatedAt"))),
+            last_message_preview=(
+                str(item["lastMessagePreview"])
+                if item.get("lastMessagePreview") is not None
+                else None
+            ),
+            pending_permissions_count=int(item.get("pendingPermissionsCount", 0)),
+        )
+        for item in raw_items
+    ]
+    total = int(payload.get("total", len(items)))
+    return ChatSessionsListResponse(items=items, total=total)
+
+
 @router.post("/sessions/{session_id}/messages", response_model=ChatMessageAcceptedResponse)
 async def send_chat_message(
     session_id: str,
@@ -138,6 +178,18 @@ async def send_chat_message(
         raise _sidecar_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
+    try:
+        status_payload = await runtime.get_status(session_id=session_id)
+    except OpencodeSidecarError as exc:
+        raise _sidecar_to_http_error(exc) from exc
+
+    activity = str(status_payload.get("activity", "idle")).strip().lower()
+    if activity in {"busy", "waiting_permission", "retry"}:
+        current_action = str(status_payload.get("currentAction", "Processing request")).strip() or "Processing request"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session is {activity}. Wait until it becomes idle before sending a new message. Action: {current_action}",
+        )
 
     run_id = str(uuid.uuid4())
 

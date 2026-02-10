@@ -16,15 +16,16 @@ Sber IDE Plugin
 ## What Is Implemented
 
 - Controlled sidecar wrapper (`opencode-wrapper`) around OpenCode SDK.
-- Session control-plane API in backend:
-  - current activity/state,
-  - usage/cost data,
-  - diff and risk summary,
-  - control commands.
-- Plugin UI focused on 3 operator questions:
-  - what the agent is doing now,
-  - how many resources it consumes,
-  - what it is going to change.
+- Chat session lifecycle + control-plane API in backend:
+  - session creation and listing,
+  - messaging + streaming updates,
+  - status/diff/commands,
+  - explicit tool approval decisions.
+- Plugin UI redesigned to `GigaCode Chat` style:
+  - message bubbles and modern input panel,
+  - send/stop state switch while model is generating,
+  - session history screen and quick new-session action,
+  - slash commands via popup completion (`/`).
 - Approval flow with explicit decisions:
   - `approve_once`,
   - `approve_always`,
@@ -37,6 +38,7 @@ Base: `http://localhost:8000/api/v1`
 ### Chat session lifecycle
 
 - `POST /chat/sessions`
+- `GET /chat/sessions?projectRoot=...&limit=...`
 - `POST /chat/sessions/{sessionId}/messages`
 - `GET /chat/sessions/{sessionId}/history`
 - `POST /chat/sessions/{sessionId}/tool-decisions`
@@ -78,6 +80,7 @@ Base: `http://127.0.0.1:8011/internal`
 
 - `GET /health`
 - `POST /sessions`
+- `GET /sessions?directory=...&limit=...`
 - `POST /sessions/{id}/prompt-async`
 - `POST /sessions/{id}/permissions/{permissionId}`
 - `GET /sessions/{id}/history`
@@ -90,26 +93,23 @@ Base: `http://127.0.0.1:8011/internal`
 
 ToolWindow includes:
 
-- `Now` card:
-  - activity,
-  - current action,
-  - pending approvals.
-- `Cost and Usage` card:
-  - token totals,
-  - estimated cost,
-  - context usage limits.
-- `Planned Changes` card:
-  - diff summary (files/additions/deletions),
-  - risk level and reasons,
-  - changed files list.
-
-Quick command shortcuts in UI:
-
-- `/status`
-- `/diff`
-- `/compact`
-- `/abort`
-- `/help`
+- Header actions:
+  - `+` to open a new chat session,
+  - `History` to browse previous sessions for the current project,
+  - `Settings`.
+- Message timeline:
+  - user/assistant/system bubble rendering,
+  - in-stream progress line for current assistant activity,
+  - pending approval cards with action buttons.
+- Input panel:
+  - multiline input,
+  - `Send` button switches to red `Stop` while assistant is busy/retrying/waiting approval.
+- Slash commands via `/` popup:
+  - `/status`,
+  - `/diff`,
+  - `/compact`,
+  - `/abort`,
+  - `/help`.
 
 Timeline rendering guards:
 
@@ -217,13 +217,16 @@ curl -X POST http://localhost:8000/api/v1/chat/sessions \
   -H "Content-Type: application/json" \
   -d '{"projectRoot":"C:/path/to/project","source":"ide-plugin","profile":"quick","reuseExisting":false}'
 
-# 2) read status
+# 2) list sessions for project
+curl "http://localhost:8000/api/v1/chat/sessions?projectRoot=C:/path/to/project&limit=20"
+
+# 3) read status
 curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/status
 
-# 3) read diff
+# 4) read diff
 curl http://localhost:8000/api/v1/chat/sessions/{sessionId}/diff
 
-# 4) execute command
+# 5) execute command
 curl -X POST http://localhost:8000/api/v1/chat/sessions/{sessionId}/commands \
   -H "Content-Type: application/json" \
   -d '{"command":"compact"}'

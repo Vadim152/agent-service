@@ -8,10 +8,10 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.ToolWindowManager
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.toolwindow.AiToolWindowPanel
+import ru.sber.aitestplugin.ui.toolwindow.ToolWindowIds
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 
 /**
@@ -73,7 +73,7 @@ class ScanStepsAction : AnAction() {
     }
 
     private fun updateToolWindow(project: Project, response: ScanStepsResponseDto) {
-        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("AI Cucumber Assistant")
+        val toolWindow = ToolWindowIds.findToolWindow(project)
         val panel = toolWindow?.contentManager?.contents
             ?.mapNotNull { it.component as? AiToolWindowPanel }
             ?.firstOrNull()

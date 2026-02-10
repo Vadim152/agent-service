@@ -10,6 +10,7 @@ import ru.sber.aitestplugin.model.ChatMessageRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateResponseDto
 import ru.sber.aitestplugin.model.ChatSessionDiffResponseDto
+import ru.sber.aitestplugin.model.ChatSessionsListResponseDto
 import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
@@ -42,6 +43,8 @@ interface BackendClient {
     fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto
 
     fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto
+
+    fun listChatSessions(projectRoot: String, limit: Int = 50): ChatSessionsListResponseDto
 
     fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto
 

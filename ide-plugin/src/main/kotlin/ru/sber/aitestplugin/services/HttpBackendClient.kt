@@ -19,6 +19,7 @@ import ru.sber.aitestplugin.model.ChatMessageRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatSessionCreateResponseDto
 import ru.sber.aitestplugin.model.ChatSessionDiffResponseDto
+import ru.sber.aitestplugin.model.ChatSessionsListResponseDto
 import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
@@ -105,6 +106,12 @@ class HttpBackendClient(
 
     override fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto =
         post("/chat/sessions", request)
+
+    override fun listChatSessions(projectRoot: String, limit: Int): ChatSessionsListResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        val boundedLimit = limit.coerceIn(1, 200)
+        return get("/chat/sessions?projectRoot=$encodedProjectRoot&limit=$boundedLimit")
+    }
 
     override fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto =
         post("/chat/sessions/$sessionId/messages", request)

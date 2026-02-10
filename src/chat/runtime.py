@@ -88,6 +88,14 @@ class ChatAgentRuntime:
         self._known_sessions.add(session_id)
         return await self.sidecar_client.get_history(session_id=session_id, limit=limit)
 
+    async def list_sessions(self, *, project_root: str, limit: int = 50) -> dict[str, Any]:
+        payload = await self.sidecar_client.get_sessions(project_root=project_root, limit=limit)
+        for item in payload.get("items", []):
+            session_id = str(item.get("sessionId", "")).strip()
+            if session_id:
+                self._known_sessions.add(session_id)
+        return payload
+
     async def get_status(self, *, session_id: str) -> dict[str, Any]:
         self._known_sessions.add(session_id)
         return await self.sidecar_client.get_status(session_id=session_id)

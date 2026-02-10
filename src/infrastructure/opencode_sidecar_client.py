@@ -64,6 +64,13 @@ class OpencodeSidecarClient:
         params = {"limit": max(1, min(limit, 500))}
         return await self._get_json(f"/internal/sessions/{session_id}/history", params=params)
 
+    async def get_sessions(self, *, project_root: str, limit: int = 50) -> dict[str, Any]:
+        params = {
+            "directory": project_root,
+            "limit": max(1, min(limit, 200)),
+        }
+        return await self._get_json("/internal/sessions", params=params)
+
     async def get_status(self, *, session_id: str) -> dict[str, Any]:
         return await self._get_json(f"/internal/sessions/{session_id}/status")
 
