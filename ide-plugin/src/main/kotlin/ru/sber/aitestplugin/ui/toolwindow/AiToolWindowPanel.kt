@@ -42,6 +42,7 @@ import java.awt.Component
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -70,6 +71,7 @@ class AiToolWindowPanel(
     private val pollTimer = Timer(1800) { refreshControlPlaneAsync() }
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
     private val supportedCommands = listOf("status", "diff", "compact", "abort", "help")
+    private val theme = UiTheme()
 
     private val cardLayout = CardLayout()
     private val bodyCards = JPanel(cardLayout)
@@ -92,11 +94,15 @@ class AiToolWindowPanel(
     private var streamSessionId: String? = null
     private var streamCall: Call? = null
     private var slashPopup: JBPopup? = null
+    private var isApplyingSlashSelection: Boolean = false
+    private var suppressSlashPopupUntilReset: Boolean = false
+    private var lastSlashMatches: List<String> = emptyList()
     private var latestActivity: String = "idle"
 
     init {
-        border = JBUI.Borders.empty(8)
-        background = JBColor.PanelBackground
+        border = JBUI.Borders.empty(8, 8, 10, 8)
+        background = theme.panelBackground
+        isOpaque = true
         add(buildRoot(), BorderLayout.CENTER)
         ensureSessionAsync(forceNew = true)
     }
@@ -110,7 +116,9 @@ class AiToolWindowPanel(
     override fun removeNotify() {
         pollTimer.stop()
         stopEventStream()
-        slashPopup?.cancel()
+        suppressSlashPopupUntilReset = false
+        lastSlashMatches = emptyList()
+        hideSlashPopup()
         super.removeNotify()
     }
 
@@ -126,7 +134,8 @@ class AiToolWindowPanel(
 
     private fun buildRoot(): JPanel {
         return JPanel(BorderLayout()).apply {
-            isOpaque = false
+            isOpaque = true
+            background = theme.panelBackground
             add(buildHeader(), BorderLayout.NORTH)
             add(buildBody(), BorderLayout.CENTER)
             add(buildInput(), BorderLayout.SOUTH)
@@ -136,9 +145,10 @@ class AiToolWindowPanel(
     private fun buildHeader(): JPanel {
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            border = JBUI.Borders.emptyBottom(8)
+            border = JBUI.Borders.empty(0, 2, 8, 2)
             add(JBLabel(ToolWindowIds.DISPLAY_NAME).apply {
-                font = font.deriveFont(15f)
+                font = font.deriveFont(Font.BOLD, 16f)
+                foreground = theme.primaryText
             }, BorderLayout.WEST)
             add(
                 JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
@@ -151,6 +161,11 @@ class AiToolWindowPanel(
                     add(JButton(AllIcons.General.Settings).apply {
                         toolTipText = "Settings"
                         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                        foreground = theme.primaryText
+                        background = theme.controlBackground
+                        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+                        isContentAreaFilled = true
+                        isFocusPainted = false
                         addActionListener {
                             ShowSettingsUtil.getInstance().showSettingsDialog(
                                 project,
@@ -175,12 +190,21 @@ class AiToolWindowPanel(
     private fun buildChatCard(): JPanel {
         timeline.cellRenderer = BubbleRenderer()
         timeline.fixedCellHeight = -1
+        timeline.background = theme.panelBackground
+        timeline.foreground = theme.primaryText
+        timeline.selectionBackground = theme.panelBackground
+        timeline.selectionForeground = theme.primaryText
         timeline.emptyText.text = "Ask anything about your project"
 
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             add(JBScrollPane(timeline).apply {
-                border = JBUI.Borders.customLine(JBColor.border(), 1)
+                border = JBUI.Borders.compound(
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                    JBUI.Borders.empty(2)
+                )
+                background = theme.panelBackground
+                viewport.background = theme.panelBackground
                 preferredSize = Dimension(100, 360)
             }, BorderLayout.CENTER)
             add(approvalPanel, BorderLayout.SOUTH)
@@ -189,6 +213,10 @@ class AiToolWindowPanel(
 
     private fun buildHistoryCard(): JPanel {
         historyList.cellRenderer = SessionRenderer(timeFormatter)
+        historyList.background = theme.containerBackground
+        historyList.foreground = theme.primaryText
+        historyList.selectionBackground = theme.controlBackground
+        historyList.selectionForeground = theme.primaryText
         historyList.emptyText.text = "No chats yet"
         historyList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
@@ -203,15 +231,33 @@ class AiToolWindowPanel(
             add(
                 JPanel(BorderLayout()).apply {
                     isOpaque = false
-                    add(JButton("Back").apply { addActionListener { showChatScreen() } }, BorderLayout.WEST)
-                    add(JBLabel("History"), BorderLayout.CENTER)
+                    add(JButton("Back").apply {
+                        foreground = theme.primaryText
+                        background = theme.controlBackground
+                        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+                        isContentAreaFilled = true
+                        isFocusPainted = false
+                        addActionListener { showChatScreen() }
+                    }, BorderLayout.WEST)
+                    add(JBLabel("History").apply { foreground = theme.primaryText }, BorderLayout.CENTER)
                 },
                 BorderLayout.NORTH
             )
-            add(JBScrollPane(historyList), BorderLayout.CENTER)
+            add(JBScrollPane(historyList).apply {
+                border = JBUI.Borders.compound(
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                    JBUI.Borders.empty(2)
+                )
+                viewport.background = theme.containerBackground
+            }, BorderLayout.CENTER)
             add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
                 isOpaque = false
                 add(JButton("Open Chat").apply {
+                    foreground = theme.primaryText
+                    background = theme.controlBackground
+                    border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+                    isContentAreaFilled = true
+                    isFocusPainted = false
                     addActionListener { historyList.selectedValue?.let { activateSession(it.sessionId) } }
                 })
             }, BorderLayout.SOUTH)
@@ -222,6 +268,12 @@ class AiToolWindowPanel(
     private fun buildInput(): JPanel {
         inputArea.lineWrap = true
         inputArea.wrapStyleWord = true
+        inputArea.background = theme.inputBackground
+        inputArea.foreground = theme.primaryText
+        inputArea.caretColor = theme.primaryText
+        inputArea.border = JBUI.Borders.empty(4, 6)
+        inputArea.font = inputArea.font.deriveFont(14f)
+        inputArea.putClientProperty("JTextArea.placeholderText", "Type / for commands, # for prompts or @ to add context")
         inputArea.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
             override fun removeUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
@@ -237,7 +289,11 @@ class AiToolWindowPanel(
         })
 
         sendButton.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        sendButton.preferredSize = Dimension(86, 34)
+        sendButton.preferredSize = Dimension(42, 34)
+        sendButton.border = BorderFactory.createEmptyBorder(0, 0, 0, 0)
+        sendButton.isBorderPainted = false
+        sendButton.isFocusPainted = false
+        sendButton.isContentAreaFilled = true
         sendButton.addActionListener { onSendOrStop() }
         updateSendButtonState()
 
@@ -246,12 +302,17 @@ class AiToolWindowPanel(
             border = JBUI.Borders.emptyTop(8)
             add(
                 JPanel(BorderLayout()).apply {
-                    isOpaque = false
+                    isOpaque = true
+                    background = theme.inputBackground
                     border = JBUI.Borders.compound(
-                        BorderFactory.createLineBorder(JBColor.border(), 1, true),
-                        JBUI.Borders.empty(8)
+                        BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                        JBUI.Borders.empty(8, 8, 8, 6)
                     )
-                    add(JBScrollPane(inputArea).apply { border = JBUI.Borders.empty() }, BorderLayout.CENTER)
+                    add(JBScrollPane(inputArea).apply {
+                        border = JBUI.Borders.empty()
+                        background = theme.inputBackground
+                        viewport.background = theme.inputBackground
+                    }, BorderLayout.CENTER)
                     add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
                         isOpaque = false
                         add(sendButton)
@@ -259,12 +320,20 @@ class AiToolWindowPanel(
                 },
                 BorderLayout.CENTER
             )
-            add(statusLabel, BorderLayout.SOUTH)
+            add(statusLabel.apply {
+                foreground = theme.secondaryText
+                border = JBUI.Borders.empty(6, 6, 0, 6)
+            }, BorderLayout.SOUTH)
         }
     }
 
     private fun headerButton(text: String, action: () -> Unit): JButton = JButton(text).apply {
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        foreground = theme.primaryText
+        background = theme.controlBackground
+        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+        isContentAreaFilled = true
+        isFocusPainted = false
         putClientProperty("JButton.buttonType", "roundRect")
         addActionListener { action() }
     }
@@ -283,6 +352,8 @@ class AiToolWindowPanel(
             val command = input.removePrefix("/").substringBefore(" ").lowercase()
             if (command in supportedCommands) {
                 inputArea.text = ""
+                suppressSlashPopupUntilReset = false
+                hideSlashPopup()
                 submitCommand(command)
                 return
             }
@@ -304,7 +375,8 @@ class AiToolWindowPanel(
                 SwingUtilities.invokeLater {
                     inputArea.text = ""
                     statusLabel.text = "Message sent"
-                    slashPopup?.cancel()
+                    suppressSlashPopupUntilReset = false
+                    hideSlashPopup()
                 }
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
@@ -460,7 +532,12 @@ class AiToolWindowPanel(
         } else {
             removeProgressLine()
         }
-        statusLabel.text = "${status.sessionId.take(8)} | ${status.activity}"
+        statusLabel.text = when (latestActivity) {
+            "busy" -> "Working..."
+            "retry" -> "Retrying..."
+            "waiting_permission" -> "Waiting for approval..."
+            else -> "Ready"
+        }
     }
 
     private fun renderPendingApprovals(pending: List<ChatPendingPermissionDto>) {
@@ -468,17 +545,20 @@ class AiToolWindowPanel(
         pending.forEach { permission ->
             val row = JPanel(BorderLayout()).apply {
                 border = JBUI.Borders.compound(
-                    BorderFactory.createLineBorder(JBColor.border(), 1, true),
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
                     JBUI.Borders.empty(8)
                 )
-                background = JBColor.PanelBackground
+                background = theme.containerBackground
+                isOpaque = true
             }
-            row.add(JBLabel("Approval: ${permission.title} (${permission.kind})"), BorderLayout.CENTER)
+            row.add(JBLabel("Approval: ${permission.title} (${permission.kind})").apply {
+                foreground = theme.primaryText
+            }, BorderLayout.CENTER)
             row.add(JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                 isOpaque = false
-                add(JButton("Approve once").apply { addActionListener { submitApproval(permission, "approve_once") } })
-                add(JButton("Approve always").apply { addActionListener { submitApproval(permission, "approve_always") } })
-                add(JButton("Reject").apply { addActionListener { submitApproval(permission, "reject") } })
+                add(actionButton("Approve once") { submitApproval(permission, "approve_once") })
+                add(actionButton("Approve always") { submitApproval(permission, "approve_always") })
+                add(actionButton("Reject") { submitApproval(permission, "reject") })
             }, BorderLayout.EAST)
             approvalPanel.add(row)
         }
@@ -559,6 +639,7 @@ class AiToolWindowPanel(
     }
 
     private fun showHistoryScreen() {
+        hideSlashPopup()
         cardLayout.show(bodyCards, "history")
     }
 
@@ -570,16 +651,17 @@ class AiToolWindowPanel(
 
     private fun updateSendButtonState() {
         if (isGenerating()) {
-            sendButton.text = "Stop"
+            sendButton.text = ""
             sendButton.icon = AllIcons.Actions.Close
-            sendButton.background = JBColor(Color(0xC9, 0x3C, 0x3C), Color(0xB3, 0x35, 0x35))
+            sendButton.background = theme.stopButtonBackground
             sendButton.foreground = JBColor.WHITE
         } else {
-            sendButton.text = "Send"
+            sendButton.text = ""
             sendButton.icon = AllIcons.Actions.Execute
-            sendButton.background = JBColor.PanelBackground
-            sendButton.foreground = JBColor.foreground()
+            sendButton.background = theme.sendButtonBackground
+            sendButton.foreground = JBColor.WHITE
         }
+        sendButton.toolTipText = if (isGenerating()) "Stop generation" else "Send message"
         sendButton.isOpaque = true
     }
 
@@ -604,31 +686,54 @@ class AiToolWindowPanel(
     }
 
     private fun maybeShowSlashPopup() {
+        if (isApplyingSlashSelection) {
+            isApplyingSlashSelection = false
+            return
+        }
+
         val value = inputArea.text.trim()
-        if (!value.startsWith("/")) {
-            slashPopup?.cancel()
-            slashPopup = null
+        if (value.isBlank() || !value.startsWith("/")) {
+            suppressSlashPopupUntilReset = false
+            lastSlashMatches = emptyList()
+            hideSlashPopup()
             return
         }
         val token = value.removePrefix("/").lowercase()
         if (token.contains(" ")) {
-            slashPopup?.cancel()
-            slashPopup = null
+            hideSlashPopup()
             return
         }
-        val matches = supportedCommands.filter { it.startsWith(token) }.map { "/$it" }
-        if (matches.isEmpty()) {
-            slashPopup?.cancel()
-            slashPopup = null
+        if (token in supportedCommands) {
+            suppressSlashPopupUntilReset = true
+            lastSlashMatches = emptyList()
+            hideSlashPopup()
+            return
+        }
+        if (suppressSlashPopupUntilReset) {
+            hideSlashPopup()
             return
         }
 
-        slashPopup?.cancel()
+        val matches = supportedCommands.filter { it.startsWith(token) }.map { "/$it" }
+        if (matches.isEmpty()) {
+            lastSlashMatches = emptyList()
+            hideSlashPopup()
+            return
+        }
+        if (matches == lastSlashMatches && slashPopup != null) {
+            return
+        }
+
+        hideSlashPopup()
         val step = object : BaseListPopupStep<String>("Commands", matches) {
             override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
                 if (selectedValue != null) {
+                    isApplyingSlashSelection = true
+                    suppressSlashPopupUntilReset = true
                     inputArea.text = selectedValue
                     inputArea.caretPosition = inputArea.text.length
+                    hideSlashPopup()
+                    submitInput(selectedValue)
                 }
                 return FINAL_CHOICE
             }
@@ -639,8 +744,24 @@ class AiToolWindowPanel(
                 if (slashPopup == popup) slashPopup = null
             }
         })
+        lastSlashMatches = matches
         slashPopup = popup
         popup.show(RelativePoint.getSouthWestOf(inputArea))
+    }
+
+    private fun hideSlashPopup() {
+        slashPopup?.cancel()
+        slashPopup = null
+    }
+
+    private fun actionButton(text: String, action: () -> Unit): JButton = JButton(text).apply {
+        foreground = theme.primaryText
+        background = theme.controlBackground
+        border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+        isContentAreaFilled = true
+        isFocusPainted = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        addActionListener { action() }
     }
 
     private data class UiLine(val kind: UiLineKind, val text: String, val createdAt: Instant)
@@ -652,7 +773,24 @@ class AiToolWindowPanel(
         PROGRESS
     }
 
-    private class BubbleRenderer : DefaultListCellRenderer() {
+    private data class UiTheme(
+        val panelBackground: JBColor = JBColor(Color(0x2E, 0x32, 0x39), Color(0x2B, 0x2F, 0x36)),
+        val containerBackground: JBColor = JBColor(Color(0x35, 0x39, 0x41), Color(0x33, 0x37, 0x3F)),
+        val inputBackground: JBColor = JBColor(Color(0x3A, 0x3F, 0x47), Color(0x37, 0x3B, 0x43)),
+        val controlBackground: JBColor = JBColor(Color(0x3C, 0x41, 0x49), Color(0x39, 0x3E, 0x46)),
+        val containerBorder: JBColor = JBColor(Color(0x4A, 0x50, 0x5A), Color(0x46, 0x4C, 0x56)),
+        val controlBorder: JBColor = JBColor(Color(0x52, 0x59, 0x64), Color(0x4E, 0x55, 0x60)),
+        val primaryText: JBColor = JBColor(Color(0xE7, 0xEA, 0xEF), Color(0xE7, 0xEA, 0xEF)),
+        val secondaryText: JBColor = JBColor(Color(0x9AA1AD), Color(0x9AA1AD)),
+        val systemText: JBColor = JBColor(Color(0xD85D5D), Color(0xD85D5D)),
+        val sendButtonBackground: JBColor = JBColor(Color(0x667A9B), Color(0x617595)),
+        val stopButtonBackground: JBColor = JBColor(Color(0xC24A4A), Color(0xB94343)),
+        val userBubble: JBColor = JBColor(Color(0x474D58), Color(0x434954)),
+        val assistantBubble: JBColor = JBColor(Color(0x3E, 0x44, 0x4E), Color(0x3A, 0x40, 0x4A)),
+        val progressBubble: JBColor = JBColor(Color(0x4E, 0x55, 0x61), Color(0x49, 0x50, 0x5C))
+    )
+
+    private inner class BubbleRenderer : DefaultListCellRenderer() {
         override fun getListCellRendererComponent(
             list: JList<*>,
             value: Any?,
@@ -662,38 +800,49 @@ class AiToolWindowPanel(
         ): Component {
             val line = value as? UiLine ?: return super.getListCellRendererComponent(list, "", index, false, false)
             val text = line.text.replace("\n", "<br>")
-            val html = "<html><body style='width:260px'>$text</body></html>"
+            val html = "<html><body style='width:300px'>$text</body></html>"
             val label = super.getListCellRendererComponent(list, html, index, false, false) as DefaultListCellRenderer
-            label.border = JBUI.Borders.empty(8, 10)
+            label.border = JBUI.Borders.empty(8, 11)
+            label.font = label.font.deriveFont(13.5f)
+
+            if (line.kind == UiLineKind.SYSTEM) {
+                label.isOpaque = false
+                label.foreground = theme.systemText
+                return JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.empty(2, 10, 2, 10)
+                    add(label, BorderLayout.WEST)
+                }
+            }
+
             label.isOpaque = true
-            when (line.kind) {
-                UiLineKind.USER -> {
-                    label.background = JBColor(Color(0x2D, 0x6C, 0xD3), Color(0x2F, 0x5F, 0xA3))
-                    label.foreground = JBColor.WHITE
-                }
-                UiLineKind.ASSISTANT -> {
-                    label.background = JBColor(Color(0x44, 0x48, 0x53), Color(0x3C, 0x3F, 0x48))
-                    label.foreground = JBColor.WHITE
-                }
-                UiLineKind.PROGRESS -> {
-                    label.background = JBColor(Color(0x53, 0x56, 0x5F), Color(0x4A, 0x4D, 0x55))
-                    label.foreground = JBColor(Color(0xD9, 0xDD, 0xE4), Color(0xD9, 0xDD, 0xE4))
-                }
-                UiLineKind.SYSTEM -> {
-                    label.background = JBColor(Color(0x5B, 0x4D, 0x40), Color(0x4D, 0x43, 0x39))
-                    label.foreground = JBColor(Color(0xE8, 0xDB, 0xCA), Color(0xE8, 0xDB, 0xCA))
-                }
+            label.foreground = theme.primaryText
+            label.background = when (line.kind) {
+                UiLineKind.USER -> theme.userBubble
+                UiLineKind.ASSISTANT -> theme.assistantBubble
+                UiLineKind.PROGRESS -> theme.progressBubble
+                UiLineKind.SYSTEM -> theme.panelBackground
+            }
+
+            val bubble = JPanel(BorderLayout()).apply {
+                isOpaque = true
+                background = label.background
+                border = JBUI.Borders.compound(
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                    JBUI.Borders.empty()
+                )
+                add(label, BorderLayout.CENTER)
             }
 
             return JPanel(BorderLayout()).apply {
                 isOpaque = false
-                border = JBUI.Borders.empty(4, 8)
-                if (line.kind == UiLineKind.USER) add(label, BorderLayout.EAST) else add(label, BorderLayout.WEST)
+                border = JBUI.Borders.empty(5, 8, 5, 8)
+                if (line.kind == UiLineKind.USER) add(bubble, BorderLayout.EAST) else add(bubble, BorderLayout.WEST)
             }
         }
     }
 
-    private class SessionRenderer(private val formatter: DateTimeFormatter) : DefaultListCellRenderer() {
+    private inner class SessionRenderer(private val formatter: DateTimeFormatter) : DefaultListCellRenderer() {
         override fun getListCellRendererComponent(
             list: JList<*>,
             value: Any?,
@@ -708,7 +857,13 @@ class AiToolWindowPanel(
                 val preview = item.lastMessagePreview?.takeIf { it.isNotBlank() } ?: "Session ${item.sessionId.take(8)}"
                 "$preview  |  ${formatter.format(item.updatedAt)}  |  ${item.activity}"
             }
-            return super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus)
+            return (super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {
+                border = JBUI.Borders.empty(8, 10)
+                foreground = if (isSelected) theme.primaryText else theme.primaryText
+                background = if (isSelected) theme.controlBackground else theme.containerBackground
+            }
         }
     }
 }
+
+
