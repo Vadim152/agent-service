@@ -1,4 +1,4 @@
-"""Pydantic-схемы запросов и ответов для HTTP API."""
+﻿"""Pydantic-СЃС…РµРјС‹ Р·Р°РїСЂРѕСЃРѕРІ Рё РѕС‚РІРµС‚РѕРІ РґР»СЏ HTTP API."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from domain.enums import StepKeyword, StepPatternType
 
 
 def _to_camel(value: str) -> str:
-    """Преобразует snake_case в camelCase для JSON."""
+    """РџСЂРµРѕР±СЂР°Р·СѓРµС‚ snake_case РІ camelCase РґР»СЏ JSON."""
 
     parts = value.split("_")
     return parts[0] + "".join(word.capitalize() for word in parts[1:])
 
 
 class ApiBaseModel(BaseModel):
-    """Базовая модель для API со стилем camelCase и populate_by_name."""
+    """Р‘Р°Р·РѕРІР°СЏ РјРѕРґРµР»СЊ РґР»СЏ API СЃРѕ СЃС‚РёР»РµРј camelCase Рё populate_by_name."""
 
     model_config = ConfigDict(
         alias_generator=_to_camel, populate_by_name=True, from_attributes=True
@@ -27,234 +27,234 @@ class ApiBaseModel(BaseModel):
 
 
 class StepParameterDto(ApiBaseModel):
-    """Структурированное описание параметра шага."""
+    """РЎС‚СЂСѓРєС‚СѓСЂРёСЂРѕРІР°РЅРЅРѕРµ РѕРїРёСЃР°РЅРёРµ РїР°СЂР°РјРµС‚СЂР° С€Р°РіР°."""
 
-    name: str = Field(..., description="Имя параметра из сигнатуры шага")
+    name: str = Field(..., description="РРјСЏ РїР°СЂР°РјРµС‚СЂР° РёР· СЃРёРіРЅР°С‚СѓСЂС‹ С€Р°РіР°")
     type: str | None = Field(
-        default=None, description="Тип параметра (например, string/int/object)"
+        default=None, description="РўРёРї РїР°СЂР°РјРµС‚СЂР° (РЅР°РїСЂРёРјРµСЂ, string/int/object)"
     )
     placeholder: str | None = Field(
         default=None,
-        description="Исходный placeholder или регулярное выражение из паттерна",
+        description="РСЃС…РѕРґРЅС‹Р№ placeholder РёР»Рё СЂРµРіСѓР»СЏСЂРЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ РёР· РїР°С‚С‚РµСЂРЅР°",
     )
 
 
 class StepImplementationDto(ApiBaseModel):
-    """Информация об исходном файле и методе, реализующем шаг."""
+    """РРЅС„РѕСЂРјР°С†РёСЏ РѕР± РёСЃС…РѕРґРЅРѕРј С„Р°Р№Р»Рµ Рё РјРµС‚РѕРґРµ, СЂРµР°Р»РёР·СѓСЋС‰РµРј С€Р°Рі."""
 
-    file: str | None = Field(default=None, description="Путь к файлу с реализацией")
-    line: int | None = Field(default=None, description="Номер строки аннотации шага")
+    file: str | None = Field(default=None, description="РџСѓС‚СЊ Рє С„Р°Р№Р»Сѓ СЃ СЂРµР°Р»РёР·Р°С†РёРµР№")
+    line: int | None = Field(default=None, description="РќРѕРјРµСЂ СЃС‚СЂРѕРєРё Р°РЅРЅРѕС‚Р°С†РёРё С€Р°РіР°")
     class_name: str | None = Field(
-        default=None, alias="className", description="Имя класса, если применимо"
+        default=None, alias="className", description="РРјСЏ РєР»Р°СЃСЃР°, РµСЃР»Рё РїСЂРёРјРµРЅРёРјРѕ"
     )
     method_name: str | None = Field(
-        default=None, alias="methodName", description="Имя метода, если применимо"
+        default=None, alias="methodName", description="РРјСЏ РјРµС‚РѕРґР°, РµСЃР»Рё РїСЂРёРјРµРЅРёРјРѕ"
     )
 
 
 class StepDefinitionDto(ApiBaseModel):
-    """Упрощённое представление StepDefinition для отдачи в API."""
+    """РЈРїСЂРѕС‰С‘РЅРЅРѕРµ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёРµ StepDefinition РґР»СЏ РѕС‚РґР°С‡Рё РІ API."""
 
-    id: str = Field(..., description="Уникальный идентификатор шага")
+    id: str = Field(..., description="РЈРЅРёРєР°Р»СЊРЅС‹Р№ РёРґРµРЅС‚РёС„РёРєР°С‚РѕСЂ С€Р°РіР°")
     keyword: StepKeyword = Field(
-        ..., description="Ключевое слово шага (Given/When/Then/And/But)"
+        ..., description="РљР»СЋС‡РµРІРѕРµ СЃР»РѕРІРѕ С€Р°РіР° (Given/When/Then/And/But)"
     )
-    pattern: str = Field(..., description="Паттерн шага из аннотации")
+    pattern: str = Field(..., description="РџР°С‚С‚РµСЂРЅ С€Р°РіР° РёР· Р°РЅРЅРѕС‚Р°С†РёРё")
     pattern_type: StepPatternType = Field(
         default=StepPatternType.CUCUMBER_EXPRESSION,
         alias="patternType",
-        description="Тип паттерна: cucumberExpression или regularExpression",
+        description="РўРёРї РїР°С‚С‚РµСЂРЅР°: cucumberExpression РёР»Рё regularExpression",
     )
     regex: str | None = Field(
         default=None,
-        description="Регулярное выражение шага, если оно есть в исходнике",
+        description="Р РµРіСѓР»СЏСЂРЅРѕРµ РІС‹СЂР°Р¶РµРЅРёРµ С€Р°РіР°, РµСЃР»Рё РѕРЅРѕ РµСЃС‚СЊ РІ РёСЃС…РѕРґРЅРёРєРµ",
     )
-    code_ref: str = Field(..., alias="codeRef", description="Ссылка на исходный код")
+    code_ref: str = Field(..., alias="codeRef", description="РЎСЃС‹Р»РєР° РЅР° РёСЃС…РѕРґРЅС‹Р№ РєРѕРґ")
     parameters: list[StepParameterDto] = Field(
         default_factory=list,
-        description="Список параметров шага с типами и плейсхолдерами",
+        description="РЎРїРёСЃРѕРє РїР°СЂР°РјРµС‚СЂРѕРІ С€Р°РіР° СЃ С‚РёРїР°РјРё Рё РїР»РµР№СЃС…РѕР»РґРµСЂР°РјРё",
     )
     tags: list[str] | None = Field(
-        default=None, description="Теги шага из исходника, если есть"
+        default=None, description="РўРµРіРё С€Р°РіР° РёР· РёСЃС…РѕРґРЅРёРєР°, РµСЃР»Рё РµСЃС‚СЊ"
     )
     language: str | None = Field(
-        default=None, description="Язык шага в исходнике (ru/en и т.д.)"
+        default=None, description="РЇР·С‹Рє С€Р°РіР° РІ РёСЃС…РѕРґРЅРёРєРµ (ru/en Рё С‚.Рґ.)"
     )
     implementation: StepImplementationDto | None = Field(
         default=None,
-        description="Подробности о файле, строке и методе, реализующем шаг",
+        description="РџРѕРґСЂРѕР±РЅРѕСЃС‚Рё Рѕ С„Р°Р№Р»Рµ, СЃС‚СЂРѕРєРµ Рё РјРµС‚РѕРґРµ, СЂРµР°Р»РёР·СѓСЋС‰РµРј С€Р°Рі",
     )
     summary: str | None = Field(
-        default=None, description="Краткое описание шага из документации"
+        default=None, description="РљСЂР°С‚РєРѕРµ РѕРїРёСЃР°РЅРёРµ С€Р°РіР° РёР· РґРѕРєСѓРјРµРЅС‚Р°С†РёРё"
     )
     doc_summary: str | None = Field(
         default=None,
         alias="docSummary",
-        description="Резюме шага, обогащенное LLM или документацией",
+        description="Р РµР·СЋРјРµ С€Р°РіР°, РѕР±РѕРіР°С‰РµРЅРЅРѕРµ LLM РёР»Рё РґРѕРєСѓРјРµРЅС‚Р°С†РёРµР№",
     )
     examples: list[str] = Field(
         default_factory=list,
-        description="Примеры использования шага из комментариев или документации",
+        description="РџСЂРёРјРµСЂС‹ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ С€Р°РіР° РёР· РєРѕРјРјРµРЅС‚Р°СЂРёРµРІ РёР»Рё РґРѕРєСѓРјРµРЅС‚Р°С†РёРё",
     )
 
 
 class UnmappedStepDto(ApiBaseModel):
-    """Шаг тесткейса, который не удалось сопоставить с cucumber-шагом."""
+    """РЁР°Рі С‚РµСЃС‚РєРµР№СЃР°, РєРѕС‚РѕСЂС‹Р№ РЅРµ СѓРґР°Р»РѕСЃСЊ СЃРѕРїРѕСЃС‚Р°РІРёС‚СЊ СЃ cucumber-С€Р°РіРѕРј."""
 
-    text: str = Field(..., description="Текст исходного шага тесткейса")
+    text: str = Field(..., description="РўРµРєСЃС‚ РёСЃС…РѕРґРЅРѕРіРѕ С€Р°РіР° С‚РµСЃС‚РєРµР№СЃР°")
     reason: str | None = Field(
-        default=None, description="Причина отсутствия сопоставления"
+        default=None, description="РџСЂРёС‡РёРЅР° РѕС‚СЃСѓС‚СЃС‚РІРёСЏ СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ"
     )
 
 
 class StepsSummaryDto(ApiBaseModel):
-    """Краткая статистика по результатам сопоставления шагов."""
+    """РљСЂР°С‚РєР°СЏ СЃС‚Р°С‚РёСЃС‚РёРєР° РїРѕ СЂРµР·СѓР»СЊС‚Р°С‚Р°Рј СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ С€Р°РіРѕРІ."""
 
-    exact: int = Field(default=0, description="Количество точных совпадений")
-    fuzzy: int = Field(default=0, description="Количество нестрогих совпадений")
-    unmatched: int = Field(default=0, description="Количество шагов без сопоставления")
+    exact: int = Field(default=0, description="РљРѕР»РёС‡РµСЃС‚РІРѕ С‚РѕС‡РЅС‹С… СЃРѕРІРїР°РґРµРЅРёР№")
+    fuzzy: int = Field(default=0, description="РљРѕР»РёС‡РµСЃС‚РІРѕ РЅРµСЃС‚СЂРѕРіРёС… СЃРѕРІРїР°РґРµРЅРёР№")
+    unmatched: int = Field(default=0, description="РљРѕР»РёС‡РµСЃС‚РІРѕ С€Р°РіРѕРІ Р±РµР· СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ")
 
 
 class PipelineStepDto(ApiBaseModel):
-    """Описание шага пайплайна генерации feature."""
+    """РћРїРёСЃР°РЅРёРµ С€Р°РіР° РїР°Р№РїР»Р°Р№РЅР° РіРµРЅРµСЂР°С†РёРё feature."""
 
-    stage: str = Field(..., description="Название этапа")
-    status: str = Field(..., description="Статус выполнения этапа")
+    stage: str = Field(..., description="РќР°Р·РІР°РЅРёРµ СЌС‚Р°РїР°")
+    status: str = Field(..., description="РЎС‚Р°С‚СѓСЃ РІС‹РїРѕР»РЅРµРЅРёСЏ СЌС‚Р°РїР°")
     details: dict[str, Any] | None = Field(
-        default=None, description="Дополнительные детали об этапe"
+        default=None, description="Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ РґРµС‚Р°Р»Рё РѕР± СЌС‚Р°Рїe"
     )
 
 
 class ScanStepsRequest(ApiBaseModel):
-    """Запрос на сканирование проекта для построения индекса шагов."""
+    """Р—Р°РїСЂРѕСЃ РЅР° СЃРєР°РЅРёСЂРѕРІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РґР»СЏ РїРѕСЃС‚СЂРѕРµРЅРёСЏ РёРЅРґРµРєСЃР° С€Р°РіРѕРІ."""
 
-    project_root: str = Field(..., alias="projectRoot", description="Путь к проекту")
+    project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
 
 
 class ScanStepsResponse(ApiBaseModel):
-    """Ответ со статистикой после сканирования шагов."""
+    """РћС‚РІРµС‚ СЃРѕ СЃС‚Р°С‚РёСЃС‚РёРєРѕР№ РїРѕСЃР»Рµ СЃРєР°РЅРёСЂРѕРІР°РЅРёСЏ С€Р°РіРѕРІ."""
 
-    project_root: str = Field(..., alias="projectRoot", description="Путь к проекту")
-    steps_count: int = Field(..., alias="stepsCount", description="Количество шагов")
-    updated_at: datetime = Field(..., alias="updatedAt", description="Время обновления")
+    project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
+    steps_count: int = Field(..., alias="stepsCount", description="РљРѕР»РёС‡РµСЃС‚РІРѕ С€Р°РіРѕРІ")
+    updated_at: datetime = Field(..., alias="updatedAt", description="Р’СЂРµРјСЏ РѕР±РЅРѕРІР»РµРЅРёСЏ")
     sample_steps: list[StepDefinitionDto] | None = Field(
         default=None,
         alias="sampleSteps",
-        description="Первые найденные шаги для предпросмотра",
+        description="РџРµСЂРІС‹Рµ РЅР°Р№РґРµРЅРЅС‹Рµ С€Р°РіРё РґР»СЏ РїСЂРµРґРїСЂРѕСЃРјРѕС‚СЂР°",
     )
     unmapped_steps: list[UnmappedStepDto] = Field(
         default_factory=list,
         alias="unmappedSteps",
-        description="Шаги тесткейса без сопоставления",
+        description="РЁР°РіРё С‚РµСЃС‚РєРµР№СЃР° Р±РµР· СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ",
     )
 
 
 class GenerateFeatureOptions(ApiBaseModel):
-    """Опции управления генерацией и сохранением .feature файла."""
+    """РћРїС†РёРё СѓРїСЂР°РІР»РµРЅРёСЏ РіРµРЅРµСЂР°С†РёРµР№ Рё СЃРѕС…СЂР°РЅРµРЅРёРµРј .feature С„Р°Р№Р»Р°."""
 
     create_file: bool = Field(
-        default=False, alias="createFile", description="Создавать ли файл на диске"
+        default=False, alias="createFile", description="РЎРѕР·РґР°РІР°С‚СЊ Р»Рё С„Р°Р№Р» РЅР° РґРёСЃРєРµ"
     )
     overwrite_existing: bool = Field(
         default=False,
         alias="overwriteExisting",
-        description="Перезаписывать существующий файл",
+        description="РџРµСЂРµР·Р°РїРёСЃС‹РІР°С‚СЊ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ С„Р°Р№Р»",
     )
     language: str | None = Field(
-        default=None, description="Желаемый язык Gherkin (ru/en)"
+        default=None, description="Р–РµР»Р°РµРјС‹Р№ СЏР·С‹Рє Gherkin (ru/en)"
     )
 
 
 class ZephyrAuthType(str, Enum):
-    """Тип авторизации для Jira/Zephyr."""
+    """РўРёРї Р°РІС‚РѕСЂРёР·Р°С†РёРё РґР»СЏ Jira/Zephyr."""
 
     TOKEN = "TOKEN"
     LOGIN_PASSWORD = "LOGIN_PASSWORD"
 
 
 class ZephyrAuth(ApiBaseModel):
-    """Данные авторизации для получения тесткейса из Jira/Zephyr."""
+    """Р”Р°РЅРЅС‹Рµ Р°РІС‚РѕСЂРёР·Р°С†РёРё РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ С‚РµСЃС‚РєРµР№СЃР° РёР· Jira/Zephyr."""
 
-    auth_type: ZephyrAuthType = Field(..., alias="authType", description="Тип авторизации")
+    auth_type: ZephyrAuthType = Field(..., alias="authType", description="РўРёРї Р°РІС‚РѕСЂРёР·Р°С†РёРё")
     token: str | None = Field(default=None, description="Token Jira/Zephyr")
     login: str | None = Field(default=None, description="Login Jira/Zephyr")
     password: str | None = Field(default=None, description="Password Jira/Zephyr")
 
 
 class GenerateFeatureRequest(ApiBaseModel):
-    """Запрос на генерацию .feature на основе тесткейса."""
+    """Р—Р°РїСЂРѕСЃ РЅР° РіРµРЅРµСЂР°С†РёСЋ .feature РЅР° РѕСЃРЅРѕРІРµ С‚РµСЃС‚РєРµР№СЃР°."""
 
-    project_root: str = Field(..., alias="projectRoot", description="Путь к проекту")
+    project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
     test_case_text: str = Field(
-        ..., alias="testCaseText", description="Текст тесткейса, вставленный пользователем"
+        ..., alias="testCaseText", description="РўРµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°, РІСЃС‚Р°РІР»РµРЅРЅС‹Р№ РїРѕР»СЊР·РѕРІР°С‚РµР»РµРј"
     )
     target_path: str | None = Field(
         default=None,
         alias="targetPath",
-        description="Путь к целевому .feature относительно projectRoot",
+        description="РџСѓС‚СЊ Рє С†РµР»РµРІРѕРјСѓ .feature РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ projectRoot",
     )
     options: GenerateFeatureOptions | None = Field(
-        default=None, description="Опции генерации и сохранения файла"
+        default=None, description="РћРїС†РёРё РіРµРЅРµСЂР°С†РёРё Рё СЃРѕС…СЂР°РЅРµРЅРёСЏ С„Р°Р№Р»Р°"
     )
     zephyr_auth: ZephyrAuth | None = Field(
         default=None,
         alias="zephyrAuth",
-        description="Данные авторизации Jira/Zephyr для получения тесткейса",
+        description="Р”Р°РЅРЅС‹Рµ Р°РІС‚РѕСЂРёР·Р°С†РёРё Jira/Zephyr РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ С‚РµСЃС‚РєРµР№СЃР°",
     )
 
 
 class GenerateFeatureResponse(ApiBaseModel):
-    """Ответ с результатами генерации .feature файла."""
+    """РћС‚РІРµС‚ СЃ СЂРµР·СѓР»СЊС‚Р°С‚Р°РјРё РіРµРЅРµСЂР°С†РёРё .feature С„Р°Р№Р»Р°."""
 
-    feature_text: str = Field(..., alias="featureText", description="Сгенерированный текст")
+    feature_text: str = Field(..., alias="featureText", description="РЎРіРµРЅРµСЂРёСЂРѕРІР°РЅРЅС‹Р№ С‚РµРєСЃС‚")
     unmapped_steps: list[UnmappedStepDto] = Field(
-        ..., alias="unmappedSteps", description="Шаги без сопоставления"
+        ..., alias="unmappedSteps", description="РЁР°РіРё Р±РµР· СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ"
     )
     unmapped: list[str] = Field(
-        default_factory=list, description="Не сопоставленные шаги из матчера"
+        default_factory=list, description="РќРµ СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРЅС‹Рµ С€Р°РіРё РёР· РјР°С‚С‡РµСЂР°"
     )
     used_steps: list[StepDefinitionDto] = Field(
-        ..., alias="usedSteps", description="Шаги фреймворка, использованные в feature"
+        ..., alias="usedSteps", description="РЁР°РіРё С„СЂРµР№РјРІРѕСЂРєР°, РёСЃРїРѕР»СЊР·РѕРІР°РЅРЅС‹Рµ РІ feature"
     )
     build_stage: str | None = Field(
-        default=None, alias="buildStage", description="Этап сборки feature"
+        default=None, alias="buildStage", description="Р­С‚Р°Рї СЃР±РѕСЂРєРё feature"
     )
     steps_summary: StepsSummaryDto | None = Field(
-        default=None, alias="stepsSummary", description="Сводка по статусам шагов"
+        default=None, alias="stepsSummary", description="РЎРІРѕРґРєР° РїРѕ СЃС‚Р°С‚СѓСЃР°Рј С€Р°РіРѕРІ"
     )
     meta: dict[str, Any] | None = Field(
-        default=None, description="Дополнительные метаданные о feature"
+        default=None, description="Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Рµ РјРµС‚Р°РґР°РЅРЅС‹Рµ Рѕ feature"
     )
     pipeline: list[PipelineStepDto] = Field(
         default_factory=list,
-        description="Последовательность этапов построения feature",
+        description="РџРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅРѕСЃС‚СЊ СЌС‚Р°РїРѕРІ РїРѕСЃС‚СЂРѕРµРЅРёСЏ feature",
     )
 
 
 class ApplyFeatureRequest(ApiBaseModel):
-    """Запрос на сохранение .feature файла в репозитории."""
+    """Р—Р°РїСЂРѕСЃ РЅР° СЃРѕС…СЂР°РЅРµРЅРёРµ .feature С„Р°Р№Р»Р° РІ СЂРµРїРѕР·РёС‚РѕСЂРёРё."""
 
-    project_root: str = Field(..., alias="projectRoot", description="Путь к проекту")
+    project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
     target_path: str = Field(
-        ..., alias="targetPath", description="Целевой путь .feature относительно проекта"
+        ..., alias="targetPath", description="Р¦РµР»РµРІРѕР№ РїСѓС‚СЊ .feature РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ РїСЂРѕРµРєС‚Р°"
     )
-    feature_text: str = Field(..., alias="featureText", description="Содержимое файла")
+    feature_text: str = Field(..., alias="featureText", description="РЎРѕРґРµСЂР¶РёРјРѕРµ С„Р°Р№Р»Р°")
     overwrite_existing: bool = Field(
         default=False,
         alias="overwriteExisting",
-        description="Перезаписывать существующий файл",
+        description="РџРµСЂРµР·Р°РїРёСЃС‹РІР°С‚СЊ СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёР№ С„Р°Р№Р»",
     )
 
 
 class ApplyFeatureResponse(ApiBaseModel):
-    """Ответ после попытки записи .feature файла."""
+    """РћС‚РІРµС‚ РїРѕСЃР»Рµ РїРѕРїС‹С‚РєРё Р·Р°РїРёСЃРё .feature С„Р°Р№Р»Р°."""
 
-    project_root: str = Field(..., alias="projectRoot", description="Путь к проекту")
+    project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
     target_path: str = Field(
-        ..., alias="targetPath", description="Целевой путь .feature относительно проекта"
+        ..., alias="targetPath", description="Р¦РµР»РµРІРѕР№ РїСѓС‚СЊ .feature РѕС‚РЅРѕСЃРёС‚РµР»СЊРЅРѕ РїСЂРѕРµРєС‚Р°"
     )
-    status: str = Field(..., description="Статус операции: created/overwritten/skipped")
-    message: str | None = Field(default=None, description="Дополнительное пояснение")
+    status: str = Field(..., description="РЎС‚Р°С‚СѓСЃ РѕРїРµСЂР°С†РёРё: created/overwritten/skipped")
+    message: str | None = Field(default=None, description="Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРµ РїРѕСЏСЃРЅРµРЅРёРµ")
 
 
 class FailureClassificationDto(ApiBaseModel):
@@ -359,28 +359,45 @@ class JobResultResponse(ApiBaseModel):
 
 
 class LlmTestRequest(ApiBaseModel):
-    """Запрос на тестовый вызов LLM."""
+    """Р—Р°РїСЂРѕСЃ РЅР° С‚РµСЃС‚РѕРІС‹Р№ РІС‹Р·РѕРІ LLM."""
 
     prompt: str = Field(
         default="Ping from agent-service: please confirm connectivity.",
-        description="Промпт, который будет отправлен в LLM",
+        description="РџСЂРѕРјРїС‚, РєРѕС‚РѕСЂС‹Р№ Р±СѓРґРµС‚ РѕС‚РїСЂР°РІР»РµРЅ РІ LLM",
     )
 
 
 class LlmTestResponse(ApiBaseModel):
-    """Ответ на тестовый вызов LLM."""
+    """РћС‚РІРµС‚ РЅР° С‚РµСЃС‚РѕРІС‹Р№ РІС‹Р·РѕРІ LLM."""
 
-    prompt: str = Field(..., description="Отправленный промпт")
-    reply: str = Field(..., description="Ответ LLM на тестовый запрос")
-    provider: str | None = Field(default=None, description="Имя провайдера LLM")
-    model: str | None = Field(default=None, description="Используемая модель LLM")
+    prompt: str = Field(..., description="РћС‚РїСЂР°РІР»РµРЅРЅС‹Р№ РїСЂРѕРјРїС‚")
+    reply: str = Field(..., description="РћС‚РІРµС‚ LLM РЅР° С‚РµСЃС‚РѕРІС‹Р№ Р·Р°РїСЂРѕСЃ")
+    provider: str | None = Field(default=None, description="РРјСЏ РїСЂРѕРІР°Р№РґРµСЂР° LLM")
+    model: str | None = Field(default=None, description="РСЃРїРѕР»СЊР·СѓРµРјР°СЏ РјРѕРґРµР»СЊ LLM")
 
+
+class MemoryFeedbackRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    step_id: str = Field(..., alias="stepId")
+    accepted: bool
+    note: str | None = None
+    preference_key: str | None = Field(default=None, alias="preferenceKey")
+    preference_value: Any = Field(default=None, alias="preferenceValue")
+
+
+class MemoryFeedbackResponse(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    updated_at: datetime | None = Field(default=None, alias="updatedAt")
+    step_boosts: dict[str, float] = Field(default_factory=dict, alias="stepBoosts")
+    feedback_count: int = Field(default=0, alias="feedbackCount")
 
 __all__ = [
     "ApplyFeatureRequest",
     "ApplyFeatureResponse",
     "LlmTestRequest",
     "LlmTestResponse",
+    "MemoryFeedbackRequest",
+    "MemoryFeedbackResponse",
     "GenerateFeatureOptions",
     "GenerateFeatureRequest",
     "GenerateFeatureResponse",
@@ -405,3 +422,4 @@ __all__ = [
     "StepsSummaryDto",
     "UnmappedStepDto",
 ]
+

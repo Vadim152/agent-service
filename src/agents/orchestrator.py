@@ -1,4 +1,4 @@
-"""Оркестратор агентов, координирующий сценарии работы сервиса."""
+﻿"""Orchestrator facade for steps scan and feature generation workflows."""
 from __future__ import annotations
 
 import logging
@@ -6,13 +6,14 @@ from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from agents.feature_builder_agent import FeatureBuilderAgent
 from agents.repo_scanner_agent import RepoScannerAgent
 from agents.step_matcher_agent import StepMatcherAgent
 from agents.testcase_parser_agent import TestcaseParserAgent
-from agents.feature_builder_agent import FeatureBuilderAgent
-from infrastructure.fs_repo import FsRepository
 from infrastructure.embeddings_store import EmbeddingsStore
+from infrastructure.fs_repo import FsRepository
 from infrastructure.llm_client import LLMClient
+from infrastructure.project_learning_store import ProjectLearningStore
 from infrastructure.step_index_store import StepIndexStore
 from self_healing.capabilities import CapabilityRegistry
 
@@ -39,7 +40,7 @@ class FeatureGenerationState(TypedDict, total=False):
 
 
 class Orchestrator:
-    """Фасад для HTTP-слоя, вызывающий доменные агенты в нужной последовательности."""
+    """Coordinates domain agents and exposes capability-style methods."""
 
     def __init__(
         self,
@@ -49,6 +50,7 @@ class Orchestrator:
         feature_builder_agent: FeatureBuilderAgent,
         step_index_store: StepIndexStore,
         embeddings_store: EmbeddingsStore,
+        project_learning_store: ProjectLearningStore | None = None,
         llm_client: LLMClient | None = None,
     ) -> None:
         self.repo_scanner_agent = repo_scanner_agent
@@ -57,18 +59,22 @@ class Orchestrator:
         self.feature_builder_agent = feature_builder_agent
         self.step_index_store = step_index_store
         self.embeddings_store = embeddings_store
+        self.project_learning_store = project_learning_store
         self.llm_client = llm_client
+
         self.capability_registry = CapabilityRegistry()
         self._register_default_capabilities()
         self._scan_graph = self._build_scan_graph()
         self._feature_graph = self._build_feature_graph()
 
-
     def _register_default_capabilities(self) -> None:
         self.capability_registry.register("scan_steps", self.scan_steps)
+        self.capability_registry.register("find_steps", self.find_steps)
         self.capability_registry.register("parse_testcase", self.testcase_parser_agent.parse_testcase)
         self.capability_registry.register("match_steps", self.step_matcher_agent.match_testcase_steps)
         self.capability_registry.register("build_feature", self.feature_builder_agent.build_feature_from_matches)
+        self.capability_registry.register("compose_autotest", self.compose_autotest)
+        self.capability_registry.register("explain_unmapped", self.explain_unmapped)
         self.capability_registry.register("apply_feature", self.apply_feature)
         self.capability_registry.register("run_test_execution", self.generate_feature)
         self.capability_registry.register("collect_run_artifacts", lambda *_args, **_kwargs: {})
@@ -152,10 +158,13 @@ class Orchestrator:
                 },
                 {
                     "stage": "match",
-                    "status": "ok",
+                    "status": "needs_scan"
+                    if state.get("match_result", {}).get("needsScan")
+                    else "ok",
                     "details": {
                         "matched": len(state.get("match_result", {}).get("matched", [])),
                         "unmatched": len(state.get("match_result", {}).get("unmatched", [])),
+                        "indexStatus": state.get("match_result", {}).get("indexStatus", "unknown"),
                     },
                 },
                 {
@@ -193,13 +202,58 @@ class Orchestrator:
         return "skip_apply"
 
     def scan_steps(self, project_root: str) -> dict[str, Any]:
-        """Сканирует исходники и сохраняет индекс шагов."""
-
-        logger.info("[Orchestrator] Запуск сканирования шагов: %s", project_root)
+        logger.info("[Orchestrator] Start steps scan: %s", project_root)
         state = self._scan_graph.invoke({"project_root": project_root})
         result = state["result"]
-        logger.info("[Orchestrator] Сканирование завершено: %s", result)
+        logger.info("[Orchestrator] Steps scan done: %s", result)
         return result
+
+    def find_steps(self, project_root: str, query: str, *, top_k: int = 5) -> dict[str, Any]:
+        candidates = self.embeddings_store.get_top_k(project_root, query, top_k=top_k)
+        return {
+            "projectRoot": project_root,
+            "query": query,
+            "items": [
+                {
+                    "step": item.pattern,
+                    "stepId": item.id,
+                    "keyword": item.keyword.value,
+                    "score": score,
+                    "codeRef": item.code_ref,
+                }
+                for item, score in candidates
+            ],
+        }
+
+    def compose_autotest(
+        self,
+        project_root: str,
+        testcase_text: str,
+        *,
+        language: str | None = None,
+    ) -> dict[str, Any]:
+        return self.generate_feature(
+            project_root=project_root,
+            testcase_text=testcase_text,
+            target_path=None,
+            create_file=False,
+            overwrite_existing=False,
+            language=language,
+        )
+
+    @staticmethod
+    def explain_unmapped(match_result: dict[str, Any]) -> dict[str, Any]:
+        unmatched = list(match_result.get("unmatched", []))
+        return {
+            "count": len(unmatched),
+            "items": [
+                {
+                    "step": text,
+                    "reason": "no indexed step matched with acceptable confidence",
+                }
+                for text in unmatched
+            ],
+        }
 
     def generate_feature(
         self,
@@ -211,9 +265,7 @@ class Orchestrator:
         overwrite_existing: bool = False,
         language: str | None = None,
     ) -> dict[str, Any]:
-        """Полный цикл: парсинг тесткейса, матчинг и генерация feature."""
-
-        logger.info("[Orchestrator] Генерация feature для проекта %s", project_root)
+        logger.info("[Orchestrator] Generate feature for project %s", project_root)
         state = self._feature_graph.invoke(
             {
                 "project_root": project_root,
@@ -231,7 +283,7 @@ class Orchestrator:
         file_status = state.get("file_status")
 
         logger.info(
-            "[Orchestrator] Генерация feature завершена. Unmapped: %s",
+            "[Orchestrator] Feature generation done. Unmapped=%s",
             len(feature_result.get("unmappedSteps", [])),
         )
         return {
@@ -244,33 +296,28 @@ class Orchestrator:
         }
 
     def apply_feature(
-        self, project_root: str, target_path: str, feature_text: str, *, overwrite_existing: bool = False
+        self,
+        project_root: str,
+        target_path: str,
+        feature_text: str,
+        *,
+        overwrite_existing: bool = False,
     ) -> dict[str, Any]:
-        """Сохраняет сгенерированный .feature файл в репозитории."""
-
-        logger.info(
-            "[Orchestrator] Сохранение feature %s в проекте %s", target_path, project_root
-        )
+        logger.info("[Orchestrator] Persist feature %s in %s", target_path, project_root)
         fs_repo = FsRepository(project_root)
         normalized_path = target_path.lstrip("/")
         exists = fs_repo.exists(normalized_path)
 
         if exists and not overwrite_existing:
-            logger.info(
-                "[Orchestrator] Файл %s уже существует, пропускаем запись", target_path
-            )
             return {
                 "projectRoot": project_root,
                 "targetPath": target_path,
                 "status": "skipped",
-                "message": "Файл уже существует, перезапись отключена",
+                "message": "File already exists and overwrite is disabled",
             }
 
         fs_repo.write_text_file(normalized_path, feature_text, create_dirs=True)
         status = "overwritten" if exists else "created"
-        logger.info(
-            "[Orchestrator] Feature %s %s", target_path, "перезаписан" if exists else "создан"
-        )
         return {
             "projectRoot": project_root,
             "targetPath": normalized_path,

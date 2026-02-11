@@ -27,13 +27,9 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", description="Хост для запуска приложения")
     port: int = Field(default=8000, description="Порт для запуска приложения")
     steps_index_dir: Path = Field(default=ROOT_DIR / ".agent" / "steps_index", description="Путь к индексу шагов")
-    opencode_wrapper_url: str = Field(
-        default="http://127.0.0.1:8011",
-        description="Base URL for OpenCode wrapper sidecar",
-    )
-    opencode_timeout_s: float = Field(
-        default=30.0,
-        description="Timeout in seconds for OpenCode wrapper requests",
+    artifacts_dir: Path = Field(
+        default=ROOT_DIR / ".agent" / "artifacts",
+        description="Directory for job artifacts and incidents",
     )
 
     llm_endpoint: str | None = Field(default=None, description="Endpoint LLM сервиса")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
@@ -19,6 +20,7 @@ from domain.models import (
 )
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.gigachat_adapter import GigaChatAdapter
+from infrastructure.project_learning_store import ProjectLearningStore
 from infrastructure.step_index_store import StepIndexStore
 from tools.cucumber_expression import cucumber_expression_to_regex
 from tools.feature_generator import FeatureGenerator
@@ -164,6 +166,9 @@ def create_orchestrator(settings: Settings | None = None):
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
     embeddings_store = EmbeddingsStore()
+    project_learning_store = ProjectLearningStore(
+        Path(resolved_settings.steps_index_dir).parent / "learning_memory"
+    )
 
     logger.debug("LLMClient и хранилища инициализированы")
 
@@ -171,7 +176,12 @@ def create_orchestrator(settings: Settings | None = None):
 
     repo_scanner = RepoScannerAgent(step_index_store, embeddings_store, agent_llm_client)
     testcase_parser = TestcaseParserAgent(agent_llm_client)
-    step_matcher = StepMatcherAgent(step_index_store, embeddings_store, agent_llm_client)
+    step_matcher = StepMatcherAgent(
+        step_index_store,
+        embeddings_store,
+        agent_llm_client,
+        project_learning_store=project_learning_store,
+    )
     feature_generator = FeatureBuilderAgent(agent_llm_client)
 
     orchestrator = Orchestrator(
@@ -181,6 +191,7 @@ def create_orchestrator(settings: Settings | None = None):
         feature_builder_agent=feature_generator,
         step_index_store=step_index_store,
         embeddings_store=embeddings_store,
+        project_learning_store=project_learning_store,
         llm_client=llm_client,
     )
     return orchestrator

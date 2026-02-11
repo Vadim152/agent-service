@@ -27,13 +27,17 @@ class StepMatcher:
         test_steps: list[TestStep],
         step_definitions: list[StepDefinition],
         project_root: str | None = None,
+        step_boosts: dict[str, float] | None = None,
     ) -> list[MatchedStep]:
         """Сопоставляет список шагов тесткейса с существующими cucumber-шагами."""
 
         matches: list[MatchedStep] = []
         for test_step in test_steps:
             best_def, score, confidence_sources, llm_reranked = self._find_best_match(
-                test_step.text, step_definitions, project_root=project_root
+                test_step.text,
+                step_definitions,
+                project_root=project_root,
+                step_boosts=step_boosts,
             )
             status = self._derive_status(score)
             gherkin_line: str | None = None
@@ -74,12 +78,14 @@ class StepMatcher:
         test_text: str,
         step_definitions: Iterable[StepDefinition],
         project_root: str | None = None,
+        step_boosts: dict[str, float] | None = None,
     ) -> tuple[StepDefinition | None, float, dict[str, float], bool]:
         """Находит наиболее похожее определение шага с учётом эмбеддингов и LLM."""
 
         normalized_test = self._normalize(test_text)
         candidates = list(step_definitions)
         embedding_scores: dict[str, float] = {}
+        step_boosts = step_boosts or {}
 
         if self.embeddings_store and project_root:
             try:
@@ -115,7 +121,11 @@ class StepMatcher:
             candidate_text = self._normalize(definition.pattern)
             score = difflib.SequenceMatcher(None, normalized_test, candidate_text).ratio()
             similarity_scores[definition.id] = score
-            combined = self._combine_score(score, embedding_scores.get(definition.id))
+            combined = self._combine_score(
+                score,
+                embedding_scores.get(definition.id),
+                boost=step_boosts.get(definition.id),
+            )
             if combined > best_score:
                 best_score = combined
                 best_def = definition
@@ -135,11 +145,14 @@ class StepMatcher:
             similarity_scores.get(best_def.id, 0.0) if best_def else 0.0
         )
         embedding_score = embedding_scores.get(best_def.id, 0.0) if best_def else 0.0
+        learned_boost = step_boosts.get(best_def.id, 0.0) if best_def else 0.0
         confidence_sources = {
             "sequence": sequence_score,
             "embedding": embedding_score,
             "llm": 1.0 if llm_reranked else 0.0,
         }
+        if abs(learned_boost) > 1e-9:
+            confidence_sources["learned_boost"] = learned_boost
 
         return best_def, best_score, confidence_sources, llm_reranked
 
@@ -191,6 +204,7 @@ class StepMatcher:
         sequence_score: float,
         embedding_score: float | None = None,
         llm_confirmed: bool = False,
+        boost: float | None = None,
     ) -> float:
         """Объединяет метрики строкового сходства, эмбеддингов и LLM в итоговый confidence."""
 
@@ -204,7 +218,10 @@ class StepMatcher:
         if total_weight == 0:
             return 0.0
 
-        return sum(score * weight for score, weight in weights) / total_weight
+        combined = sum(score * weight for score, weight in weights) / total_weight
+        if boost is not None:
+            combined += boost
+        return max(0.0, min(1.0, combined))
 
     def _rerank_with_llm(
         self,

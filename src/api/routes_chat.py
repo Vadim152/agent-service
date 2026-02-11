@@ -1,4 +1,4 @@
-"""Chat API routes for OpenCode-backed session lifecycle and streaming."""
+﻿"""Chat API routes for LangGraph-backed session lifecycle and streaming."""
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +34,7 @@ from api.chat_schemas import (
     ChatToolDecisionResponse,
     ChatUsageTotalsDto,
 )
-from infrastructure.opencode_sidecar_client import OpencodeSidecarError
+from infrastructure.runtime_errors import ChatRuntimeError
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -50,7 +50,7 @@ def _get_runtime(request: Request):
     return runtime
 
 
-def _sidecar_to_http_error(exc: OpencodeSidecarError) -> HTTPException:
+def _runtime_to_http_error(exc: ChatRuntimeError) -> HTTPException:
     if exc.status_code == 404:
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
     if exc.status_code == 422:
@@ -115,15 +115,15 @@ async def create_chat_session(payload: ChatSessionCreateRequest, request: Reques
             profile=payload.profile,
             reuse_existing=payload.reuse_existing,
         )
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     created_at = _parse_iso_datetime(str(session["createdAt"]))
     return ChatSessionCreateResponse(
         session_id=str(session["sessionId"]),
         created_at=created_at,
         reused=bool(session.get("reused", False)),
-        memory_snapshot={},
+        memory_snapshot=session.get("memorySnapshot", {}),
     )
 
 
@@ -137,8 +137,8 @@ async def list_chat_sessions(
     bounded_limit = max(1, min(limit, 200))
     try:
         payload = await runtime.list_sessions(project_root=projectRoot, limit=bounded_limit)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     raw_items = payload.get("items", [])
     items = [
@@ -174,14 +174,14 @@ async def send_chat_message(
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
     try:
         status_payload = await runtime.get_status(session_id=session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     activity = str(status_payload.get("activity", "idle")).strip().lower()
     if activity in {"busy", "waiting_permission", "retry"}:
@@ -217,8 +217,8 @@ async def submit_tool_decision(
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
 
@@ -248,8 +248,8 @@ async def get_chat_history(
     runtime = _get_runtime(request)
     try:
         history = await runtime.get_history(session_id=session_id, limit=limit)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     messages = [ChatMessageDto.model_validate(item) for item in history.get("messages", [])]
     events = [ChatEventDto.model_validate(item) for item in history.get("events", [])]
@@ -266,7 +266,7 @@ async def get_chat_history(
         messages=messages,
         events=events,
         pending_permissions=pending_permissions,
-        memory_snapshot={},
+        memory_snapshot=history.get("memorySnapshot", {}),
         updated_at=_parse_iso_datetime(history["updatedAt"]),
     )
 
@@ -276,16 +276,16 @@ async def get_chat_status(session_id: str, request: Request) -> ChatSessionStatu
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
 
     try:
         status_payload = await runtime.get_status(session_id=session_id)
         diff_payload = await runtime.get_diff(session_id=session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     summary = diff_payload.get("summary", {})
     files_changed = int(summary.get("files", 0))
@@ -345,16 +345,16 @@ async def get_chat_diff(session_id: str, request: Request) -> ChatSessionDiffRes
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
 
     try:
         diff_payload = await runtime.get_diff(session_id=session_id)
         status_payload = await runtime.get_status(session_id=session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     summary_payload = diff_payload.get("summary", {})
     summary = ChatDiffSummaryDto(
@@ -387,8 +387,8 @@ async def execute_chat_command(
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
 
@@ -396,8 +396,8 @@ async def execute_chat_command(
         command_result = await runtime.execute_command(session_id=session_id, command=payload.command)
         status_payload = await runtime.get_status(session_id=session_id)
         diff_payload = await runtime.get_diff(session_id=session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
 
     summary_payload = diff_payload.get("summary", {})
     risk = _build_risk(
@@ -421,8 +421,8 @@ async def stream_chat_events(session_id: str, request: Request):
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
-    except OpencodeSidecarError as exc:
-        raise _sidecar_to_http_error(exc) from exc
+    except ChatRuntimeError as exc:
+        raise _runtime_to_http_error(exc) from exc
     if not exists:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session not found: {session_id}")
 
@@ -432,8 +432,9 @@ async def stream_chat_events(session_id: str, request: Request):
                 if await request.is_disconnected():
                     return
                 yield chunk
-        except OpencodeSidecarError as exc:
+        except ChatRuntimeError as exc:
             payload = {"eventType": "error", "payload": {"message": str(exc)}}
             yield f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
     return StreamingResponse(_stream(), media_type="text/event-stream")
+

@@ -16,7 +16,9 @@ from api import router as api_router
 from agents import create_orchestrator
 from chat.memory_store import ChatMemoryStore
 from chat.runtime import ChatAgentRuntime
-from infrastructure.opencode_sidecar_client import OpencodeSidecarClient
+from infrastructure.artifact_store import ArtifactStore
+from infrastructure.run_state_store import RunStateStore
+from self_healing.supervisor import ExecutionSupervisor
 
 warnings.filterwarnings(
     "ignore",
@@ -69,12 +71,19 @@ async def on_startup() -> None:
         app.state.orchestrator = orchestrator
         chat_memory_store = ChatMemoryStore(Path(settings.steps_index_dir).parent / "chat_memory")
         app.state.chat_memory_store = chat_memory_store
-        app.state.opencode_sidecar_client = OpencodeSidecarClient(
-            base_url=settings.opencode_wrapper_url,
-            timeout_s=settings.opencode_timeout_s,
+        run_state_store = RunStateStore()
+        artifact_store = ArtifactStore(Path(settings.artifacts_dir))
+        execution_supervisor = ExecutionSupervisor(
+            orchestrator=orchestrator,
+            run_state_store=run_state_store,
+            artifact_store=artifact_store,
         )
+        app.state.run_state_store = run_state_store
+        app.state.artifact_store = artifact_store
+        app.state.execution_supervisor = execution_supervisor
         app.state.chat_runtime = ChatAgentRuntime(
-            sidecar_client=app.state.opencode_sidecar_client,
+            memory_store=chat_memory_store,
+            llm_client=getattr(orchestrator, "llm_client", None),
         )
         logger.info("[Startup] Оркестратор и control-plane компоненты созданы")
     except Exception as exc:  # pragma: no cover - ранняя инициализация

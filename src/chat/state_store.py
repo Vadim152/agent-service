@@ -91,6 +91,27 @@ class ChatStateStore:
                 return None
             return deepcopy(session)
 
+    def list_sessions(self, project_root: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [
+                deepcopy(value)
+                for value in self._sessions.values()
+                if value.get("project_root") == project_root
+            ]
+            rows.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+            bounded = max(1, min(limit, 200))
+            return rows[:bounded]
+
+    def update_session(self, session_id: str, **changes: Any) -> dict[str, Any] | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if not session:
+                return None
+            session.update(changes)
+            session["updated_at"] = _utcnow()
+            self._persist(session_id)
+            return deepcopy(session)
+
     def append_message(
         self,
         session_id: str,
@@ -153,6 +174,9 @@ class ChatStateStore:
         args: dict[str, Any],
         risk_level: str,
         requires_confirmation: bool,
+        title: str | None = None,
+        kind: str = "tool",
+        message_id: str | None = None,
     ) -> dict[str, Any] | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -164,6 +188,9 @@ class ChatStateStore:
                 "args": args,
                 "risk_level": risk_level,
                 "requires_confirmation": requires_confirmation,
+                "title": title or tool_name,
+                "kind": kind,
+                "message_id": message_id,
                 "created_at": _utcnow(),
             }
             pending = session.setdefault("pending_tool_calls", [])
@@ -211,4 +238,3 @@ class ChatStateStore:
 
     def patch_project_memory(self, project_root: str, **changes: Any) -> dict[str, Any]:
         return self._memory_store.patch_project_memory(project_root, **changes)
-
