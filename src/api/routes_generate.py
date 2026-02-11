@@ -11,6 +11,7 @@ from fastapi.encoders import jsonable_encoder
 from pydantic import ValidationError
 
 from agents.orchestrator import Orchestrator
+from app.config import get_settings
 from api.schemas import (
     ApplyFeatureRequest,
     ApplyFeatureResponse,
@@ -26,6 +27,7 @@ from domain.models import MatchedStep
 
 router = APIRouter(prefix="/feature", tags=["feature-generation"])
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 def _get_orchestrator(request: Request) -> Orchestrator:
@@ -75,8 +77,12 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
     content_length = request.headers.get("content-length")
     content_type = request.headers.get("content-type")
     body_len = len(raw_body) if raw_body else 0
-    body_preview = raw_body.decode("utf-8", errors="replace")[:500] if raw_body else ""
-    body_hex_preview = raw_body[:128].hex() if raw_body else ""
+    if settings.log_request_bodies and raw_body:
+        body_preview = raw_body.decode("utf-8", errors="replace")[:500]
+        body_hex_preview = raw_body[:128].hex()
+    else:
+        body_preview = f"<{body_len} bytes>"
+        body_hex_preview = "<disabled>"
 
     logger.debug(
         (
@@ -102,7 +108,7 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         logger.warning(
             (
                 "API: пустое тело запроса (len=%s, content-length=%s, content-type=%s, "
-                "preview=%r)"
+                "body=%r)"
             ),
             body_len,
             content_length,
@@ -140,8 +146,8 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
 
     logger.info(
         (
-            "API: generate-feature payload accepted (len=%s, content-type=%s, content-length=%s,"  # noqa: E501
-            " testCaseText_len=%s, targetPath=%s, options=%s, preview=%r)"
+            "API: generate-feature payload accepted (len=%s, content-type=%s, content-length=%s,"
+            " testCaseText_len=%s, targetPath=%s, options=%s)"
         ),
         body_len,
         content_type,
@@ -149,7 +155,6 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         len(request_model.test_case_text or ""),
         request_model.target_path,
         request_model.options,
-        (request_model.test_case_text or "")[:200],
     )
 
     if not (request_model.test_case_text or "").strip():

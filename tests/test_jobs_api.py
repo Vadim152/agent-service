@@ -139,3 +139,48 @@ def test_get_job_result_returns_409_when_not_ready() -> None:
     response = client.get("/jobs/j3/result")
     assert response.status_code == 409
 
+
+def test_cancel_job_marks_job_as_cancelling() -> None:
+    app, store = _build_app()
+    client = TestClient(app)
+    store.put_job(
+        {
+            "job_id": "j4",
+            "status": "running",
+            "started_at": _utcnow(),
+            "updated_at": _utcnow(),
+            "attempts": [],
+            "result": None,
+        }
+    )
+
+    response = client.post("/jobs/j4/cancel")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "cancelling"
+    assert payload["cancelRequested"] is True
+    item = store.get_job("j4")
+    assert item is not None
+    assert item["cancel_requested"] is True
+    assert item["status"] == "cancelling"
+
+
+def test_job_events_store_supports_from_index() -> None:
+    _, store = _build_app()
+    store.put_job(
+        {
+            "job_id": "j5",
+            "status": "running",
+            "started_at": _utcnow(),
+            "updated_at": _utcnow(),
+            "attempts": [],
+            "result": None,
+        }
+    )
+    store.append_event("j5", "event.zero", {"v": 0})
+    store.append_event("j5", "event.one", {"v": 1})
+    events, next_index = store.list_events("j5", since_index=1)
+    assert next_index == 2
+    assert len(events) == 1
+    assert events[0]["index"] == 1
+    assert events[0]["event_type"] == "event.one"

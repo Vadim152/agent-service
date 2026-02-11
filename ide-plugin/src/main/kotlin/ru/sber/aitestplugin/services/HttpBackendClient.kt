@@ -41,6 +41,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Реализация BackendClient, использующая HTTP вызовы к агенту.
@@ -55,6 +56,7 @@ class HttpBackendClient(
         .registerModule(JavaTimeModule())
         .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
         .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+    private val clientsByTimeoutMs = ConcurrentHashMap<Int, OkHttpClient>()
 
     override fun scanSteps(projectRoot: String): ScanStepsResponseDto {
         val request = ScanStepsRequestDto(projectRoot)
@@ -144,10 +146,7 @@ class HttpBackendClient(
         val settings = settingsProvider()
         val url = "${settings.backendUrl.trimEnd('/')}$path"
         val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
-        val client = OkHttpClient.Builder()
-            .callTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
-            .connectTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
-            .build()
+        val client = getHttpClient(effectiveTimeoutMs)
 
         val body = mapper.writeValueAsString(payload)
         val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
@@ -218,10 +217,7 @@ class HttpBackendClient(
         val settings = settingsProvider()
         val url = "${settings.backendUrl.trimEnd('/')}$path"
         val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
-        val client = OkHttpClient.Builder()
-            .callTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
-            .connectTimeout(Duration.ofMillis(effectiveTimeoutMs.toLong()))
-            .build()
+        val client = getHttpClient(effectiveTimeoutMs)
 
         val request = Request.Builder()
             .url(URI.create(url).toURL())
@@ -275,6 +271,18 @@ class HttpBackendClient(
             }
         } catch (_: Exception) {
             body
+        }
+    }
+
+    private fun getHttpClient(timeoutMs: Int): OkHttpClient {
+        val boundedTimeout = timeoutMs.coerceAtLeast(1)
+        return clientsByTimeoutMs.computeIfAbsent(boundedTimeout) { timeout ->
+            val duration = Duration.ofMillis(timeout.toLong())
+            OkHttpClient.Builder()
+                .callTimeout(duration)
+                .connectTimeout(duration)
+                .readTimeout(duration)
+                .build()
         }
     }
 }

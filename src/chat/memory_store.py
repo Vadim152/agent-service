@@ -51,6 +51,16 @@ class ChatMemoryStore:
         target = self._sessions_dir / f"{session_id}.json"
         target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    def delete_session(self, session_id: str) -> None:
+        sid = str(session_id).strip()
+        if not sid:
+            return
+        target = self._sessions_dir / f"{sid}.json"
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            return
+
     def load_project_memory(self, project_root: str) -> dict[str, Any]:
         key = _project_key(project_root)
         path = self._projects_dir / f"{key}.json"
@@ -90,4 +100,3 @@ class ChatMemoryStore:
         path = self._projects_dir / f"{key}.json"
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return payload
-

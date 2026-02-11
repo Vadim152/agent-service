@@ -17,6 +17,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
+import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.JBUI
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -57,6 +58,7 @@ import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+import javax.swing.UIManager
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
@@ -68,9 +70,12 @@ class AiToolWindowPanel(
     private val settings = AiTestPluginSettingsService.getInstance().settings
     private val refreshInFlight = AtomicBoolean(false)
     private val streamClient = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
-    private val pollTimer = Timer(1800) { refreshControlPlaneAsync() }
+    private val pollTimer = Timer(3000) { refreshControlPlaneAsync() }
+    private val uiRefreshDebounceMs = 200
+    private val autoScrollBottomThresholdPx = 48
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
     private val supportedCommands = listOf("status", "diff", "compact", "abort", "help")
+    private val sseIndexPattern = Regex("\"index\"\\s*:\\s*(\\d+)")
     private val theme = UiTheme()
 
     private val cardLayout = CardLayout()
@@ -89,6 +94,7 @@ class AiToolWindowPanel(
         isOpaque = false
         border = JBUI.Borders.empty(6, 8, 4, 8)
     }
+    private val uiApplyTimer = Timer(uiRefreshDebounceMs) { applyPendingUiRefresh() }.apply { isRepeats = false }
 
     private var sessionId: String? = null
     private var streamSessionId: String? = null
@@ -98,12 +104,20 @@ class AiToolWindowPanel(
     private var suppressSlashPopupUntilReset: Boolean = false
     private var lastSlashMatches: List<String> = emptyList()
     private var latestActivity: String = "idle"
+    private var connectionState: ConnectionState = ConnectionState.CONNECTING
+    private var connectionDetails: String? = null
+    private var streamReconnectAttempt: Int = 0
+    private var streamFromIndex: Int = 0
+    private var timelineScrollPane: JBScrollPane? = null
+    private var pendingHistoryForRender: ChatHistoryResponseDto? = null
+    private var pendingStatusForRender: ChatSessionStatusResponseDto? = null
 
     init {
         border = JBUI.Borders.empty(8, 8, 10, 8)
         background = theme.panelBackground
         isOpaque = true
         add(buildRoot(), BorderLayout.CENTER)
+        updateStatusLabel()
         ensureSessionAsync(forceNew = true)
     }
 
@@ -115,6 +129,9 @@ class AiToolWindowPanel(
 
     override fun removeNotify() {
         pollTimer.stop()
+        uiApplyTimer.stop()
+        pendingHistoryForRender = null
+        pendingStatusForRender = null
         stopEventStream()
         suppressSlashPopupUntilReset = false
         lastSlashMatches = emptyList()
@@ -206,6 +223,7 @@ class AiToolWindowPanel(
                 background = theme.panelBackground
                 viewport.background = theme.panelBackground
                 preferredSize = Dimension(100, 360)
+                timelineScrollPane = this
             }, BorderLayout.CENTER)
             add(approvalPanel, BorderLayout.SOUTH)
         }
@@ -374,9 +392,9 @@ class AiToolWindowPanel(
                 backendClient.sendChatMessage(active, ChatMessageRequestDto(content = message))
                 SwingUtilities.invokeLater {
                     inputArea.text = ""
-                    statusLabel.text = "Message sent"
                     suppressSlashPopupUntilReset = false
                     hideSlashPopup()
+                    setConnectionState(ConnectionState.CONNECTED)
                 }
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
@@ -405,7 +423,7 @@ class AiToolWindowPanel(
             val active = ensureSessionBlocking(forceNew) ?: return@executeOnPooledThread
             SwingUtilities.invokeLater {
                 showChatScreen()
-                statusLabel.text = "Session ${active.take(8)}"
+                setConnectionState(ConnectionState.CONNECTING, "Session ${active.take(8)}")
             }
             startEventStreamAsync(active)
             refreshControlPlaneAsync()
@@ -417,7 +435,7 @@ class AiToolWindowPanel(
 
         val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
         if (projectRoot.isBlank()) {
-            SwingUtilities.invokeLater { statusLabel.text = "Project root is empty" }
+            SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Project root is empty") }
             return null
         }
 
@@ -432,8 +450,13 @@ class AiToolWindowPanel(
             )
             sessionId = created.sessionId
             latestActivity = "idle"
+            streamReconnectAttempt = 0
+            streamFromIndex = 0
             if (forceNew || !created.reused) {
                 SwingUtilities.invokeLater {
+                    uiApplyTimer.stop()
+                    pendingHistoryForRender = null
+                    pendingStatusForRender = null
                     timelineModel.clear()
                     renderPendingApprovals(emptyList())
                 }
@@ -441,7 +464,7 @@ class AiToolWindowPanel(
             created.sessionId
         } catch (ex: Exception) {
             logger.warn("Failed to create session", ex)
-            SwingUtilities.invokeLater { statusLabel.text = "Failed to initialize session: ${ex.message}" }
+            SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Init failed: ${ex.message}") }
             null
         }
     }
@@ -449,8 +472,13 @@ class AiToolWindowPanel(
     private fun activateSession(targetSessionId: String) {
         sessionId = targetSessionId
         latestActivity = "idle"
+        uiApplyTimer.stop()
+        pendingHistoryForRender = null
+        pendingStatusForRender = null
         timelineModel.clear()
         renderPendingApprovals(emptyList())
+        streamReconnectAttempt = 0
+        streamFromIndex = 0
         showChatScreen()
         startEventStreamAsync(targetSessionId)
         refreshControlPlaneAsync()
@@ -459,7 +487,7 @@ class AiToolWindowPanel(
     private fun loadSessionsHistoryAsync() {
         val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
         if (projectRoot.isBlank()) {
-            statusLabel.text = "Project root is empty"
+            setConnectionState(ConnectionState.OFFLINE, "Project root is empty")
             return
         }
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -471,7 +499,7 @@ class AiToolWindowPanel(
                 }
             } catch (ex: Exception) {
                 logger.warn("Failed to load sessions", ex)
-                SwingUtilities.invokeLater { statusLabel.text = "History load failed: ${ex.message}" }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "History load failed") }
             }
         }
     }
@@ -485,8 +513,7 @@ class AiToolWindowPanel(
                 val history = backendClient.getChatHistory(active)
                 val status = backendClient.getChatStatus(active)
                 SwingUtilities.invokeLater {
-                    renderHistory(history)
-                    renderStatus(status)
+                    enqueueUiRefresh(history, status)
                 }
             } catch (ex: Exception) {
                 if (logger.isDebugEnabled) logger.debug("Refresh failed", ex)
@@ -496,22 +523,59 @@ class AiToolWindowPanel(
         }
     }
 
+    private fun enqueueUiRefresh(history: ChatHistoryResponseDto, status: ChatSessionStatusResponseDto) {
+        pendingHistoryForRender = history
+        pendingStatusForRender = status
+        uiApplyTimer.restart()
+    }
+
+    private fun applyPendingUiRefresh() {
+        val history = pendingHistoryForRender ?: return
+        val status = pendingStatusForRender ?: return
+        pendingHistoryForRender = null
+        pendingStatusForRender = null
+        renderHistory(history)
+        renderStatus(status)
+    }
+
     private fun renderHistory(history: ChatHistoryResponseDto) {
-        val lines = history.messages
+        val shouldStickToBottom = isUserNearBottom()
+        val serverLines = history.messages
             .filterNot { it.role.equals("assistant", ignoreCase = true) && it.content.trim().isBlank() }
             .sortedBy { it.createdAt }
-            .map {
-                when (it.role.lowercase()) {
-                    "user" -> UiLine(UiLineKind.USER, it.content, it.createdAt)
-                    "assistant" -> UiLine(UiLineKind.ASSISTANT, it.content, it.createdAt)
-                    else -> UiLine(UiLineKind.SYSTEM, it.content, it.createdAt)
+            .map { message ->
+                val lineKind = when (message.role.lowercase()) {
+                    "user" -> UiLineKind.USER
+                    "assistant" -> UiLineKind.ASSISTANT
+                    else -> UiLineKind.SYSTEM
                 }
+                val stableKey = message.messageId.ifBlank {
+                    "${message.role}:${message.createdAt.toEpochMilli()}:${message.content.hashCode()}"
+                }
+                UiLine(
+                    kind = lineKind,
+                    text = message.content,
+                    createdAt = message.createdAt,
+                    stableKey = stableKey,
+                    source = UiLineSource.SERVER_MESSAGE
+                )
             }
 
-        timelineModel.clear()
-        lines.forEach(timelineModel::addElement)
-        if (timelineModel.size > 0) timeline.ensureIndexIsVisible(timelineModel.size - 1)
+        val localLines = (0 until timelineModel.size)
+            .map { timelineModel.get(it) }
+            .filter { it.source == UiLineSource.LOCAL_SYSTEM }
+        val progressLine = (0 until timelineModel.size)
+            .map { timelineModel.get(it) }
+            .firstOrNull { it.source == UiLineSource.PROGRESS }
+
+        val targetLines = buildList {
+            addAll(serverLines)
+            addAll(localLines)
+            progressLine?.let { add(it) }
+        }
+        replaceTimelineModelIncrementally(targetLines)
         renderPendingApprovals(history.pendingPermissions)
+        scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
     private fun renderStatus(status: ChatSessionStatusResponseDto) {
@@ -532,12 +596,7 @@ class AiToolWindowPanel(
         } else {
             removeProgressLine()
         }
-        statusLabel.text = when (latestActivity) {
-            "busy" -> "Working..."
-            "retry" -> "Retrying..."
-            "waiting_permission" -> "Waiting for approval..."
-            else -> "Ready"
-        }
+        updateStatusLabel()
     }
 
     private fun renderPendingApprovals(pending: List<ChatPendingPermissionDto>) {
@@ -586,28 +645,35 @@ class AiToolWindowPanel(
         if (streamSessionId == activeSession && streamCall != null) return
         stopEventStream()
         streamSessionId = activeSession
+        setConnectionState(ConnectionState.CONNECTING)
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val base = settings.backendUrl.trimEnd('/')
-            val request = Request.Builder().url("$base/chat/sessions/$activeSession/stream").get().build()
+            val request = Request.Builder().url("$base/chat/sessions/$activeSession/stream?fromIndex=$streamFromIndex").get().build()
             val call = streamClient.newCall(request)
             streamCall = call
             try {
                 call.execute().use { response ->
                     if (!response.isSuccessful) {
-                        SwingUtilities.invokeLater { statusLabel.text = "Stream failed: HTTP ${response.code}" }
-                        scheduleStreamReconnect(activeSession)
+                        setConnectionState(ConnectionState.RECONNECTING, "HTTP ${response.code}")
+                        scheduleStreamReconnect(activeSession, "HTTP ${response.code}")
                         return@use
                     }
+                    streamReconnectAttempt = 0
+                    setConnectionState(ConnectionState.CONNECTED)
                     val source = response.body?.source() ?: run {
-                        scheduleStreamReconnect(activeSession)
+                        setConnectionState(ConnectionState.RECONNECTING, "Empty response body")
+                        scheduleStreamReconnect(activeSession, "empty-body")
                         return@use
                     }
                     var hasData = false
                     while (!source.exhausted() && isDisplayable && sessionId == activeSession) {
                         val line = source.readUtf8Line() ?: break
                         when {
-                            line.startsWith("data:") -> hasData = true
+                            line.startsWith("data:") -> {
+                                hasData = true
+                                updateStreamIndexFromLine(line)
+                            }
                             line.isBlank() && hasData -> {
                                 hasData = false
                                 refreshControlPlaneAsync()
@@ -617,25 +683,36 @@ class AiToolWindowPanel(
                 }
             } catch (ex: Exception) {
                 if (logger.isDebugEnabled) logger.debug("Stream disconnected", ex)
-                scheduleStreamReconnect(activeSession)
+                setConnectionState(ConnectionState.RECONNECTING, ex.message ?: "Stream disconnected")
+                scheduleStreamReconnect(activeSession, ex.message ?: "disconnected")
             } finally {
                 if (streamCall == call) streamCall = null
             }
         }
     }
 
-    private fun scheduleStreamReconnect(activeSession: String) {
+    private fun scheduleStreamReconnect(activeSession: String, reason: String) {
         if (!isDisplayable || sessionId != activeSession) return
-        ApplicationManager.getApplication().executeOnPooledThread {
-            Thread.sleep(1200)
-            if (isDisplayable && sessionId == activeSession) startEventStreamAsync(activeSession)
-        }
+        val exponent = minOf(streamReconnectAttempt, 5)
+        val delayMs = minOf(30_000L, 1200L * (1L shl exponent))
+        streamReconnectAttempt = minOf(streamReconnectAttempt + 1, 10)
+        setConnectionState(ConnectionState.RECONNECTING, "Reconnecting in ${delayMs}ms ($reason)")
+        AppExecutorUtil.getAppScheduledExecutorService().schedule(
+            {
+                if (isDisplayable && sessionId == activeSession) {
+                    startEventStreamAsync(activeSession)
+                }
+            },
+            delayMs,
+            TimeUnit.MILLISECONDS
+        )
     }
 
     private fun stopEventStream() {
         streamCall?.cancel()
         streamCall = null
         streamSessionId = null
+        setConnectionState(ConnectionState.OFFLINE)
     }
 
     private fun showHistoryScreen() {
@@ -665,24 +742,130 @@ class AiToolWindowPanel(
         sendButton.isOpaque = true
     }
 
+    private fun setConnectionState(state: ConnectionState, details: String? = null) {
+        connectionState = state
+        if (!details.isNullOrBlank()) {
+            connectionDetails = details
+        } else if (state == ConnectionState.CONNECTED || state == ConnectionState.OFFLINE) {
+            connectionDetails = null
+        }
+        updateStatusLabel()
+    }
+
+    private fun updateStatusLabel() {
+        val activityText = when (latestActivity) {
+            "busy" -> "Working"
+            "retry" -> "Retrying"
+            "waiting_permission" -> "Waiting for approval"
+            "error" -> "Error"
+            else -> "Ready"
+        }
+        val connectionText = when (connectionState) {
+            ConnectionState.CONNECTING -> "connecting"
+            ConnectionState.CONNECTED -> "connected"
+            ConnectionState.RECONNECTING -> "reconnecting"
+            ConnectionState.OFFLINE -> "offline"
+        }
+        val details = connectionDetails?.takeIf { it.isNotBlank() }
+        val text = if (details != null) {
+            "$activityText | $connectionText | $details"
+        } else {
+            "$activityText | $connectionText"
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            statusLabel.text = text
+        } else {
+            SwingUtilities.invokeLater { statusLabel.text = text }
+        }
+    }
+
+    private fun updateStreamIndexFromLine(line: String) {
+        val payload = line.removePrefix("data:").trim()
+        val match = sseIndexPattern.find(payload) ?: return
+        val parsed = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return
+        streamFromIndex = maxOf(streamFromIndex, parsed + 1)
+    }
+
     private fun appendSystemLine(text: String) {
-        timelineModel.addElement(UiLine(UiLineKind.SYSTEM, text, Instant.now()))
-        timeline.ensureIndexIsVisible(timelineModel.size - 1)
+        val shouldStickToBottom = isUserNearBottom()
+        timelineModel.addElement(
+            UiLine(
+                kind = UiLineKind.SYSTEM,
+                text = text,
+                createdAt = Instant.now(),
+                stableKey = "local-system-${System.nanoTime()}",
+                source = UiLineSource.LOCAL_SYSTEM
+            )
+        )
+        scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
     private fun upsertProgressLine(text: String) {
-        val idx = (0 until timelineModel.size).firstOrNull { timelineModel.get(it).kind == UiLineKind.PROGRESS }
+        val shouldStickToBottom = isUserNearBottom()
+        val idx = (0 until timelineModel.size).firstOrNull { timelineModel.get(it).source == UiLineSource.PROGRESS }
         if (idx == null) {
-            timelineModel.addElement(UiLine(UiLineKind.PROGRESS, text, Instant.now()))
+            timelineModel.addElement(
+                UiLine(
+                    kind = UiLineKind.PROGRESS,
+                    text = text,
+                    createdAt = Instant.now(),
+                    stableKey = "progress",
+                    source = UiLineSource.PROGRESS
+                )
+            )
         } else {
-            timelineModel.set(idx, UiLine(UiLineKind.PROGRESS, text, Instant.now()))
+            val existing = timelineModel.get(idx)
+            if (existing.text != text) {
+                timelineModel.set(
+                    idx,
+                    existing.copy(text = text, createdAt = Instant.now())
+                )
+            }
         }
-        timeline.ensureIndexIsVisible(timelineModel.size - 1)
+        scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
     private fun removeProgressLine() {
-        val idx = (0 until timelineModel.size).firstOrNull { timelineModel.get(it).kind == UiLineKind.PROGRESS } ?: return
+        val idx = (0 until timelineModel.size).firstOrNull { timelineModel.get(it).source == UiLineSource.PROGRESS } ?: return
         timelineModel.remove(idx)
+    }
+
+    private fun replaceTimelineModelIncrementally(target: List<UiLine>) {
+        val commonSize = minOf(timelineModel.size, target.size)
+        for (index in 0 until commonSize) {
+            val current = timelineModel.get(index)
+            val next = target[index]
+            if (current != next) {
+                timelineModel.set(index, next)
+            }
+        }
+        if (timelineModel.size > target.size) {
+            for (index in timelineModel.size - 1 downTo target.size) {
+                timelineModel.remove(index)
+            }
+        } else if (target.size > timelineModel.size) {
+            for (index in timelineModel.size until target.size) {
+                timelineModel.addElement(target[index])
+            }
+        }
+    }
+
+    private fun isUserNearBottom(): Boolean {
+        val scrollPane = timelineScrollPane ?: return true
+        val viewport = scrollPane.viewport ?: return true
+        val view = viewport.view ?: return true
+        val viewHeight = view.preferredSize.height
+        if (viewHeight <= 0) return true
+        val bottomY = viewport.viewPosition.y + viewport.extentSize.height
+        return bottomY >= viewHeight - autoScrollBottomThresholdPx
+    }
+
+    private fun scrollToBottomIfNeeded(shouldStickToBottom: Boolean) {
+        if (!shouldStickToBottom) return
+        SwingUtilities.invokeLater {
+            val scrollBar = timelineScrollPane?.verticalScrollBar ?: return@invokeLater
+            scrollBar.value = scrollBar.maximum - scrollBar.visibleAmount
+        }
     }
 
     private fun maybeShowSlashPopup() {
@@ -764,7 +947,26 @@ class AiToolWindowPanel(
         addActionListener { action() }
     }
 
-    private data class UiLine(val kind: UiLineKind, val text: String, val createdAt: Instant)
+    private data class UiLine(
+        val kind: UiLineKind,
+        val text: String,
+        val createdAt: Instant,
+        val stableKey: String,
+        val source: UiLineSource
+    )
+
+    private enum class UiLineSource {
+        SERVER_MESSAGE,
+        LOCAL_SYSTEM,
+        PROGRESS
+    }
+
+    private enum class ConnectionState {
+        CONNECTING,
+        CONNECTED,
+        RECONNECTING,
+        OFFLINE
+    }
 
     private enum class UiLineKind {
         USER,
@@ -773,22 +975,27 @@ class AiToolWindowPanel(
         PROGRESS
     }
 
-    private data class UiTheme(
-        val panelBackground: JBColor = JBColor(Color(0x2E, 0x32, 0x39), Color(0x2B, 0x2F, 0x36)),
-        val containerBackground: JBColor = JBColor(Color(0x35, 0x39, 0x41), Color(0x33, 0x37, 0x3F)),
-        val inputBackground: JBColor = JBColor(Color(0x3A, 0x3F, 0x47), Color(0x37, 0x3B, 0x43)),
-        val controlBackground: JBColor = JBColor(Color(0x3C, 0x41, 0x49), Color(0x39, 0x3E, 0x46)),
-        val containerBorder: JBColor = JBColor(Color(0x4A, 0x50, 0x5A), Color(0x46, 0x4C, 0x56)),
-        val controlBorder: JBColor = JBColor(Color(0x52, 0x59, 0x64), Color(0x4E, 0x55, 0x60)),
-        val primaryText: JBColor = JBColor(Color(0xE7, 0xEA, 0xEF), Color(0xE7, 0xEA, 0xEF)),
-        val secondaryText: JBColor = JBColor(Color(0x9AA1AD), Color(0x9AA1AD)),
-        val systemText: JBColor = JBColor(Color(0xD85D5D), Color(0xD85D5D)),
-        val sendButtonBackground: JBColor = JBColor(Color(0x667A9B), Color(0x617595)),
-        val stopButtonBackground: JBColor = JBColor(Color(0xC24A4A), Color(0xB94343)),
-        val userBubble: JBColor = JBColor(Color(0x474D58), Color(0x434954)),
-        val assistantBubble: JBColor = JBColor(Color(0x3E, 0x44, 0x4E), Color(0x3A, 0x40, 0x4A)),
-        val progressBubble: JBColor = JBColor(Color(0x4E, 0x55, 0x61), Color(0x49, 0x50, 0x5C))
-    )
+    private fun uiThemeColor(keys: List<String>, fallback: Color): JBColor {
+        val resolved = keys.asSequence().mapNotNull { UIManager.getColor(it) }.firstOrNull() ?: fallback
+        return JBColor(resolved, resolved)
+    }
+
+    private inner class UiTheme {
+        val panelBackground: JBColor = uiThemeColor(listOf("Panel.background"), Color(0x2E, 0x32, 0x39))
+        val containerBackground: JBColor = uiThemeColor(listOf("TextArea.background", "Panel.background"), Color(0x35, 0x39, 0x41))
+        val inputBackground: JBColor = uiThemeColor(listOf("TextField.background", "TextArea.background"), Color(0x3A, 0x3F, 0x47))
+        val controlBackground: JBColor = uiThemeColor(listOf("Button.background", "Panel.background"), Color(0x3C, 0x41, 0x49))
+        val containerBorder: JBColor = uiThemeColor(listOf("Component.borderColor", "Borders.color"), Color(0x4A, 0x50, 0x5A))
+        val controlBorder: JBColor = uiThemeColor(listOf("Component.borderColor", "Borders.color"), Color(0x52, 0x59, 0x64))
+        val primaryText: JBColor = uiThemeColor(listOf("Label.foreground"), Color(0xE7, 0xEA, 0xEF))
+        val secondaryText: JBColor = uiThemeColor(listOf("Label.disabledForeground", "Component.infoForeground"), Color(0x9A, 0xA1, 0xAD))
+        val systemText: JBColor = uiThemeColor(listOf("Component.errorFocusColor", "ValidationTooltip.errorForeground"), Color(0xD8, 0x5D, 0x5D))
+        val sendButtonBackground: JBColor = uiThemeColor(listOf("Button.default.background"), Color(0x66, 0x7A, 0x9B))
+        val stopButtonBackground: JBColor = uiThemeColor(listOf("Actions.Red"), Color(0xC2, 0x4A, 0x4A))
+        val userBubble: JBColor = uiThemeColor(listOf("EditorPane.background", "TextArea.background"), Color(0x47, 0x4D, 0x58))
+        val assistantBubble: JBColor = uiThemeColor(listOf("TextArea.background", "Panel.background"), Color(0x3E, 0x44, 0x4E))
+        val progressBubble: JBColor = uiThemeColor(listOf("ToolTip.background", "Panel.background"), Color(0x4E, 0x55, 0x61))
+    }
 
     private inner class BubbleRenderer : DefaultListCellRenderer() {
         override fun getListCellRendererComponent(
@@ -799,25 +1006,27 @@ class AiToolWindowPanel(
             cellHasFocus: Boolean
         ): Component {
             val line = value as? UiLine ?: return super.getListCellRendererComponent(list, "", index, false, false)
-            val text = line.text.replace("\n", "<br>")
-            val html = "<html><body style='width:300px'>$text</body></html>"
-            val label = super.getListCellRendererComponent(list, html, index, false, false) as DefaultListCellRenderer
-            label.border = JBUI.Borders.empty(8, 11)
-            label.font = label.font.deriveFont(13.5f)
+            val textArea = JBTextArea(line.text).apply {
+                isEditable = false
+                isFocusable = false
+                isOpaque = false
+                lineWrap = true
+                wrapStyleWord = true
+                border = JBUI.Borders.empty(8, 11)
+                font = list.font.deriveFont(13.5f)
+            }
 
             if (line.kind == UiLineKind.SYSTEM) {
-                label.isOpaque = false
-                label.foreground = theme.systemText
+                textArea.foreground = theme.systemText
                 return JPanel(BorderLayout()).apply {
                     isOpaque = false
                     border = JBUI.Borders.empty(2, 10, 2, 10)
-                    add(label, BorderLayout.WEST)
+                    add(textArea, BorderLayout.WEST)
                 }
             }
 
-            label.isOpaque = true
-            label.foreground = theme.primaryText
-            label.background = when (line.kind) {
+            textArea.foreground = theme.primaryText
+            val bubbleBackground = when (line.kind) {
                 UiLineKind.USER -> theme.userBubble
                 UiLineKind.ASSISTANT -> theme.assistantBubble
                 UiLineKind.PROGRESS -> theme.progressBubble
@@ -826,12 +1035,12 @@ class AiToolWindowPanel(
 
             val bubble = JPanel(BorderLayout()).apply {
                 isOpaque = true
-                background = label.background
+                background = bubbleBackground
                 border = JBUI.Borders.compound(
                     BorderFactory.createLineBorder(theme.containerBorder, 1, true),
                     JBUI.Borders.empty()
                 )
-                add(label, BorderLayout.CENTER)
+                add(textArea, BorderLayout.CENTER)
             }
 
             return JPanel(BorderLayout()).apply {

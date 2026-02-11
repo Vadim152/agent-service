@@ -1,8 +1,9 @@
-"""Job API: единая control-plane точка входа + SSE событий."""
+"""Job API: control-plane endpoints and SSE stream."""
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -21,11 +22,44 @@ from api.schemas import (
     RunAttemptDto,
 )
 
+
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _schedule_job_execution(request: Request, *, job_id: str, supervisor, run_state_store) -> None:
+    async def _worker() -> None:
+        await supervisor.execute_job(job_id)
+
+    def _on_error(exc: BaseException) -> None:
+        logger.warning("Job execution failed (job_id=%s): %s", job_id, exc)
+        run_state_store.patch_job(
+            job_id,
+            status="needs_attention",
+            finished_at=_utcnow(),
+            incident_uri=None,
+        )
+        run_state_store.append_event(
+            job_id,
+            "job.worker_failed",
+            {"jobId": job_id, "status": "needs_attention", "message": str(exc)},
+        )
+
+    task_registry = getattr(request.app.state, "task_registry", None)
+    if task_registry is None:
+        asyncio.create_task(_worker())
+        return
+
+    task_registry.create_task(
+        _worker(),
+        source="jobs",
+        metadata={"jobId": job_id},
+        on_error=_on_error,
+    )
 
 
 @router.post("", response_model=JobCreateResponse)
@@ -40,6 +74,8 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
         {
             "job_id": job_id,
             "status": "queued",
+            "cancel_requested": False,
+            "cancel_requested_at": None,
             "project_root": payload.project_root,
             "test_case_text": payload.test_case_text,
             "target_path": payload.target_path,
@@ -55,7 +91,7 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
         }
     )
     run_state_store.append_event(job_id, "job.queued", {"jobId": job_id, "source": payload.source})
-    asyncio.create_task(supervisor.execute_job(job_id))
+    _schedule_job_execution(request, job_id=job_id, supervisor=supervisor, run_state_store=run_state_store)
     return JobCreateResponse(job_id=job_id, status="queued")
 
 
@@ -131,15 +167,44 @@ async def cancel_job(job_id: str, request: Request) -> JobCancelResponse:
     if not run_state_store:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job control plane is not initialized")
 
-    item = run_state_store.patch_job(job_id, status="cancelled", finished_at=_utcnow())
+    item = run_state_store.get_job(job_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
-    run_state_store.append_event(job_id, "job.cancelled", {"jobId": job_id, "status": "cancelled"})
-    return JobCancelResponse(job_id=job_id, status="cancelled")
+
+    current_status = str(item.get("status", "queued"))
+    if current_status in {"succeeded", "failed", "needs_attention", "cancelled"}:
+        return JobCancelResponse(
+            job_id=job_id,
+            status=current_status,
+            cancel_requested=False,
+            effective_status=current_status,
+        )
+
+    next_status = "cancelling" if current_status in {"queued", "running", "cancelling"} else "cancelled"
+    updated = run_state_store.patch_job(
+        job_id,
+        status=next_status,
+        cancel_requested=True,
+        cancel_requested_at=_utcnow(),
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
+
+    run_state_store.append_event(
+        job_id,
+        "job.cancellation_requested",
+        {"jobId": job_id, "status": next_status},
+    )
+    return JobCancelResponse(
+        job_id=job_id,
+        status=next_status,
+        cancel_requested=True,
+        effective_status=next_status,
+    )
 
 
 @router.get("/{job_id}/events")
-async def stream_job_events(job_id: str, request: Request):
+async def stream_job_events(job_id: str, request: Request, fromIndex: int = 0):
     run_state_store = getattr(request.app.state, "run_state_store", None)
     if not run_state_store:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job control plane is not initialized")
@@ -148,12 +213,25 @@ async def stream_job_events(job_id: str, request: Request):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Job not found: {job_id}")
 
     async def event_stream():
-        idx = 0
+        idx = max(0, fromIndex)
+        loop = asyncio.get_running_loop()
+        heartbeat_interval_s = 2.0
+        last_emit_ts = loop.time()
         while True:
             if await request.is_disconnected():
                 return
             events, idx = run_state_store.list_events(job_id, idx)
             if not events:
+                now = loop.time()
+                if now - last_emit_ts >= heartbeat_interval_s:
+                    payload = JobEventDto(
+                        event_type="heartbeat",
+                        payload={"jobId": job_id},
+                        created_at=datetime.now(timezone.utc),
+                        index=idx,
+                    ).model_dump(by_alias=True, mode="json")
+                    yield f"event: heartbeat\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    last_emit_ts = now
                 await asyncio.sleep(0.2)
                 continue
             for event in events:
@@ -164,5 +242,6 @@ async def stream_job_events(job_id: str, request: Request):
                     index=event["index"],
                 ).model_dump(by_alias=True, mode="json")
                 yield f"event: {payload['eventType']}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                last_emit_ts = loop.time()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

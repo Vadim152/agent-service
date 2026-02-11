@@ -99,6 +99,7 @@ class StepPatternType(str, Enum):
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    CANCELLING = "cancelling"
     NEEDS_ATTENTION = "needs_attention"
     SUCCEEDED = "succeeded"
     FAILED = "failed"

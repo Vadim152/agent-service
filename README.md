@@ -65,7 +65,7 @@ curl http://localhost:8000/health
 ## Main Config
 
 - `AGENT_SERVICE_API_PREFIX` (default `/api/v1`)
-- `AGENT_SERVICE_HOST` (default `0.0.0.0`)
+- `AGENT_SERVICE_HOST` (default `127.0.0.1`)
 - `AGENT_SERVICE_PORT` (default `8000`)
 - `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
 - `AGENT_SERVICE_ARTIFACTS_DIR` (default `.agent/artifacts`)

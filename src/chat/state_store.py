@@ -17,10 +17,20 @@ def _utcnow() -> str:
 class ChatStateStore:
     """Thread-safe in-memory chat state with filesystem snapshots."""
 
-    def __init__(self, memory_store: ChatMemoryStore) -> None:
+    def __init__(
+        self,
+        memory_store: ChatMemoryStore,
+        *,
+        max_sessions_per_project: int = 100,
+        max_messages_per_session: int = 400,
+        max_events_per_session: int = 2_000,
+    ) -> None:
         self._memory_store = memory_store
         self._lock = RLock()
         self._sessions: dict[str, dict[str, Any]] = {}
+        self._max_sessions_per_project = max(10, max_sessions_per_project)
+        self._max_messages_per_session = max(20, max_messages_per_session)
+        self._max_events_per_session = max(50, max_events_per_session)
         self._load_sessions()
 
     def _load_sessions(self) -> None:
@@ -31,6 +41,13 @@ class ChatStateStore:
             session.setdefault("messages", [])
             session.setdefault("events", [])
             session.setdefault("pending_tool_calls", [])
+            events = session.get("events", [])
+            for idx, event in enumerate(events):
+                event.setdefault("index", idx)
+            next_event_index = max((int(event.get("index", 0)) for event in events), default=-1) + 1
+            session["next_event_index"] = int(session.get("next_event_index", next_event_index))
+            self._trim_messages_locked(session)
+            self._trim_events_locked(session)
             self._sessions[session_id] = session
 
     def _persist(self, session_id: str) -> None:
@@ -38,6 +55,34 @@ class ChatStateStore:
         if not session:
             return
         self._memory_store.save_session(session)
+
+    def _trim_messages_locked(self, session: dict[str, Any]) -> None:
+        messages = session.setdefault("messages", [])
+        if len(messages) > self._max_messages_per_session:
+            del messages[: len(messages) - self._max_messages_per_session]
+
+    def _trim_events_locked(self, session: dict[str, Any]) -> None:
+        events = session.setdefault("events", [])
+        if len(events) > self._max_events_per_session:
+            del events[: len(events) - self._max_events_per_session]
+        derived_next_index = max((int(event.get("index", 0)) for event in events), default=-1) + 1
+        current_next_index = int(session.get("next_event_index", 0))
+        session["next_event_index"] = max(current_next_index, derived_next_index)
+
+    def _enforce_project_session_limit_locked(self, project_root: str) -> None:
+        project_sessions = [
+            value
+            for value in self._sessions.values()
+            if value.get("project_root") == project_root
+        ]
+        project_sessions.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+        stale = project_sessions[self._max_sessions_per_project :]
+        for session in stale:
+            session_id = str(session.get("session_id", "")).strip()
+            if not session_id:
+                continue
+            self._sessions.pop(session_id, None)
+            self._memory_store.delete_session(session_id)
 
     def create_session(
         self,
@@ -66,10 +111,12 @@ class ChatStateStore:
                 "messages": [],
                 "events": [],
                 "pending_tool_calls": [],
+                "next_event_index": 0,
                 "memory_snapshot": memory_snapshot,
             }
             self._sessions[session_id] = payload
             self.append_event(session_id, "session.created", {"sessionId": session_id})
+            self._enforce_project_session_limit_locked(project_root)
             self._persist(session_id)
             return deepcopy(payload), False
 
@@ -109,6 +156,8 @@ class ChatStateStore:
                 return None
             session.update(changes)
             session["updated_at"] = _utcnow()
+            self._trim_messages_locked(session)
+            self._trim_events_locked(session)
             self._persist(session_id)
             return deepcopy(session)
 
@@ -135,6 +184,7 @@ class ChatStateStore:
                 "created_at": _utcnow(),
             }
             session["messages"].append(payload)
+            self._trim_messages_locked(session)
             session["updated_at"] = _utcnow()
             self._persist(session_id)
             return deepcopy(payload)
@@ -144,14 +194,16 @@ class ChatStateStore:
             session = self._sessions.get(session_id)
             if not session:
                 return None
-            index = len(session["events"])
+            index = int(session.get("next_event_index", 0))
             event = {
                 "event_type": event_type,
                 "payload": payload,
                 "created_at": _utcnow(),
                 "index": index,
             }
+            session["next_event_index"] = index + 1
             session["events"].append(event)
+            self._trim_events_locked(session)
             session["updated_at"] = _utcnow()
             self._persist(session_id)
             return deepcopy(event)
@@ -161,9 +213,11 @@ class ChatStateStore:
             session = self._sessions.get(session_id)
             if not session:
                 return [], since_index
+            floor_index = max(0, since_index)
             events = session.get("events", [])
-            selected = events[since_index:]
-            return deepcopy(selected), len(events)
+            selected = [event for event in events if int(event.get("index", 0)) >= floor_index]
+            next_index = int(session.get("next_event_index", len(events)))
+            return deepcopy(selected), next_index
 
     def set_pending_tool_call(
         self,

@@ -541,6 +541,9 @@ class ChatAgentRuntime:
     ) -> AsyncIterator[bytes]:
         _ = self._require_session(session_id)
         index = max(0, from_index)
+        loop = asyncio.get_running_loop()
+        heartbeat_interval_s = 2.0
+        last_emit_ts = loop.time()
         while True:
             events, next_index = self.state_store.list_events(session_id, since_index=index)
             if events:
@@ -556,5 +559,18 @@ class ChatAgentRuntime:
                         f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     )
                     yield chunk.encode("utf-8")
+                last_emit_ts = loop.time()
+            else:
+                now = loop.time()
+                if now - last_emit_ts >= heartbeat_interval_s:
+                    payload = {
+                        "eventType": "heartbeat",
+                        "payload": {"sessionId": session_id},
+                        "createdAt": _utcnow(),
+                        "index": next_index,
+                    }
+                    chunk = f"event: heartbeat\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    yield chunk.encode("utf-8")
+                    last_emit_ts = now
             index = next_index
             await asyncio.sleep(0.15)

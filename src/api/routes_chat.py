@@ -58,6 +58,21 @@ def _runtime_to_http_error(exc: ChatRuntimeError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
+def _schedule_background_task(
+    request: Request,
+    *,
+    source: str,
+    worker,
+    metadata: dict[str, str],
+    on_error,
+) -> None:
+    registry = getattr(request.app.state, "task_registry", None)
+    if registry is None:
+        asyncio.create_task(worker())
+        return
+    registry.create_task(worker(), source=source, metadata=metadata, on_error=on_error)
+
+
 def _parse_iso_datetime(value: str | None) -> datetime:
     raw = str(value or "").strip()
     if not raw:
@@ -194,17 +209,36 @@ async def send_chat_message(
     run_id = str(uuid.uuid4())
 
     async def _worker() -> None:
-        try:
-            await runtime.process_message(
-                session_id=session_id,
-                run_id=run_id,
-                message_id=payload.message_id or str(uuid.uuid4()),
-                content=payload.content,
-            )
-        except Exception as exc:  # pragma: no cover - background branch
-            logger.warning("Chat message processing failed for session %s: %s", session_id, exc)
+        await runtime.process_message(
+            session_id=session_id,
+            run_id=run_id,
+            message_id=payload.message_id or str(uuid.uuid4()),
+            content=payload.content,
+        )
 
-    asyncio.create_task(_worker())
+    def _on_error(exc: BaseException) -> None:
+        logger.warning("Chat message processing failed for session %s: %s", session_id, exc)
+        try:
+            runtime.state_store.append_event(  # type: ignore[attr-defined]
+                session_id,
+                "message.worker_failed",
+                {"sessionId": session_id, "runId": run_id, "error": str(exc)},
+            )
+            runtime.state_store.update_session(  # type: ignore[attr-defined]
+                session_id,
+                activity="error",
+                current_action="Message processing failed",
+            )
+        except Exception:  # pragma: no cover - defensive branch
+            logger.warning("Failed to persist chat worker failure for session %s", session_id)
+
+    _schedule_background_task(
+        request,
+        source="chat.message",
+        worker=_worker,
+        metadata={"sessionId": session_id, "runId": run_id},
+        on_error=_on_error,
+    )
     return ChatMessageAcceptedResponse(session_id=session_id, run_id=run_id, accepted=True)
 
 
@@ -225,17 +259,36 @@ async def submit_tool_decision(
     run_id = str(uuid.uuid4())
 
     async def _worker() -> None:
-        try:
-            await runtime.process_tool_decision(
-                session_id=session_id,
-                run_id=run_id,
-                permission_id=payload.permission_id,
-                decision=payload.decision,
-            )
-        except Exception as exc:  # pragma: no cover - background branch
-            logger.warning("Chat permission decision failed for session %s: %s", session_id, exc)
+        await runtime.process_tool_decision(
+            session_id=session_id,
+            run_id=run_id,
+            permission_id=payload.permission_id,
+            decision=payload.decision,
+        )
 
-    asyncio.create_task(_worker())
+    def _on_error(exc: BaseException) -> None:
+        logger.warning("Chat permission decision failed for session %s: %s", session_id, exc)
+        try:
+            runtime.state_store.append_event(  # type: ignore[attr-defined]
+                session_id,
+                "permission.worker_failed",
+                {"sessionId": session_id, "runId": run_id, "error": str(exc)},
+            )
+            runtime.state_store.update_session(  # type: ignore[attr-defined]
+                session_id,
+                activity="error",
+                current_action="Permission processing failed",
+            )
+        except Exception:  # pragma: no cover - defensive branch
+            logger.warning("Failed to persist permission worker failure for session %s", session_id)
+
+    _schedule_background_task(
+        request,
+        source="chat.permission",
+        worker=_worker,
+        metadata={"sessionId": session_id, "runId": run_id},
+        on_error=_on_error,
+    )
     return ChatToolDecisionResponse(session_id=session_id, run_id=run_id, accepted=True)
 
 
@@ -417,7 +470,7 @@ async def execute_chat_command(
 
 
 @router.get("/sessions/{session_id}/stream")
-async def stream_chat_events(session_id: str, request: Request):
+async def stream_chat_events(session_id: str, request: Request, fromIndex: int = 0):
     runtime = _get_runtime(request)
     try:
         exists = await runtime.has_session(session_id)
@@ -428,7 +481,7 @@ async def stream_chat_events(session_id: str, request: Request):
 
     async def _stream():
         try:
-            async for chunk in runtime.stream_events(session_id=session_id):
+            async for chunk in runtime.stream_events(session_id=session_id, from_index=max(0, fromIndex)):
                 if await request.is_disconnected():
                     return
                 yield chunk

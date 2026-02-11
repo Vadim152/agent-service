@@ -1,5 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+import asyncio
+import json
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -203,3 +205,26 @@ def test_status_exposes_retry_metadata_when_present() -> None:
     assert payload["lastRetryMessage"] == "Too Many Requests: Rate limit exceeded"
     assert payload["lastRetryAttempt"] == 2
     assert payload["lastRetryAt"] is not None
+
+
+def test_chat_stream_supports_from_index() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+    app.state.chat_runtime.state_store.append_event(session_id, "event.zero", {"v": 0})
+    app.state.chat_runtime.state_store.append_event(session_id, "event.one", {"v": 1})
+
+    async def _collect_first_chunk() -> bytes:
+        stream = app.state.chat_runtime.stream_events(session_id=session_id, from_index=2)
+        try:
+            return await asyncio.wait_for(anext(stream), timeout=2.0)
+        finally:
+            await stream.aclose()
+
+    chunk = asyncio.run(_collect_first_chunk()).decode("utf-8")
+    data_line = next(line for line in chunk.splitlines() if line.startswith("data: "))
+    payload = json.loads(data_line[len("data: ") :])
+    assert payload["index"] == 2
+    assert payload["eventType"] == "event.one"
+

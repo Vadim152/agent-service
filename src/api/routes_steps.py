@@ -8,9 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from fastapi import Body, APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from agents.orchestrator import Orchestrator
+from app.config import get_settings
 from api.schemas import (
     ScanStepsRequest,
     ScanStepsResponse,
@@ -23,6 +24,7 @@ from domain.models import StepDefinition
 
 router = APIRouter(prefix="/steps", tags=["steps"])
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
 def _get_orchestrator(request: Request) -> Orchestrator:
@@ -74,7 +76,10 @@ def _preview_body(raw_body: bytes, limit: int = 512) -> str:
     """Возвращает безопасный префикс тела запроса для логов."""
 
     if not raw_body:
-        return ""
+        return "<0 bytes>"
+
+    if not settings.log_request_bodies:
+        return f"<{len(raw_body)} bytes>"
 
     try:
         text = raw_body.decode("utf-8", errors="replace")
@@ -203,7 +208,7 @@ async def scan_steps(
             mismatch_note = f"invalid content-length header: {content_length_header!r}"
 
         logger.warning(
-            "API: projectRoot is missing for scan-steps. Details: %s, headers=%s, body_preview=%s, mismatch=%s",
+            "API: projectRoot is missing for scan-steps. Details: %s, headers=%s, body=%s, mismatch=%s",
             extraction_details,
             header_snapshot,
             _preview_body(raw_body),
@@ -227,7 +232,7 @@ async def scan_steps(
         )
 
     logger.info(
-        "API: запуск сканирования шагов для %s (details: %s, body_preview=%s)",
+        "API: запуск сканирования шагов для %s (details: %s, body=%s)",
         project_root,
         extraction_details,
         _preview_body(raw_body),

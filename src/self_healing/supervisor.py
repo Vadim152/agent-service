@@ -47,9 +47,26 @@ class ExecutionSupervisor:
             return max(self.max_auto_reruns, 3), max(self.max_total_duration_s, 600)
         return min(self.max_auto_reruns, 1), min(self.max_total_duration_s, 180)
 
+    def _is_cancellation_requested(self, job_id: str) -> bool:
+        job = self.run_state_store.get_job(job_id)
+        if not job:
+            return True
+        if bool(job.get("cancel_requested")):
+            return True
+        status = str(job.get("status", "")).strip().lower()
+        return status in {"cancelling", "cancelled"}
+
     async def execute_job(self, job_id: str) -> None:
         job = self.run_state_store.get_job(job_id)
         if not job:
+            return
+        if self._is_cancellation_requested(job_id):
+            self.run_state_store.patch_job(job_id, status="cancelled", finished_at=_utcnow())
+            self.run_state_store.append_event(
+                job_id,
+                "job.cancelled",
+                {"jobId": job_id, "status": "cancelled", "reason": "cancelled_before_start"},
+            )
             return
         metrics.inc("jobs.started")
 
@@ -67,6 +84,7 @@ class ExecutionSupervisor:
 
         start = asyncio.get_running_loop().time()
         succeeded = False
+        cancelled = False
         incident: dict[str, Any] | None = None
         latest_result: dict[str, Any] | None = None
 
@@ -103,9 +121,16 @@ class ExecutionSupervisor:
                 },
             )
 
-            current_job = self.run_state_store.get_job(job_id)
-            if current_job and current_job.get("status") == "cancelled":
-                return
+            if self._is_cancellation_requested(job_id):
+                self.run_state_store.patch_attempt(
+                    job_id,
+                    attempt_id,
+                    status="cancelled",
+                    finished_at=_utcnow(),
+                    artifacts={},
+                )
+                cancelled = True
+                break
 
             artifacts: dict[str, str] = {}
             try:
@@ -119,6 +144,21 @@ class ExecutionSupervisor:
                         language=job.get("language"),
                     )
                 latest_result = result
+                if self._is_cancellation_requested(job_id):
+                    self.run_state_store.patch_attempt(
+                        job_id,
+                        attempt_id,
+                        status="cancelled",
+                        finished_at=_utcnow(),
+                        artifacts=artifacts,
+                    )
+                    self.run_state_store.append_event(
+                        job_id,
+                        "attempt.cancelled",
+                        {"jobId": job_id, "runId": run_id, "attemptId": attempt_id, "status": "cancelled"},
+                    )
+                    cancelled = True
+                    break
                 feature_payload = result.get("feature", {})
                 unmatched = feature_payload.get("unmappedSteps", [])
                 has_failure = len(unmatched) > 0
@@ -262,10 +302,13 @@ class ExecutionSupervisor:
                 incident = self._build_incident(job, run_id, attempt_id, fallback_classification, str(exc))
                 break
 
-        final_status = "succeeded" if succeeded else "needs_attention"
+        if cancelled:
+            final_status = "cancelled"
+        else:
+            final_status = "succeeded" if succeeded else "needs_attention"
         metrics.inc(f"jobs.final_status.{final_status}")
         incident_uri = None
-        if incident:
+        if incident and final_status != "cancelled":
             incident_uri = self.artifact_store.write_incident(job_id, incident)
             self.run_state_store.append_event(
                 job_id,
@@ -278,7 +321,11 @@ class ExecutionSupervisor:
                 },
             )
 
-        feature_result = self._build_feature_result(latest_result) if latest_result else None
+        feature_result = (
+            self._build_feature_result(latest_result)
+            if latest_result and final_status != "cancelled"
+            else None
+        )
         self.run_state_store.patch_job(
             job_id,
             status=final_status,
@@ -286,6 +333,12 @@ class ExecutionSupervisor:
             incident_uri=incident_uri,
             result=feature_result,
         )
+        if final_status == "cancelled":
+            self.run_state_store.append_event(
+                job_id,
+                "job.cancelled",
+                {"jobId": job_id, "runId": run_id, "status": "cancelled"},
+            )
         self.run_state_store.append_event(
             job_id,
             "job.finished",
@@ -353,4 +406,3 @@ class ExecutionSupervisor:
             "pipeline": result.get("pipeline", []),
             "fileStatus": result.get("fileStatus"),
         }
-

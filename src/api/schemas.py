@@ -326,6 +326,8 @@ class JobEventDto(ApiBaseModel):
 class JobCancelResponse(ApiBaseModel):
     job_id: str = Field(..., alias="jobId")
     status: str
+    cancel_requested: bool = Field(default=False, alias="cancelRequested")
+    effective_status: str | None = Field(default=None, alias="effectiveStatus")
 
 
 class JobAttemptsResponse(ApiBaseModel):

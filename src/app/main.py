@@ -18,6 +18,7 @@ from chat.memory_store import ChatMemoryStore
 from chat.runtime import ChatAgentRuntime
 from infrastructure.artifact_store import ArtifactStore
 from infrastructure.run_state_store import RunStateStore
+from infrastructure.task_registry import TaskRegistry
 from self_healing.supervisor import ExecutionSupervisor
 
 warnings.filterwarnings(
@@ -42,9 +43,9 @@ async def _validation_exception_handler(
     """Логировать тело запроса при ошибках валидации."""
 
     raw_body = await request.body()
-    body_preview = "<empty>"
-    if raw_body:
-        body_preview = raw_body[:1000].decode("utf-8", errors="replace")
+    body_preview = f"<{len(raw_body)} bytes>"
+    if settings.log_request_bodies and raw_body:
+        body_preview = raw_body[:512].decode("utf-8", errors="replace")
 
     logger.warning(
         "[Validation] %s %s: errors=%s | body=%s",
@@ -85,6 +86,7 @@ async def on_startup() -> None:
             memory_store=chat_memory_store,
             llm_client=getattr(orchestrator, "llm_client", None),
         )
+        app.state.task_registry = TaskRegistry()
         logger.info("[Startup] Оркестратор и control-plane компоненты созданы")
     except Exception as exc:  # pragma: no cover - ранняя инициализация
         app.state.init_error = f"Ошибка создания оркестратора: {exc}"
