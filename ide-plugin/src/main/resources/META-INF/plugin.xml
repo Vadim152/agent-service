@@ -1,6 +1,6 @@
 <idea-plugin>
     <id>ru.sber.ai-cucumber-assistant</id>
-    <name>GigaCode Chat</name>
+    <name>Агентум</name>
     <vendor email="ai-platform@sber.ru">Sber</vendor>
     <description>
         <![CDATA[
@@ -14,13 +14,13 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow factoryClass="ru.sber.aitestplugin.ui.toolwindow.AiToolWindowFactory"
-                    id="GigaCode Chat"
+                    id="Агентум"
                     anchor="right"
                     icon="/META-INF/pluginIcon.svg" />
         <projectConfigurable instance="ru.sber.aitestplugin.config.AiTestPluginSettingsConfigurable"
-                             displayName="AI Test Agent"
+                             displayName="Агентум"
                              groupId="tools" />
-        <notificationGroup id="AI Cucumber Assistant" displayType="BALLOON" isLogByDefault="true" />
+        <notificationGroup id="Агентум" displayType="BALLOON" isLogByDefault="true" />
     </extensions>
 
 </idea-plugin>

@@ -41,7 +41,7 @@ import java.net.URL
 import java.util.Base64
 
 /**
- * Панель настроек плагина (Settings/Preferences → Tools → "AI Test Agent").
+ * Панель настроек плагина (Settings/Preferences → Tools → "Агентум").
  */
 class AiTestPluginSettingsConfigurable(
     project: Project? = null,
@@ -82,7 +82,7 @@ class AiTestPluginSettingsConfigurable(
 
     constructor(project: Project) : this(project, HttpBackendClient())
 
-    override fun getDisplayName(): String = "AI Test Agent"
+    override fun getDisplayName(): String = "Агентум"
 
     override fun createComponent(): JComponent {
         if (rootPanel.componentCount == 0) {
@@ -595,7 +595,7 @@ class AiTestPluginSettingsConfigurable(
 
     private fun notify(message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("AI Cucumber Assistant")
+            .getNotificationGroup("Агентум")
             .createNotification(message, type)
             .notify(project)
     }

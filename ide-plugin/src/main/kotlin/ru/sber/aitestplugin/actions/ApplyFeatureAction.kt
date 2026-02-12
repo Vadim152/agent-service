@@ -103,7 +103,7 @@ class ApplyFeatureAction : AnAction() {
 
     private fun notify(project: Project, message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("AI Cucumber Assistant")
+            .getNotificationGroup("Агентум")
             .createNotification(message, type)
             .notify(project)
     }

@@ -69,6 +69,18 @@ curl http://localhost:8000/health
 - `AGENT_SERVICE_PORT` (default `8000`)
 - `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
 - `AGENT_SERVICE_ARTIFACTS_DIR` (default `.agent/artifacts`)
+- `GIGACHAT_VERIFY_SSL` (default `true`)
+
+## SSL Troubleshooting (Corporate Certificates)
+
+If chat requests fail with `CERTIFICATE_VERIFY_FAILED` and your network uses TLS interception,
+you can disable SSL verification for local development:
+
+```powershell
+$env:GIGACHAT_VERIFY_SSL='false'
+```
+
+This is less secure and should be used only in trusted local environments.
 
 ## Verification
 

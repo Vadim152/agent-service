@@ -44,6 +44,10 @@ import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.Insets
+import java.awt.RenderingHints
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -59,6 +63,7 @@ import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.UIManager
+import javax.swing.border.AbstractBorder
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 
@@ -80,8 +85,11 @@ class AiToolWindowPanel(
 
     private val cardLayout = CardLayout()
     private val bodyCards = JPanel(cardLayout)
-    private val timelineModel = DefaultListModel<UiLine>()
-    private val timeline = JBList(timelineModel)
+    private val timelineLines = mutableListOf<UiLine>()
+    private val timelineContainer = JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        isOpaque = false
+    }
     private val historyModel = DefaultListModel<ChatSessionListItemDto>()
     private val historyList = JBList(historyModel)
 
@@ -111,6 +119,14 @@ class AiToolWindowPanel(
     private var timelineScrollPane: JBScrollPane? = null
     private var pendingHistoryForRender: ChatHistoryResponseDto? = null
     private var pendingStatusForRender: ChatSessionStatusResponseDto? = null
+    @Volatile
+    private var initialSessionRequested: Boolean = false
+    @Volatile
+    private var initialSessionReady: Boolean = false
+    @Volatile
+    private var forceScrollToBottom: Boolean = false
+    private val sessionStateLock = Any()
+    private var lastRenderedServerTailKey: String? = null
 
     init {
         border = JBUI.Borders.empty(8, 8, 10, 8)
@@ -118,6 +134,7 @@ class AiToolWindowPanel(
         isOpaque = true
         add(buildRoot(), BorderLayout.CENTER)
         updateStatusLabel()
+        initialSessionRequested = true
         ensureSessionAsync(forceNew = true)
     }
 
@@ -205,17 +222,15 @@ class AiToolWindowPanel(
     }
 
     private fun buildChatCard(): JPanel {
-        timeline.cellRenderer = BubbleRenderer()
-        timeline.fixedCellHeight = -1
-        timeline.background = theme.panelBackground
-        timeline.foreground = theme.primaryText
-        timeline.selectionBackground = theme.panelBackground
-        timeline.selectionForeground = theme.primaryText
-        timeline.emptyText.text = "Ask anything about your project"
+        val timelineViewport = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(timelineContainer, BorderLayout.NORTH)
+        }
+        renderTimeline()
 
         return JPanel(BorderLayout()).apply {
             isOpaque = false
-            add(JBScrollPane(timeline).apply {
+            add(JBScrollPane(timelineViewport).apply {
                 border = JBUI.Borders.compound(
                     BorderFactory.createLineBorder(theme.containerBorder, 1, true),
                     JBUI.Borders.empty(2)
@@ -308,8 +323,8 @@ class AiToolWindowPanel(
 
         sendButton.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         sendButton.preferredSize = Dimension(42, 34)
-        sendButton.border = BorderFactory.createEmptyBorder(0, 0, 0, 0)
-        sendButton.isBorderPainted = false
+        sendButton.border = RoundedLineBorder(theme.controlBorder, 1, 14)
+        sendButton.isBorderPainted = true
         sendButton.isFocusPainted = false
         sendButton.isContentAreaFilled = true
         sendButton.addActionListener { onSendOrStop() }
@@ -331,10 +346,17 @@ class AiToolWindowPanel(
                         background = theme.inputBackground
                         viewport.background = theme.inputBackground
                     }, BorderLayout.CENTER)
-                    add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
-                        isOpaque = false
-                        add(sendButton)
-                    }, BorderLayout.EAST)
+                    add(
+                        JPanel(BorderLayout()).apply {
+                            isOpaque = false
+                            border = JBUI.Borders.emptyTop(6)
+                            add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
+                                isOpaque = false
+                                add(sendButton)
+                            }, BorderLayout.EAST)
+                        },
+                        BorderLayout.SOUTH
+                    )
                 },
                 BorderLayout.CENTER
             )
@@ -387,13 +409,16 @@ class AiToolWindowPanel(
             return
         }
         ApplicationManager.getApplication().executeOnPooledThread {
-            val active = ensureSessionBlocking(forceNew = false) ?: return@executeOnPooledThread
+            val requireFreshSession = sessionId.isNullOrBlank() || (initialSessionRequested && !initialSessionReady)
+            val active = ensureSessionBlocking(forceNew = requireFreshSession) ?: return@executeOnPooledThread
             try {
                 backendClient.sendChatMessage(active, ChatMessageRequestDto(content = message))
                 SwingUtilities.invokeLater {
                     inputArea.text = ""
                     suppressSlashPopupUntilReset = false
                     hideSlashPopup()
+                    forceScrollToBottom = true
+                    scrollToBottomIfNeeded(true)
                     setConnectionState(ConnectionState.CONNECTED)
                 }
                 refreshControlPlaneAsync()
@@ -419,6 +444,10 @@ class AiToolWindowPanel(
     }
 
     private fun ensureSessionAsync(forceNew: Boolean) {
+        if (forceNew) {
+            initialSessionRequested = true
+            initialSessionReady = false
+        }
         ApplicationManager.getApplication().executeOnPooledThread {
             val active = ensureSessionBlocking(forceNew) ?: return@executeOnPooledThread
             SwingUtilities.invokeLater {
@@ -431,51 +460,72 @@ class AiToolWindowPanel(
     }
 
     private fun ensureSessionBlocking(forceNew: Boolean): String? {
-        if (!forceNew && !sessionId.isNullOrBlank()) return sessionId
-
-        val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
-        if (projectRoot.isBlank()) {
-            SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Project root is empty") }
-            return null
-        }
-
-        return try {
-            val created = backendClient.createChatSession(
-                ChatSessionCreateRequestDto(
-                    projectRoot = projectRoot,
-                    source = "ide-plugin",
-                    profile = "quick",
-                    reuseExisting = !forceNew
-                )
-            )
-            sessionId = created.sessionId
-            latestActivity = "idle"
-            streamReconnectAttempt = 0
-            streamFromIndex = 0
-            if (forceNew || !created.reused) {
-                SwingUtilities.invokeLater {
-                    uiApplyTimer.stop()
-                    pendingHistoryForRender = null
-                    pendingStatusForRender = null
-                    timelineModel.clear()
-                    renderPendingApprovals(emptyList())
-                }
+        synchronized(sessionStateLock) {
+            if (!forceNew && !sessionId.isNullOrBlank()) {
+                initialSessionReady = true
+                return sessionId
             }
-            created.sessionId
-        } catch (ex: Exception) {
-            logger.warn("Failed to create session", ex)
-            SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Init failed: ${ex.message}") }
-            null
+            if (forceNew) {
+                initialSessionRequested = true
+                initialSessionReady = false
+            }
+
+            val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
+            if (projectRoot.isBlank()) {
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Project root is empty") }
+                return null
+            }
+
+            return try {
+                val created = backendClient.createChatSession(
+                    ChatSessionCreateRequestDto(
+                        projectRoot = projectRoot,
+                        source = "ide-plugin",
+                        profile = "quick",
+                        reuseExisting = !forceNew
+                    )
+                )
+                sessionId = created.sessionId
+                latestActivity = "idle"
+                streamReconnectAttempt = 0
+                streamFromIndex = 0
+                initialSessionReady = true
+                if (forceNew || !created.reused) {
+                    SwingUtilities.invokeLater {
+                        uiApplyTimer.stop()
+                        pendingHistoryForRender = null
+                        pendingStatusForRender = null
+                        forceScrollToBottom = false
+                        timelineLines.clear()
+                        lastRenderedServerTailKey = null
+                        renderTimeline()
+                        renderPendingApprovals(emptyList())
+                    }
+                }
+                created.sessionId
+            } catch (ex: Exception) {
+                if (forceNew) {
+                    initialSessionReady = false
+                }
+                logger.warn("Failed to create session", ex)
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Init failed: ${ex.message}") }
+                null
+            }
         }
     }
 
     private fun activateSession(targetSessionId: String) {
         sessionId = targetSessionId
+        initialSessionRequested = true
+        initialSessionReady = true
         latestActivity = "idle"
+        forceScrollToBottom = false
         uiApplyTimer.stop()
         pendingHistoryForRender = null
         pendingStatusForRender = null
-        timelineModel.clear()
+        timelineLines.clear()
+        lastRenderedServerTailKey = null
+        renderTimeline()
         renderPendingApprovals(emptyList())
         streamReconnectAttempt = 0
         streamFromIndex = 0
@@ -539,10 +589,17 @@ class AiToolWindowPanel(
     }
 
     private fun renderHistory(history: ChatHistoryResponseDto) {
-        val shouldStickToBottom = isUserNearBottom()
+        val shouldStickToBottom = forceScrollToBottom || isUserNearBottom()
+        val seenMessageKeys = mutableSetOf<String>()
         val serverLines = history.messages
             .filterNot { it.role.equals("assistant", ignoreCase = true) && it.content.trim().isBlank() }
             .sortedBy { it.createdAt }
+            .filter { message ->
+                val key = message.messageId.ifBlank {
+                    "${message.role}:${message.createdAt.toEpochMilli()}:${message.content.hashCode()}"
+                }
+                seenMessageKeys.add(key)
+            }
             .map { message ->
                 val lineKind = when (message.role.lowercase()) {
                     "user" -> UiLineKind.USER
@@ -561,12 +618,8 @@ class AiToolWindowPanel(
                 )
             }
 
-        val localLines = (0 until timelineModel.size)
-            .map { timelineModel.get(it) }
-            .filter { it.source == UiLineSource.LOCAL_SYSTEM }
-        val progressLine = (0 until timelineModel.size)
-            .map { timelineModel.get(it) }
-            .firstOrNull { it.source == UiLineSource.PROGRESS }
+        val localLines = timelineLines.filter { it.source == UiLineSource.LOCAL_SYSTEM }
+        val progressLine = timelineLines.firstOrNull { it.source == UiLineSource.PROGRESS }
 
         val targetLines = buildList {
             addAll(serverLines)
@@ -576,6 +629,13 @@ class AiToolWindowPanel(
         replaceTimelineModelIncrementally(targetLines)
         renderPendingApprovals(history.pendingPermissions)
         scrollToBottomIfNeeded(shouldStickToBottom)
+        val currentTailKey = serverLines.lastOrNull()?.stableKey
+        if (forceScrollToBottom && currentTailKey != null && currentTailKey != lastRenderedServerTailKey) {
+            forceScrollToBottom = false
+        }
+        if (currentTailKey != null) {
+            lastRenderedServerTailKey = currentTailKey
+        }
     }
 
     private fun renderStatus(status: ChatSessionStatusResponseDto) {
@@ -788,7 +848,7 @@ class AiToolWindowPanel(
 
     private fun appendSystemLine(text: String) {
         val shouldStickToBottom = isUserNearBottom()
-        timelineModel.addElement(
+        timelineLines.add(
             UiLine(
                 kind = UiLineKind.SYSTEM,
                 text = text,
@@ -797,14 +857,15 @@ class AiToolWindowPanel(
                 source = UiLineSource.LOCAL_SYSTEM
             )
         )
+        renderTimeline()
         scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
     private fun upsertProgressLine(text: String) {
         val shouldStickToBottom = isUserNearBottom()
-        val idx = (0 until timelineModel.size).firstOrNull { timelineModel.get(it).source == UiLineSource.PROGRESS }
+        val idx = timelineLines.indexOfFirst { it.source == UiLineSource.PROGRESS }.takeIf { it >= 0 }
         if (idx == null) {
-            timelineModel.addElement(
+            timelineLines.add(
                 UiLine(
                     kind = UiLineKind.PROGRESS,
                     text = text,
@@ -814,40 +875,27 @@ class AiToolWindowPanel(
                 )
             )
         } else {
-            val existing = timelineModel.get(idx)
+            val existing = timelineLines[idx]
             if (existing.text != text) {
-                timelineModel.set(
-                    idx,
-                    existing.copy(text = text, createdAt = Instant.now())
-                )
+                timelineLines[idx] = existing.copy(text = text, createdAt = Instant.now())
             }
         }
+        renderTimeline()
         scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
     private fun removeProgressLine() {
-        val idx = (0 until timelineModel.size).firstOrNull { timelineModel.get(it).source == UiLineSource.PROGRESS } ?: return
-        timelineModel.remove(idx)
+        val idx = timelineLines.indexOfFirst { it.source == UiLineSource.PROGRESS }
+        if (idx < 0) return
+        timelineLines.removeAt(idx)
+        renderTimeline()
     }
 
     private fun replaceTimelineModelIncrementally(target: List<UiLine>) {
-        val commonSize = minOf(timelineModel.size, target.size)
-        for (index in 0 until commonSize) {
-            val current = timelineModel.get(index)
-            val next = target[index]
-            if (current != next) {
-                timelineModel.set(index, next)
-            }
-        }
-        if (timelineModel.size > target.size) {
-            for (index in timelineModel.size - 1 downTo target.size) {
-                timelineModel.remove(index)
-            }
-        } else if (target.size > timelineModel.size) {
-            for (index in timelineModel.size until target.size) {
-                timelineModel.addElement(target[index])
-            }
-        }
+        if (timelineLines == target) return
+        timelineLines.clear()
+        timelineLines.addAll(target)
+        renderTimeline()
     }
 
     private fun isUserNearBottom(): Boolean {
@@ -980,6 +1028,74 @@ class AiToolWindowPanel(
         return JBColor(resolved, resolved)
     }
 
+    private fun renderTimeline() {
+        timelineContainer.removeAll()
+        if (timelineLines.isEmpty()) {
+            timelineContainer.add(
+                JBLabel("Ask anything about your project").apply {
+                    foreground = theme.secondaryText
+                    border = JBUI.Borders.empty(12, 10, 8, 10)
+                }
+            )
+        } else {
+            timelineLines.forEach { line -> timelineContainer.add(buildTimelineLine(line)) }
+        }
+        timelineContainer.revalidate()
+        timelineContainer.repaint()
+    }
+
+    private fun buildTimelineLine(line: UiLine): JPanel {
+        val textArea = JBTextArea(line.text).apply {
+            isEditable = false
+            isFocusable = true
+            isOpaque = false
+            lineWrap = true
+            wrapStyleWord = true
+            font = font.deriveFont(13.5f)
+            foreground = if (line.kind == UiLineKind.SYSTEM) theme.systemText else theme.primaryText
+            border = JBUI.Borders.empty(8, 11)
+        }
+
+        val row = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            border = JBUI.Borders.empty(4, 8, 4, 8)
+        }
+
+        when (line.kind) {
+            UiLineKind.USER -> {
+                val bubble = JPanel(BorderLayout()).apply {
+                    isOpaque = true
+                    background = theme.userBubble
+                    border = JBUI.Borders.compound(
+                        RoundedLineBorder(theme.userBubbleBorder, 1, 18),
+                        JBUI.Borders.empty()
+                    )
+                    add(textArea, BorderLayout.CENTER)
+                }
+                row.add(bubble, BorderLayout.CENTER)
+            }
+            UiLineKind.ASSISTANT -> {
+                row.add(textArea, BorderLayout.CENTER)
+            }
+            UiLineKind.PROGRESS -> {
+                val bubble = JPanel(BorderLayout()).apply {
+                    isOpaque = true
+                    background = theme.progressBubble
+                    border = JBUI.Borders.compound(
+                        RoundedLineBorder(theme.containerBorder, 1, 14),
+                        JBUI.Borders.empty()
+                    )
+                    add(textArea, BorderLayout.CENTER)
+                }
+                row.add(bubble, BorderLayout.WEST)
+            }
+            UiLineKind.SYSTEM -> {
+                row.add(textArea, BorderLayout.WEST)
+            }
+        }
+        return row
+    }
+
     private inner class UiTheme {
         val panelBackground: JBColor = uiThemeColor(listOf("Panel.background"), Color(0x2E, 0x32, 0x39))
         val containerBackground: JBColor = uiThemeColor(listOf("TextArea.background", "Panel.background"), Color(0x35, 0x39, 0x41))
@@ -992,62 +1108,25 @@ class AiToolWindowPanel(
         val systemText: JBColor = uiThemeColor(listOf("Component.errorFocusColor", "ValidationTooltip.errorForeground"), Color(0xD8, 0x5D, 0x5D))
         val sendButtonBackground: JBColor = uiThemeColor(listOf("Button.default.background"), Color(0x66, 0x7A, 0x9B))
         val stopButtonBackground: JBColor = uiThemeColor(listOf("Actions.Red"), Color(0xC2, 0x4A, 0x4A))
-        val userBubble: JBColor = uiThemeColor(listOf("EditorPane.background", "TextArea.background"), Color(0x47, 0x4D, 0x58))
-        val assistantBubble: JBColor = uiThemeColor(listOf("TextArea.background", "Panel.background"), Color(0x3E, 0x44, 0x4E))
+        val userBubble: JBColor = uiThemeColor(listOf("EditorPane.background", "TextArea.background"), Color(0x56, 0x5D, 0x69))
+        val userBubbleBorder: JBColor = uiThemeColor(listOf("Component.borderColor", "Borders.color"), Color(0x63, 0x6B, 0x77))
         val progressBubble: JBColor = uiThemeColor(listOf("ToolTip.background", "Panel.background"), Color(0x4E, 0x55, 0x61))
     }
 
-    private inner class BubbleRenderer : DefaultListCellRenderer() {
-        override fun getListCellRendererComponent(
-            list: JList<*>,
-            value: Any?,
-            index: Int,
-            isSelected: Boolean,
-            cellHasFocus: Boolean
-        ): Component {
-            val line = value as? UiLine ?: return super.getListCellRendererComponent(list, "", index, false, false)
-            val textArea = JBTextArea(line.text).apply {
-                isEditable = false
-                isFocusable = false
-                isOpaque = false
-                lineWrap = true
-                wrapStyleWord = true
-                border = JBUI.Borders.empty(8, 11)
-                font = list.font.deriveFont(13.5f)
-            }
+    private class RoundedLineBorder(
+        private val color: Color,
+        private val strokeWidth: Int,
+        private val arc: Int
+    ) : AbstractBorder() {
+        override fun getBorderInsets(c: Component?): Insets = Insets(1, 1, 1, 1)
 
-            if (line.kind == UiLineKind.SYSTEM) {
-                textArea.foreground = theme.systemText
-                return JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                    border = JBUI.Borders.empty(2, 10, 2, 10)
-                    add(textArea, BorderLayout.WEST)
-                }
-            }
-
-            textArea.foreground = theme.primaryText
-            val bubbleBackground = when (line.kind) {
-                UiLineKind.USER -> theme.userBubble
-                UiLineKind.ASSISTANT -> theme.assistantBubble
-                UiLineKind.PROGRESS -> theme.progressBubble
-                UiLineKind.SYSTEM -> theme.panelBackground
-            }
-
-            val bubble = JPanel(BorderLayout()).apply {
-                isOpaque = true
-                background = bubbleBackground
-                border = JBUI.Borders.compound(
-                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
-                    JBUI.Borders.empty()
-                )
-                add(textArea, BorderLayout.CENTER)
-            }
-
-            return JPanel(BorderLayout()).apply {
-                isOpaque = false
-                border = JBUI.Borders.empty(5, 8, 5, 8)
-                if (line.kind == UiLineKind.USER) add(bubble, BorderLayout.EAST) else add(bubble, BorderLayout.WEST)
-            }
+        override fun paintBorder(c: Component?, g: Graphics, x: Int, y: Int, width: Int, height: Int) {
+            val g2 = g.create() as Graphics2D
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = color
+            g2.stroke = java.awt.BasicStroke(strokeWidth.toFloat())
+            g2.drawRoundRect(x, y, width - strokeWidth, height - strokeWidth, arc, arc)
+            g2.dispose()
         }
     }
 

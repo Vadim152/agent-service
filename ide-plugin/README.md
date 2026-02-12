@@ -1,4 +1,4 @@
-# AI Cucumber Assistant (Sber IDE plugin skeleton)
+# Агентум (Sber IDE plugin skeleton)
 
 Этот модуль описывает каркас плагина для Sber IDE/IntelliJ Platform, который обращается к backend-сервису `agent-service`.
 
@@ -11,7 +11,7 @@
 - `config` — настройки плагина и UI для конфигурации URL backend.
 - `services` — HTTP-клиент и доступ к backend.
 - `model` — DTO для сериализации/десериализации запросов и ответов.
-- `ui.toolwindow` — Tool Window "AI Cucumber Assistant".
+- `ui.toolwindow` — Tool Window "Агентум".
 - `actions` — действия для меню/toolbar/контекстного меню.
 - `util` — вспомогательные утилиты (поиск корня проекта, уведомления и т.п.).
 
@@ -20,7 +20,7 @@
 ## Потоки взаимодействия
 
 ### Сканирование шагов через Tool Window
-1. Пользователь открывает Tool Window "AI Cucumber Assistant".
+1. Пользователь открывает Tool Window "Агентум".
 2. Указывает/оставляет projectRoot и нажимает "Scan steps".
 3. Плагин вызывает `BackendClient.scanSteps` → `/steps/scan-steps`.
 4. Backend индексирует шаги и возвращает счётчик/примеры; UI обновляет таблицу и статус.
