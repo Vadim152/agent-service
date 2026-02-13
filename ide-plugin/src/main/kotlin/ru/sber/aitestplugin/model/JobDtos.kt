@@ -6,6 +6,8 @@ data class JobCreateRequestDto(
     val projectRoot: String,
     val testCaseText: String,
     val targetPath: String? = null,
+    val zephyrAuth: ZephyrAuthDto? = null,
+    val jiraInstance: String? = null,
     val profile: String = "quick",
     val createFile: Boolean = false,
     val overwriteExisting: Boolean = false,

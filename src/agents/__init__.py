@@ -22,6 +22,7 @@ from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.gigachat_adapter import GigaChatAdapter
 from infrastructure.project_learning_store import ProjectLearningStore
 from infrastructure.step_index_store import StepIndexStore
+from integrations.jira_testcase_provider import JiraTestcaseProvider
 from tools.cucumber_expression import cucumber_expression_to_regex
 from tools.feature_generator import FeatureGenerator
 
@@ -183,6 +184,7 @@ def create_orchestrator(settings: Settings | None = None):
         project_learning_store=project_learning_store,
     )
     feature_generator = FeatureBuilderAgent(agent_llm_client)
+    jira_testcase_provider = JiraTestcaseProvider(resolved_settings)
 
     orchestrator = Orchestrator(
         repo_scanner_agent=repo_scanner,
@@ -193,6 +195,7 @@ def create_orchestrator(settings: Settings | None = None):
         embeddings_store=embeddings_store,
         project_learning_store=project_learning_store,
         llm_client=llm_client,
+        jira_testcase_provider=jira_testcase_provider,
     )
     return orchestrator
 

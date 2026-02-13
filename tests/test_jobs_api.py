@@ -36,6 +36,8 @@ def test_create_job_initializes_result_and_attempts() -> None:
         json={
             "projectRoot": "/tmp/project",
             "testCaseText": "Given something",
+            "jiraInstance": "https://jira.sberbank.ru",
+            "zephyrAuth": {"authType": "TOKEN", "token": "secret"},
             "source": "test-suite",
             "profile": "quick",
         },
@@ -44,6 +46,8 @@ def test_create_job_initializes_result_and_attempts() -> None:
     payload = response.json()
     item = store.get_job(payload["jobId"])
     assert item is not None
+    assert item["jira_instance"] == "https://jira.sberbank.ru"
+    assert item["zephyr_auth"] == {"authType": "TOKEN", "token": "secret", "login": None, "password": None}
     assert item["result"] is None
     assert item["attempts"] == []
 

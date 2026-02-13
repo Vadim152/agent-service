@@ -21,6 +21,19 @@ class _CancellingOrchestrator:
         }
 
 
+class _CapturingOrchestrator:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def generate_feature(self, *args, **kwargs):
+        self.calls.append({"args": args, "kwargs": kwargs})
+        return {
+            "feature": {"featureText": "Feature: done", "unmappedSteps": []},
+            "matchResult": {"matched": [], "unmatched": []},
+            "pipeline": [],
+        }
+
+
 def test_supervisor_respects_cancel_requested_after_attempt(tmp_path: Path) -> None:
     store = RunStateStore()
     job_id = "job-cancel-mid-flight"
@@ -61,3 +74,42 @@ def test_supervisor_respects_cancel_requested_after_attempt(tmp_path: Path) -> N
     event_types = [event["event_type"] for event in events]
     assert "attempt.cancelled" in event_types
     assert "job.cancelled" in event_types
+
+
+def test_supervisor_passes_jira_context_to_orchestrator(tmp_path: Path) -> None:
+    store = RunStateStore()
+    job_id = "job-jira-context"
+    store.put_job(
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "cancel_requested": False,
+            "project_root": "/tmp/project",
+            "test_case_text": "создай автотест по SCBC-T3282",
+            "target_path": None,
+            "create_file": False,
+            "overwrite_existing": False,
+            "language": "ru",
+            "zephyr_auth": {"authType": "TOKEN", "token": "token-value"},
+            "jira_instance": "https://jira.sberbank.ru",
+            "profile": "quick",
+            "source": "tests",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "attempts": [],
+            "result": None,
+        }
+    )
+    orchestrator = _CapturingOrchestrator()
+    supervisor = ExecutionSupervisor(
+        orchestrator=orchestrator,
+        run_state_store=store,
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+    )
+
+    asyncio.run(supervisor.execute_job(job_id))
+
+    assert len(orchestrator.calls) == 1
+    kwargs = orchestrator.calls[0]["kwargs"]
+    assert kwargs["zephyr_auth"] == {"authType": "TOKEN", "token": "token-value"}
+    assert kwargs["jira_instance"] == "https://jira.sberbank.ru"

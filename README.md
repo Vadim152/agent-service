@@ -69,6 +69,9 @@ curl http://localhost:8000/health
 - `AGENT_SERVICE_PORT` (default `8000`)
 - `AGENT_SERVICE_STEPS_INDEX_DIR` (default `.agent/steps_index`)
 - `AGENT_SERVICE_ARTIFACTS_DIR` (default `.agent/artifacts`)
+- `AGENT_SERVICE_JIRA_SOURCE_MODE` (default `stub`, available: `stub|live|disabled`)
+- `AGENT_SERVICE_JIRA_DEFAULT_INSTANCE` (default `https://jira.sberbank.ru`)
+- `AGENT_SERVICE_JIRA_REQUEST_TIMEOUT_S` (default `20`)
 - `GIGACHAT_VERIFY_SSL` (default `true`)
 
 ## SSL Troubleshooting (Corporate Certificates)

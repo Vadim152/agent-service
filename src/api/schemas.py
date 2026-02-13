@@ -201,6 +201,11 @@ class GenerateFeatureRequest(ApiBaseModel):
         alias="zephyrAuth",
         description="Р”Р°РЅРЅС‹Рµ Р°РІС‚РѕСЂРёР·Р°С†РёРё Jira/Zephyr РґР»СЏ РїРѕР»СѓС‡РµРЅРёСЏ С‚РµСЃС‚РєРµР№СЃР°",
     )
+    jira_instance: str | None = Field(
+        default=None,
+        alias="jiraInstance",
+        description="Jira base URL (e.g. https://jira.sberbank.ru)",
+    )
 
 
 class GenerateFeatureResponse(ApiBaseModel):
@@ -284,6 +289,8 @@ class JobCreateRequest(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
     test_case_text: str = Field(..., alias="testCaseText")
     target_path: str | None = Field(default=None, alias="targetPath")
+    zephyr_auth: ZephyrAuth | None = Field(default=None, alias="zephyrAuth")
+    jira_instance: str | None = Field(default=None, alias="jiraInstance")
     profile: str = Field(default="quick")
     create_file: bool = Field(default=False, alias="createFile")
     overwrite_existing: bool = Field(default=False, alias="overwriteExisting")

@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from api.routes_chat import router as chat_router
 from chat.memory_store import ChatMemoryStore
 from chat.runtime import ChatAgentRuntime
+from infrastructure.run_state_store import RunStateStore
 
 
 def _utcnow() -> str:
@@ -33,6 +34,65 @@ def _build_app() -> FastAPI:
     base = Path(tempfile.mkdtemp(prefix="chat-memory-"))
     memory_store = ChatMemoryStore(base)
     app.state.chat_runtime = ChatAgentRuntime(memory_store=memory_store)
+    app.include_router(chat_router)
+    return app
+
+
+class _OrchestratorStub:
+    def apply_feature(
+        self,
+        project_root: str,
+        target_path: str,
+        feature_text: str,
+        *,
+        overwrite_existing: bool = False,
+    ) -> dict[str, object]:
+        _ = (feature_text, overwrite_existing)
+        return {
+            "projectRoot": project_root,
+            "targetPath": target_path,
+            "status": "created",
+            "message": None,
+        }
+
+
+class _SupervisorStub:
+    def __init__(self, store: RunStateStore) -> None:
+        self.store = store
+
+    async def execute_job(self, job_id: str) -> None:
+        self.store.patch_job(
+            job_id,
+            status="succeeded",
+            finished_at=_utcnow(),
+            result={
+                "featureText": "Feature: Chat generated\n  Scenario: Demo\n    Given step",
+                "unmappedSteps": [],
+                "unmapped": [],
+                "usedSteps": [],
+                "buildStage": "feature_built",
+                "stepsSummary": {"exact": 1, "fuzzy": 0, "unmatched": 0},
+                "meta": {"language": "ru"},
+                "pipeline": [
+                    {"stage": "source_resolve", "status": "raw_text", "details": {}},
+                    {"stage": "parse", "status": "ok", "details": {}},
+                ],
+                "fileStatus": None,
+            },
+        )
+
+
+def _build_autotest_app() -> FastAPI:
+    app = FastAPI()
+    base = Path(tempfile.mkdtemp(prefix="chat-memory-autotest-"))
+    memory_store = ChatMemoryStore(base)
+    run_state_store = RunStateStore()
+    app.state.chat_runtime = ChatAgentRuntime(
+        memory_store=memory_store,
+        orchestrator=_OrchestratorStub(),
+        run_state_store=run_state_store,
+        execution_supervisor=_SupervisorStub(run_state_store),
+    )
     app.include_router(chat_router)
     return app
 
@@ -227,4 +287,49 @@ def test_chat_stream_supports_from_index() -> None:
     payload = json.loads(data_line[len("data: ") :])
     assert payload["index"] == 2
     assert payload["eventType"] == "event.one"
+
+
+def test_autotest_natural_message_creates_preview_and_pending_save() -> None:
+    app = _build_autotest_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "Сгенерируй автотест по этому тесткейсу"},
+    )
+    assert response.status_code == 200
+
+    def _has_pending_permission() -> bool:
+        history = client.get(f"/chat/sessions/{session_id}/history").json()
+        return len(history["pendingPermissions"]) == 1
+
+    _wait_until(_has_pending_permission)
+    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    assert "Autotest preview is ready." in history["messages"][-1]["content"]
+    assert history["pendingPermissions"][0]["title"] == "Save generated feature file"
+
+
+def test_autotest_save_permission_executes_save_tool() -> None:
+    app = _build_autotest_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "Сгенерируй автотест и предложи сохранить"},
+    )
+    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
+    permission = client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"][0]
+
+    decision = client.post(
+        f"/chat/sessions/{session_id}/tool-decisions",
+        json={"permissionId": permission["permissionId"], "decision": "approve_once"},
+    )
+    assert decision.status_code == 200
+    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 0)
+    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    assert any("Feature file created" in msg["content"] for msg in history["messages"] if msg["role"] == "assistant")
 

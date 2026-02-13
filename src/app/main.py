@@ -85,6 +85,9 @@ async def on_startup() -> None:
         app.state.chat_runtime = ChatAgentRuntime(
             memory_store=chat_memory_store,
             llm_client=getattr(orchestrator, "llm_client", None),
+            orchestrator=orchestrator,
+            run_state_store=run_state_store,
+            execution_supervisor=execution_supervisor,
         )
         app.state.task_registry = TaskRegistry()
         logger.info("[Startup] Оркестратор и control-plane компоненты созданы")

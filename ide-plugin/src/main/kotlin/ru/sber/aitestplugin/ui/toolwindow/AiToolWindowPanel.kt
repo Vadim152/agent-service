@@ -80,6 +80,23 @@ class AiToolWindowPanel(
     private val autoScrollBottomThresholdPx = 48
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
     private val supportedCommands = listOf("status", "diff", "compact", "abort", "help")
+    private val slashTemplates = listOf(
+        SlashTemplateItem(
+            key = "autotest",
+            title = "Generate autotest",
+            text = "Сгенерируй автотест по тесткейсу ниже и покажи preview feature + pipeline."
+        ),
+        SlashTemplateItem(
+            key = "unmapped",
+            title = "Analyze unmapped",
+            text = "Проанализируй unmapped шаги и предложи варианты сопоставления."
+        ),
+        SlashTemplateItem(
+            key = "save",
+            title = "Generate and save",
+            text = "Сгенерируй автотест и предложи сохранить в targetPath=src/test/resources/features/generated.feature."
+        )
+    )
     private val sseIndexPattern = Regex("\"index\"\\s*:\\s*(\\d+)")
     private val theme = UiTheme()
 
@@ -238,6 +255,11 @@ class AiToolWindowPanel(
                 background = theme.panelBackground
                 viewport.background = theme.panelBackground
                 preferredSize = Dimension(100, 360)
+                viewport.addComponentListener(object : java.awt.event.ComponentAdapter() {
+                    override fun componentResized(e: java.awt.event.ComponentEvent?) {
+                        renderTimeline()
+                    }
+                })
                 timelineScrollPane = this
             }, BorderLayout.CENTER)
             add(approvalPanel, BorderLayout.SOUTH)
@@ -306,7 +328,7 @@ class AiToolWindowPanel(
         inputArea.caretColor = theme.primaryText
         inputArea.border = JBUI.Borders.empty(4, 6)
         inputArea.font = inputArea.font.deriveFont(14f)
-        inputArea.putClientProperty("JTextArea.placeholderText", "Type / for commands, # for prompts or @ to add context")
+        inputArea.putClientProperty("JTextArea.placeholderText", "Type / for templates, # for prompts or @ to add context")
         inputArea.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
             override fun removeUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
@@ -388,18 +410,6 @@ class AiToolWindowPanel(
 
     private fun submitInput(input: String) {
         if (input.isBlank()) return
-        if (input.startsWith("/")) {
-            val command = input.removePrefix("/").substringBefore(" ").lowercase()
-            if (command in supportedCommands) {
-                inputArea.text = ""
-                suppressSlashPopupUntilReset = false
-                hideSlashPopup()
-                submitCommand(command)
-                return
-            }
-            appendSystemLine("Unknown command: /$command")
-            return
-        }
         submitMessage(input)
     }
 
@@ -934,18 +944,14 @@ class AiToolWindowPanel(
             hideSlashPopup()
             return
         }
-        if (token in supportedCommands) {
-            suppressSlashPopupUntilReset = true
-            lastSlashMatches = emptyList()
-            hideSlashPopup()
-            return
-        }
         if (suppressSlashPopupUntilReset) {
             hideSlashPopup()
             return
         }
 
-        val matches = supportedCommands.filter { it.startsWith(token) }.map { "/$it" }
+        val matches = slashTemplates
+            .filter { it.key.startsWith(token) || it.title.lowercase().contains(token) }
+            .map { "/${it.key} - ${it.title}" }
         if (matches.isEmpty()) {
             lastSlashMatches = emptyList()
             hideSlashPopup()
@@ -956,15 +962,16 @@ class AiToolWindowPanel(
         }
 
         hideSlashPopup()
-        val step = object : BaseListPopupStep<String>("Commands", matches) {
+        val step = object : BaseListPopupStep<String>("Templates", matches) {
             override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
                 if (selectedValue != null) {
+                    val selectedKey = selectedValue.removePrefix("/").substringBefore(" ").trim()
+                    val templateText = slashTemplates.firstOrNull { it.key == selectedKey }?.text ?: ""
                     isApplyingSlashSelection = true
                     suppressSlashPopupUntilReset = true
-                    inputArea.text = selectedValue
+                    inputArea.text = templateText
                     inputArea.caretPosition = inputArea.text.length
                     hideSlashPopup()
-                    submitInput(selectedValue)
                 }
                 return FINAL_CHOICE
             }
@@ -1001,6 +1008,12 @@ class AiToolWindowPanel(
         val createdAt: Instant,
         val stableKey: String,
         val source: UiLineSource
+    )
+
+    private data class SlashTemplateItem(
+        val key: String,
+        val title: String,
+        val text: String
     )
 
     private enum class UiLineSource {
@@ -1045,6 +1058,8 @@ class AiToolWindowPanel(
     }
 
     private fun buildTimelineLine(line: UiLine): JPanel {
+        val viewportWidth = timelineScrollPane?.viewport?.extentSize?.width ?: width
+        val contentWidth = maxOf(140, viewportWidth - 56)
         val textArea = JBTextArea(line.text).apply {
             isEditable = false
             isFocusable = true
@@ -1054,6 +1069,9 @@ class AiToolWindowPanel(
             font = font.deriveFont(13.5f)
             foreground = if (line.kind == UiLineKind.SYSTEM) theme.systemText else theme.primaryText
             border = JBUI.Borders.empty(8, 11)
+            setSize(Dimension(contentWidth, Int.MAX_VALUE))
+            preferredSize = Dimension(contentWidth, preferredSize.height)
+            maximumSize = Dimension(contentWidth, Int.MAX_VALUE)
         }
 
         val row = JPanel(BorderLayout()).apply {
@@ -1071,6 +1089,7 @@ class AiToolWindowPanel(
                         JBUI.Borders.empty()
                     )
                     add(textArea, BorderLayout.CENTER)
+                    maximumSize = Dimension(contentWidth, Int.MAX_VALUE)
                 }
                 row.add(bubble, BorderLayout.CENTER)
             }
@@ -1086,6 +1105,7 @@ class AiToolWindowPanel(
                         JBUI.Borders.empty()
                     )
                     add(textArea, BorderLayout.CENTER)
+                    maximumSize = Dimension(contentWidth, Int.MAX_VALUE)
                 }
                 row.add(bubble, BorderLayout.WEST)
             }

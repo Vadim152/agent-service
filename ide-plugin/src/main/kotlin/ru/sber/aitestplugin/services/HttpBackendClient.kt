@@ -95,7 +95,24 @@ class HttpBackendClient(
     }
 
     override fun createJob(request: JobCreateRequestDto): JobCreateResponseDto =
-        post("/jobs", request)
+        run {
+            val settings = settingsProvider()
+            val sanitizedRequest = request.copy(
+                projectRoot = request.projectRoot.trim(),
+                testCaseText = request.testCaseText.trim(),
+                zephyrAuth = request.zephyrAuth ?: settings.toZephyrAuthDto(),
+                jiraInstance = request.jiraInstance ?: settings.zephyrJiraInstance.trim().ifBlank { null }
+            )
+
+            if (sanitizedRequest.projectRoot.isBlank()) {
+                throw BackendException("Project root must not be empty")
+            }
+            if (sanitizedRequest.testCaseText.isBlank()) {
+                throw BackendException("Test case text must not be empty")
+            }
+
+            post("/jobs", sanitizedRequest)
+        }
 
     override fun getJob(jobId: String): JobStatusResponseDto =
         get("/jobs/$jobId")

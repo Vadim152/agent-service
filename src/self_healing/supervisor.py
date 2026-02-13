@@ -142,6 +142,8 @@ class ExecutionSupervisor:
                         create_file=bool(job.get("create_file")),
                         overwrite_existing=bool(job.get("overwrite_existing")),
                         language=job.get("language"),
+                        zephyr_auth=job.get("zephyr_auth"),
+                        jira_instance=job.get("jira_instance"),
                     )
                 latest_result = result
                 if self._is_cancellation_requested(job_id):

@@ -70,6 +70,11 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job control plane is not initialized")
 
     job_id = str(uuid.uuid4())
+    zephyr_auth = (
+        payload.zephyr_auth.model_dump(by_alias=True, mode="json")
+        if payload.zephyr_auth
+        else None
+    )
     run_state_store.put_job(
         {
             "job_id": job_id,
@@ -82,6 +87,8 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
             "create_file": payload.create_file,
             "overwrite_existing": payload.overwrite_existing,
             "language": payload.language,
+            "zephyr_auth": zephyr_auth,
+            "jira_instance": payload.jira_instance,
             "profile": payload.profile,
             "source": payload.source,
             "started_at": _utcnow(),

@@ -192,6 +192,10 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         create_file=bool(options.create_file) if options else False,
         overwrite_existing=bool(options.overwrite_existing) if options else False,
         language=options.language if options else None,
+        zephyr_auth=request_model.zephyr_auth.model_dump(by_alias=True, mode="json")
+        if request_model.zephyr_auth
+        else None,
+        jira_instance=request_model.jira_instance,
     )
 
     feature_payload = result.get("feature", {})

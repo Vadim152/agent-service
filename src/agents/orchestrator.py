@@ -15,6 +15,8 @@ from infrastructure.fs_repo import FsRepository
 from infrastructure.llm_client import LLMClient
 from infrastructure.project_learning_store import ProjectLearningStore
 from infrastructure.step_index_store import StepIndexStore
+from integrations.jira_testcase_normalizer import normalize_jira_testcase_to_text
+from integrations.jira_testcase_provider import JiraTestcaseProvider, extract_jira_testcase_key
 from self_healing.capabilities import CapabilityRegistry
 
 logger = logging.getLogger(__name__)
@@ -28,10 +30,14 @@ class ScanState(TypedDict):
 class FeatureGenerationState(TypedDict, total=False):
     project_root: str
     testcase_text: str
+    zephyr_auth: dict[str, Any] | None
+    jira_instance: str | None
     target_path: str | None
     create_file: bool
     overwrite_existing: bool
     language: str | None
+    resolved_testcase_source: str | None
+    resolved_testcase_key: str | None
     scenario: dict[str, Any]
     match_result: dict[str, Any]
     feature: dict[str, Any]
@@ -52,6 +58,7 @@ class Orchestrator:
         embeddings_store: EmbeddingsStore,
         project_learning_store: ProjectLearningStore | None = None,
         llm_client: LLMClient | None = None,
+        jira_testcase_provider: JiraTestcaseProvider | None = None,
     ) -> None:
         self.repo_scanner_agent = repo_scanner_agent
         self.testcase_parser_agent = testcase_parser_agent
@@ -61,6 +68,7 @@ class Orchestrator:
         self.embeddings_store = embeddings_store
         self.project_learning_store = project_learning_store
         self.llm_client = llm_client
+        self.jira_testcase_provider = jira_testcase_provider or JiraTestcaseProvider()
 
         self.capability_registry = CapabilityRegistry()
         self._register_default_capabilities()
@@ -92,13 +100,15 @@ class Orchestrator:
 
     def _build_feature_graph(self):
         graph = StateGraph(FeatureGenerationState)
+        graph.add_node("resolve_testcase_source", self._resolve_testcase_source_node())
         graph.add_node("parse_testcase", self._parse_testcase_node())
         graph.add_node("match_steps", self._match_steps_node())
         graph.add_node("build_feature", self._build_feature_node())
         graph.add_node("assemble_pipeline", self._assemble_pipeline_node())
         graph.add_node("apply_feature", self._apply_feature_node())
-        graph.add_node("skip_apply", lambda _: {})
-        graph.set_entry_point("parse_testcase")
+        graph.add_node("skip_apply", lambda _: {"file_status": None})
+        graph.set_entry_point("resolve_testcase_source")
+        graph.add_edge("resolve_testcase_source", "parse_testcase")
         graph.add_edge("parse_testcase", "match_steps")
         graph.add_edge("match_steps", "build_feature")
         graph.add_edge("build_feature", "assemble_pipeline")
@@ -110,6 +120,40 @@ class Orchestrator:
         graph.add_edge("apply_feature", END)
         graph.add_edge("skip_apply", END)
         return graph.compile()
+
+    def _resolve_testcase_source_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
+        def _node(state: FeatureGenerationState) -> dict[str, Any]:
+            raw_text = state.get("testcase_text", "")
+            key = extract_jira_testcase_key(raw_text)
+            if not key:
+                return {
+                    "resolved_testcase_source": "raw_text",
+                    "resolved_testcase_key": None,
+                }
+
+            try:
+                payload = self.jira_testcase_provider.fetch_testcase(
+                    key,
+                    auth=state.get("zephyr_auth"),
+                    jira_instance=state.get("jira_instance"),
+                )
+                normalized = normalize_jira_testcase_to_text(payload)
+                if not normalized.strip():
+                    raise RuntimeError(f"normalized testcase is empty for {key}")
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Jira testcase key detected but retrieval failed: {exc}"
+                ) from exc
+
+            source = f"jira_{self.jira_testcase_provider.mode}"
+            logger.info("[Orchestrator] Resolved testcase key %s from %s", key, source)
+            return {
+                "testcase_text": normalized,
+                "resolved_testcase_source": source,
+                "resolved_testcase_key": key,
+            }
+
+        return _node
 
     def _scan_repository_node(self) -> Callable[[ScanState], dict[str, Any]]:
         def _node(state: ScanState) -> dict[str, Any]:
@@ -148,6 +192,13 @@ class Orchestrator:
     def _assemble_pipeline_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:
             pipeline = [
+                {
+                    "stage": "source_resolve",
+                    "status": state.get("resolved_testcase_source") or "raw_text",
+                    "details": {
+                        "jiraKey": state.get("resolved_testcase_key"),
+                    },
+                },
                 {
                     "stage": "parse",
                     "status": "ok",
@@ -264,12 +315,16 @@ class Orchestrator:
         create_file: bool = False,
         overwrite_existing: bool = False,
         language: str | None = None,
+        zephyr_auth: dict[str, Any] | None = None,
+        jira_instance: str | None = None,
     ) -> dict[str, Any]:
         logger.info("[Orchestrator] Generate feature for project %s", project_root)
         state = self._feature_graph.invoke(
             {
                 "project_root": project_root,
                 "testcase_text": testcase_text,
+                "zephyr_auth": zephyr_auth,
+                "jira_instance": jira_instance,
                 "target_path": target_path,
                 "create_file": create_file,
                 "overwrite_existing": overwrite_existing,

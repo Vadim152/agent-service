@@ -39,6 +39,18 @@ class Settings(BaseSettings):
         default=ROOT_DIR / ".agent" / "artifacts",
         description="Directory for job artifacts and incidents",
     )
+    jira_source_mode: str = Field(
+        default="stub",
+        description="Source mode for Jira testcase retrieval: stub|live|disabled",
+    )
+    jira_request_timeout_s: int = Field(
+        default=20,
+        description="Timeout for Jira testcase HTTP requests in seconds",
+    )
+    jira_default_instance: str | None = Field(
+        default="https://jira.sberbank.ru",
+        description="Default Jira instance URL for testcase retrieval",
+    )
 
     llm_endpoint: str | None = Field(default=None, description="LLM service endpoint")
     llm_api_key: str | None = Field(default=None, description="LLM API key")

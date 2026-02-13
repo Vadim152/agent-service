@@ -1,0 +1,124 @@
+[
+  {
+    "folder": "/Smoke/Payments/Card top up",
+    "latestVersion": true,
+    "testScript": {
+      "id": 910001,
+      "type": "STEP_BY_STEP",
+      "steps": [
+        {
+          "description": "Авторизоваться в мобильном приложении",
+          "expectedResult": "Пользователь видит главный экран",
+          "testData": "Тестовый клиент с активной картой",
+          "index": 0,
+          "id": 810001
+        },
+        {
+          "description": "Открыть раздел Платежи и выбрать Пополнение карты",
+          "expectedResult": "Открывается форма пополнения",
+          "index": 1,
+          "id": 810002
+        },
+        {
+          "description": "Ввести сумму 500 и подтвердить операцию",
+          "expectedResult": "Появляется статус Успешно",
+          "index": 2,
+          "id": 810003
+        }
+      ]
+    },
+    "name": "[Android] Пополнение карты с главного экрана",
+    "precondition": "У клиента активирована карта и доступен баланс счета",
+    "priority": "Normal",
+    "majorVersion": 1,
+    "parameters": {
+      "variables": [],
+      "entries": []
+    },
+    "key": "SCBC-T0000",
+    "status": "Approved"
+  },
+  {
+    "folder": "/Regression/Cards/Limit increase",
+    "latestVersion": true,
+    "testScript": {
+      "id": 910002,
+      "type": "STEP_BY_STEP",
+      "steps": [
+        {
+          "description": "Ввести значение больше максимального лимита",
+          "expectedResult": "<b>Высвечивается алерт</b> с текстом про превышение лимита",
+          "index": 3,
+          "id": 820003
+        },
+        {
+          "description": "Авторизоваться в МП",
+          "expectedResult": "Пользователь видит предложение по увеличению лимита",
+          "testData": "<br />Клиент из сегмента VIP<br />",
+          "index": 0,
+          "id": 820000
+        },
+        {
+          "description": "Нажать Выбрать другой лимит",
+          "expectedResult": "Открывается экран ввода желаемого лимита",
+          "index": 1,
+          "id": 820001
+        },
+        {
+          "description": "Ввести корректное значение и нажать Продолжить",
+          "expectedResult": "Отображается поле ввода среднемесячного дохода",
+          "index": 2,
+          "id": 820002
+        }
+      ]
+    },
+    "name": "[Android] Увеличение кредитного лимита",
+    "precondition": "<strong>Включен тоггл LIMIT_INCREASE_MVP2</strong><br />Клиент участвует в кампании",
+    "priority": "High",
+    "majorVersion": 2,
+    "parameters": {
+      "variables": [],
+      "entries": []
+    },
+    "key": "SCBC-T0001",
+    "status": "Approved"
+  },
+  {
+    "folder": "/Smoke/Auth/Login",
+    "latestVersion": true,
+    "testScript": {
+      "id": 910003,
+      "type": "STEP_BY_STEP",
+      "steps": [
+        {
+          "description": "Открыть экран логина",
+          "expectedResult": "Отображается форма с полями логина и пароля",
+          "index": 0,
+          "id": 830001
+        },
+        {
+          "description": "Ввести валидный логин и пароль",
+          "expectedResult": "Кнопка Войти становится активной",
+          "index": 1,
+          "id": 830002
+        },
+        {
+          "description": "Нажать кнопку Войти",
+          "expectedResult": "Выполняется вход и открывается главный экран",
+          "index": 2,
+          "id": 830003
+        }
+      ]
+    },
+    "name": "[Android] Вход в приложение по логину и паролю",
+    "precondition": "Пользователь зарегистрирован и не заблокирован",
+    "priority": "Normal",
+    "majorVersion": 1,
+    "parameters": {
+      "variables": [],
+      "entries": []
+    },
+    "key": "SCBC-T0002",
+    "status": "Approved"
+  }
+]

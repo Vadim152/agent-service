@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
@@ -113,6 +114,13 @@ class GraphChatEngine:
         return self._graph.invoke({"content": content, "context": context})
 
 
+class _AutotestIntent(TypedDict):
+    enabled: bool
+    target_path: str | None
+    overwrite_existing: bool
+    language: str | None
+
+
 class ChatAgentRuntime:
     def __init__(
         self,
@@ -120,12 +128,18 @@ class ChatAgentRuntime:
         memory_store: ChatMemoryStore,
         llm_client: Any | None = None,
         context_window: int = 200_000,
+        orchestrator: Any | None = None,
+        run_state_store: Any | None = None,
+        execution_supervisor: Any | None = None,
     ) -> None:
         self.state_store = ChatStateStore(memory_store)
         self.memory_store = memory_store
         llm_generate = getattr(llm_client, "generate", None)
         self._engine = GraphChatEngine(llm_generate if callable(llm_generate) else None)
         self._context_window = context_window
+        self._orchestrator = orchestrator
+        self._run_state_store = run_state_store
+        self._execution_supervisor = execution_supervisor
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_guard = RLock()
         self._tool_registry = ChatToolRegistry()
@@ -137,6 +151,15 @@ class ChatAgentRuntime:
                 name="compose_feature_patch",
                 description="Compose a safe placeholder patch response for feature updates.",
                 handler=self._tool_compose_feature_patch,
+                risk_level="write",
+                requires_confirmation=True,
+            )
+        )
+        self._tool_registry.register(
+            ToolDescriptor(
+                name="save_generated_feature",
+                description="Save generated feature text to target path.",
+                handler=self._tool_save_generated_feature,
                 risk_level="write",
                 requires_confirmation=True,
             )
@@ -160,6 +183,186 @@ class ChatAgentRuntime:
                 ],
             },
         }
+
+    def _tool_save_generated_feature(
+        self,
+        *,
+        project_root: str,
+        target_path: str,
+        feature_text: str,
+        overwrite_existing: bool = False,
+    ) -> dict[str, Any]:
+        if self._orchestrator is None:
+            raise ChatRuntimeError("Feature save is unavailable: orchestrator is not configured", status_code=503)
+        result = self._orchestrator.apply_feature(
+            project_root,
+            target_path,
+            feature_text,
+            overwrite_existing=bool(overwrite_existing),
+        )
+        status = str(result.get("status", "created"))
+        message = (
+            f"Feature file {status}: {result.get('targetPath', target_path)}"
+            if not result.get("message")
+            else str(result.get("message"))
+        )
+        return {
+            "message": message,
+            "diff": {
+                "summary": {"files": 1, "additions": 1, "deletions": 0},
+                "files": [
+                    {
+                        "file": str(result.get("targetPath", target_path)),
+                        "before": "",
+                        "after": feature_text,
+                        "additions": max(1, len(feature_text.splitlines())),
+                        "deletions": 0,
+                    }
+                ],
+            },
+        }
+
+    @staticmethod
+    def _extract_target_path(content: str) -> str | None:
+        # Expected fragments like "targetPath=path/to/file.feature" or "path: path/to/file.feature"
+        patterns = [
+            r"targetpath\s*[=:]\s*([^\s,;]+)",
+            r"path\s*[=:]\s*([^\s,;]+\.feature)",
+            r"([^\s,;]+\.feature)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, content, flags=re.IGNORECASE)
+            if not match:
+                continue
+            raw_value = match.group(1).strip()
+            if not raw_value:
+                continue
+            return raw_value
+        return None
+
+    @staticmethod
+    def _extract_language(content: str) -> str | None:
+        lowered = content.lower()
+        if "language=en" in lowered or "gherkin en" in lowered or "на англий" in lowered:
+            return "en"
+        if "language=ru" in lowered or "gherkin ru" in lowered or "на русском" in lowered:
+            return "ru"
+        return None
+
+    def _detect_autotest_intent(self, content: str) -> _AutotestIntent:
+        lowered = content.lower()
+        keywords = (
+            "автотест",
+            "test case",
+            "тесткейс",
+            "feature",
+            "gherkin",
+            "сгенерируй тест",
+            "generate test",
+            "generate feature",
+        )
+        enabled = any(token in lowered for token in keywords)
+        return {
+            "enabled": enabled,
+            "target_path": self._extract_target_path(content),
+            "overwrite_existing": "overwrite=true" in lowered or "перезапис" in lowered,
+            "language": self._extract_language(content),
+        }
+
+    @staticmethod
+    def _default_target_path() -> str:
+        return "src/test/resources/features/generated.feature"
+
+    async def _run_autotest_job(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        project_root: str,
+        content: str,
+        intent: _AutotestIntent,
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        if not self._run_state_store or not self._execution_supervisor:
+            raise ChatRuntimeError("Autotest generation is unavailable: job control plane is not configured", status_code=503)
+
+        job_id = str(uuid.uuid4())
+        self.state_store.append_event(
+            session_id,
+            "autotest.intent_detected",
+            {"sessionId": session_id, "runId": run_id},
+        )
+        self.state_store.update_session(
+            session_id,
+            activity="busy",
+            current_action="Preparing autotest generation job",
+        )
+
+        self._run_state_store.put_job(
+            {
+                "job_id": job_id,
+                "status": "queued",
+                "cancel_requested": False,
+                "cancel_requested_at": None,
+                "project_root": project_root,
+                "test_case_text": content,
+                "target_path": intent.get("target_path"),
+                "create_file": False,
+                "overwrite_existing": False,
+                "language": intent.get("language"),
+                "zephyr_auth": None,
+                "jira_instance": None,
+                "profile": "quick",
+                "source": "chat-runtime",
+                "started_at": _utcnow(),
+                "updated_at": _utcnow(),
+                "attempts": [],
+                "result": None,
+            }
+        )
+        self._run_state_store.append_event(
+            job_id,
+            "job.queued",
+            {"jobId": job_id, "source": "chat-runtime"},
+        )
+        self.state_store.append_event(
+            session_id,
+            "autotest.job_created",
+            {"sessionId": session_id, "runId": run_id, "jobId": job_id},
+        )
+        self.state_store.update_session(
+            session_id,
+            activity="busy",
+            current_action=f"Running autotest job {job_id[:8]}",
+        )
+
+        await self._execution_supervisor.execute_job(job_id)
+        job = self._run_state_store.get_job(job_id) or {}
+        status = str(job.get("status", "failed"))
+        self.state_store.append_event(
+            session_id,
+            "autotest.job_progress",
+            {"sessionId": session_id, "runId": run_id, "jobId": job_id, "status": status},
+        )
+        feature_payload = job.get("result")
+        incident_uri = job.get("incident_uri")
+        return feature_payload, incident_uri
+
+    @staticmethod
+    def _format_autotest_preview(feature_payload: dict[str, Any]) -> str:
+        feature_text = str(feature_payload.get("featureText", "")).strip()
+        steps_summary = feature_payload.get("stepsSummary") or {}
+        exact = int(steps_summary.get("exact", 0))
+        fuzzy = int(steps_summary.get("fuzzy", 0))
+        unmatched = int(steps_summary.get("unmatched", 0))
+        pipeline = feature_payload.get("pipeline") or []
+        pipeline_summary = ", ".join(str(step.get("stage", "?")) for step in pipeline)
+        preview = feature_text[:1800] if feature_text else "<empty>"
+        return (
+            "Autotest preview is ready.\n"
+            f"Steps summary: exact={exact}, fuzzy={fuzzy}, unmatched={unmatched}.\n"
+            f"Pipeline: {pipeline_summary or 'n/a'}.\n\n"
+            f"{preview}"
+        )
 
     def _session_lock(self, session_id: str) -> asyncio.Lock:
         with self._locks_guard:
@@ -282,6 +485,7 @@ class ChatAgentRuntime:
         lock = self._session_lock(session_id)
         async with lock:
             session = self._require_session(session_id)
+            intent = self._detect_autotest_intent(content)
             self.state_store.update_session(
                 session_id,
                 activity="busy",
@@ -300,8 +504,59 @@ class ChatAgentRuntime:
                 {"sessionId": session_id, "runId": run_id},
             )
 
-            result = self._engine.invoke(content=content, context=self._build_context(session))
-            pending_tool = result.get("pending_tool")
+            pending_tool: dict[str, Any] | None = None
+            assistant_text = ""
+            can_run_autotest = (
+                bool(intent.get("enabled"))
+                and self._run_state_store is not None
+                and self._execution_supervisor is not None
+            )
+            if can_run_autotest:
+                try:
+                    feature_payload, incident_uri = await self._run_autotest_job(
+                        session_id=session_id,
+                        run_id=run_id,
+                        project_root=str(session.get("project_root", "")),
+                        content=content,
+                        intent=intent,
+                    )
+                except ChatRuntimeError:
+                    raise
+                except Exception as exc:
+                    raise ChatRuntimeError(f"Autotest generation failed: {exc}", status_code=503) from exc
+
+                if feature_payload:
+                    assistant_text = self._format_autotest_preview(feature_payload)
+                    target_path = intent.get("target_path") or self._default_target_path()
+                    pending_tool = {
+                        "toolName": "save_generated_feature",
+                        "title": "Save generated feature file",
+                        "kind": "tool",
+                        "args": {
+                            "project_root": str(session.get("project_root", "")),
+                            "target_path": target_path,
+                            "feature_text": str(feature_payload.get("featureText", "")),
+                            "overwrite_existing": bool(intent.get("overwrite_existing", False)),
+                        },
+                        "risk": "high",
+                    }
+                    assistant_text += (
+                        "\n\nSaving is pending confirmation."
+                        f" Target path: {target_path}"
+                    )
+                    self.state_store.append_event(
+                        session_id,
+                        "autotest.result_ready",
+                        {"sessionId": session_id, "runId": run_id},
+                    )
+                else:
+                    incident_suffix = f" Incident: {incident_uri}" if incident_uri else ""
+                    assistant_text = f"Autotest job finished without feature result.{incident_suffix}"
+            else:
+                result = self._engine.invoke(content=content, context=self._build_context(session))
+                pending_tool = result.get("pending_tool")
+                assistant_text = str(result.get("response", "")).strip() or "Done."
+
             if pending_tool:
                 tool_call_id = str(uuid.uuid4())
                 self.state_store.set_pending_tool_call(
@@ -318,7 +573,7 @@ class ChatAgentRuntime:
                 self.state_store.append_message(
                     session_id,
                     role="assistant",
-                    content=str(result.get("response", "")),
+                    content=assistant_text,
                     run_id=run_id,
                     metadata={"pendingPermissionId": tool_call_id},
                 )
@@ -333,7 +588,6 @@ class ChatAgentRuntime:
                     current_action="Waiting for approval",
                 )
             else:
-                assistant_text = str(result.get("response", "")).strip() or "Done."
                 self.state_store.append_message(
                     session_id,
                     role="assistant",
@@ -433,6 +687,12 @@ class ChatAgentRuntime:
             )
             if isinstance(result.get("diff"), dict):
                 self.state_store.update_session(session_id, diff=result["diff"])
+            if tool_name == "save_generated_feature":
+                self.state_store.append_event(
+                    session_id,
+                    "autotest.saved",
+                    {"sessionId": session_id, "permissionId": permission_id},
+                )
             self.state_store.update_session(session_id, activity="idle", current_action="Idle")
 
     async def get_history(self, *, session_id: str, limit: int = 200) -> dict[str, Any]:
