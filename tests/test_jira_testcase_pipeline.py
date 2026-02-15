@@ -16,8 +16,9 @@ class _RepoScannerStub:
 
 
 class _ParserStub:
-    def __init__(self) -> None:
+    def __init__(self, *, tags: list[str] | None = None) -> None:
         self.received_text: str | None = None
+        self.tags = list(tags or [])
 
     def parse_testcase(self, testcase_text: str) -> dict[str, Any]:
         self.received_text = testcase_text
@@ -27,7 +28,7 @@ class _ParserStub:
             "preconditions": [],
             "steps": [{"order": 1, "text": "step one"}],
             "expected_result": None,
-            "tags": [],
+            "tags": list(self.tags),
         }
 
 
@@ -103,7 +104,7 @@ def _make_orchestrator(*, parser: _ParserStub, jira_provider: Any) -> Orchestrat
 
 
 def test_extract_jira_testcase_key_from_free_form_text() -> None:
-    assert extract_jira_testcase_key("создай мне автотест по scbc-t3282") == "SCBC-T3282"
+    assert extract_jira_testcase_key("please generate autotest for scbc-t1") == "SCBC-T1"
     assert extract_jira_testcase_key("plain text without key") is None
 
 
@@ -122,12 +123,23 @@ def test_normalize_jira_testcase_sorts_steps_and_strips_html() -> None:
 
     normalized = normalize_jira_testcase_to_text(payload)
 
-    assert "Сценарий: [Android] Demo testcase" in normalized
-    assert "Предусловия: Toggle enabled" in normalized
+    assert "[Android] Demo testcase" in normalized
+    assert "Toggle enabled" in normalized
     assert "1. First action" in normalized
     assert "2. Second action" in normalized
     assert "3. Third action" in normalized
     assert "<strong>" not in normalized
+
+
+def test_normalize_jira_testcase_uses_key_as_name_for_special_stub() -> None:
+    payload = {
+        "key": "SCBC-T1",
+        "name": "[Android] Jira sourced testcase",
+        "testScript": {"steps": [{"index": 0, "description": "one"}]},
+    }
+
+    normalized = normalize_jira_testcase_to_text(payload)
+    assert "SCBC-T1" in normalized
 
 
 def test_orchestrator_resolves_jira_key_before_parse() -> None:
@@ -136,7 +148,7 @@ def test_orchestrator_resolves_jira_key_before_parse() -> None:
         "precondition": "Client has active card",
         "testScript": {
             "steps": [
-                {"index": 0, "description": "Авторизоваться", "expectedResult": "Открыт главный экран"}
+                {"index": 0, "description": "Authorize", "expectedResult": "Home screen is opened"}
             ]
         },
     }
@@ -146,15 +158,52 @@ def test_orchestrator_resolves_jira_key_before_parse() -> None:
 
     result = orchestrator.generate_feature(
         project_root="C:/tmp/project",
-        testcase_text="создай мне автотест по SCBC-T3282",
+        testcase_text="create autotest for SCBC-T1",
     )
 
-    assert jira_provider.last_key == "SCBC-T3282"
+    assert jira_provider.last_key == "SCBC-T1"
     assert parser.received_text is not None
-    assert "Сценарий: [Android] Jira sourced testcase" in parser.received_text
+    assert "Jira sourced testcase" in parser.received_text
     assert result["pipeline"][0]["stage"] == "source_resolve"
-    assert result["pipeline"][0]["status"] == "jira_stub"
-    assert result["pipeline"][0]["details"]["jiraKey"] == "SCBC-T3282"
+    assert result["pipeline"][0]["status"] == "jira_stub_fixed"
+    assert result["pipeline"][0]["details"]["jiraKey"] == "SCBC-T1"
+    assert result["scenario"]["tags"] == ["SCBC-T1"]
+
+
+def test_orchestrator_adds_non_scbc_jira_key_to_scenario_tags() -> None:
+    payload = {
+        "name": "[Android] Jira sourced testcase",
+        "testScript": {"steps": [{"index": 0, "description": "Authorize"}]},
+    }
+    parser = _ParserStub()
+    jira_provider = _JiraProviderStub(payload)
+    orchestrator = _make_orchestrator(parser=parser, jira_provider=jira_provider)
+
+    result = orchestrator.generate_feature(
+        project_root="C:/tmp/project",
+        testcase_text="create autotest for ABCD-42",
+    )
+
+    assert jira_provider.last_key == "ABCD-42"
+    assert result["pipeline"][0]["status"] == "jira_live"
+    assert result["scenario"]["tags"] == ["ABCD-42"]
+
+
+def test_orchestrator_merges_and_deduplicates_scenario_tags() -> None:
+    payload = {
+        "name": "[Android] Jira sourced testcase",
+        "testScript": {"steps": [{"index": 0, "description": "Authorize"}]},
+    }
+    parser = _ParserStub(tags=["smoke", "scbc-t1"])
+    jira_provider = _JiraProviderStub(payload)
+    orchestrator = _make_orchestrator(parser=parser, jira_provider=jira_provider)
+
+    result = orchestrator.generate_feature(
+        project_root="C:/tmp/project",
+        testcase_text="create autotest for SCBC-T1",
+    )
+
+    assert result["scenario"]["tags"] == ["smoke", "scbc-t1"]
 
 
 def test_orchestrator_fails_fast_when_jira_fetch_fails() -> None:
@@ -164,32 +213,51 @@ def test_orchestrator_fails_fast_when_jira_fetch_fails() -> None:
     with pytest.raises(RuntimeError, match="Jira testcase key detected but retrieval failed"):
         orchestrator.generate_feature(
             project_root="C:/tmp/project",
-            testcase_text="создай мне автотест по SCBC-T3282",
+            testcase_text="create autotest for SCBC-T1",
         )
 
 
-def test_jira_provider_stub_overrides_key_with_requested_one(tmp_path) -> None:
+def test_jira_provider_returns_special_stub_payload_for_scbc_key(tmp_path) -> None:
     stub_payload = """
-    [
-      {
-        "key": "SCBC-T0001",
-        "name": "Case one",
-        "testScript": {"steps": [{"index": 0, "description": "step"}]}
-      }
-    ]
+    {
+      "key": "SCBC-T1",
+      "name": "Case one",
+      "testScript": {"steps": [{"index": 0, "description": "step"}]}
+    }
     """
-    stub_path = tmp_path / "jira_stub.json"
+    stub_path = tmp_path / "jira_stub_special.json"
     stub_path.write_text(stub_payload, encoding="utf-8")
 
     provider = JiraTestcaseProvider(
         settings=Settings(jira_source_mode="stub"),
         stub_payload_path=stub_path,
     )
-    result = provider.fetch_testcase("SCBC-T3282")
-    assert result["key"] == "SCBC-T3282"
+    result = provider.fetch_testcase("SCBC-T1")
+    assert result["key"] == "SCBC-T1"
+    assert result["name"] == "Case one"
 
 
-def test_jira_provider_disabled_mode_raises() -> None:
+def test_jira_provider_non_special_key_uses_live_fetch_even_when_mode_is_stub(monkeypatch) -> None:
+    provider = JiraTestcaseProvider(settings=Settings(jira_source_mode="stub"))
+
+    def _fake_fetch_live(
+        key: str,
+        *,
+        auth: dict[str, Any] | None,
+        jira_instance: str | None,
+    ) -> dict[str, Any]:
+        assert key == "SCBC-T9999"
+        assert auth is None
+        assert jira_instance is None
+        return {"key": key, "name": "live"}
+
+    monkeypatch.setattr(provider, "_fetch_live", _fake_fetch_live)
+    result = provider.fetch_testcase("scbc-t9999")
+    assert result["key"] == "SCBC-T9999"
+    assert result["name"] == "live"
+
+
+def test_jira_provider_disabled_mode_raises_for_non_special_key() -> None:
     provider = JiraTestcaseProvider(settings=Settings(jira_source_mode="disabled"))
     with pytest.raises(RuntimeError, match="disabled"):
-        provider.fetch_testcase("SCBC-T3282")
+        provider.fetch_testcase("SCBC-T9999")

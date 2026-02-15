@@ -1,0 +1,75 @@
+{
+  "id": 910001,
+  "projectId": 777,
+  "archived": false,
+  "key": "SCBC-T1",
+  "name": "[Mobile] Fictional limit increase happy path",
+  "objective": "Fictional testcase used as stable local Jira stub payload.",
+  "majorVersion": 1,
+  "latestVersion": true,
+  "precondition": "<strong>Preconditions:</strong><br/>User is authorized in mobile app and has an active card.",
+  "folder": {
+    "id": 42,
+    "fullName": "/Regression/Fictional Cases/Mobile"
+  },
+  "status": "Approved",
+  "priority": "Normal",
+  "estimatedTime": 120,
+  "averageTime": 95,
+  "componentId": 501,
+  "owner": "qa.robot",
+  "labels": [
+    "fictional",
+    "stub",
+    "autotest"
+  ],
+  "customFieldValues": [],
+  "testScript": {
+    "id": 810001,
+    "text": null,
+    "steps": [
+      {
+        "index": 0,
+        "reflectRef": null,
+        "description": "Open card details from the home screen",
+        "text": null,
+        "expectedResult": "Card details page is displayed",
+        "testData": "Card status: active",
+        "attachments": [],
+        "customFieldValues": [],
+        "id": 810101,
+        "stepParameters": []
+      },
+      {
+        "index": 1,
+        "reflectRef": null,
+        "description": "Tap Increase limit and enter a valid amount",
+        "text": null,
+        "expectedResult": "Confirmation screen is displayed",
+        "testData": "Requested limit: 150000",
+        "attachments": [],
+        "customFieldValues": [],
+        "id": 810102,
+        "stepParameters": []
+      },
+      {
+        "index": 2,
+        "reflectRef": null,
+        "description": "Confirm the request",
+        "text": null,
+        "expectedResult": "Status screen shows request accepted",
+        "testData": "",
+        "attachments": [],
+        "customFieldValues": [],
+        "id": 810103,
+        "stepParameters": []
+      }
+    ]
+  },
+  "testData": "",
+  "parameters": {
+    "variables": [],
+    "entries": []
+  },
+  "paramType": "PARAMETER"
+}

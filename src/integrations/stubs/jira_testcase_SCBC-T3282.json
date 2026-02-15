@@ -1,0 +1,101 @@
+{
+  "folder": "/Регресс (Космонавты)/Увеличение лимита по кредитной карте в МП с АС Кампейнинг (MVP2)/Android/Вход клиента в увеличение лимита",
+  "latestVersion": true,
+  "testScript": {
+    "id": 5427606,
+    "type": "STEP_BY_STEP",
+    "steps": [
+      {
+        "testData": "<br /><br />",
+        "expectedResult": "У клиента открывается промоэкран с информацией об увеличении лимита<br /><br />Параметры для формирования экрана:<br /><ul><li>${limitMax} - сумма предодобренного лимита limitMax</li><li>${offerExpiration} - дата окончания действия предложения deactDate</li></ul><br /><img src=\"../rest/tests/1.0/attachment/image/15550979\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Клиент тапом подтверждает интерес к предодобренному предложению",
+        "index": 1,
+        "id": 47919189
+      },
+      {
+        "expectedResult": "Открывается экран ввода желаемого лимита.<br /><br /><ul><li>Поле заполнено значением предодобренного лимита  (limitMax прикладной модели)</li><li>Не может быть меньше текущего лимита (creditLimit прикладной модели)</li><li>Не может быть больше NonvipMaxLimit для массового сегмента или VipMaxLimit для ВИП сегмента</li><li>Сумма ввода кратна 1 р.</li><li>Поле не может быть пустым</li></ul><br /><br /><br />",
+        "description": "Клиент нажимает  \"Выбрать другой лимит \"",
+        "index": 2,
+        "id": 47919190
+      },
+      {
+        "expectedResult": "Высвечивается алерт<br /><img src=\"../rest/tests/1.0/attachment/image/6527318\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Ввести значение больше возможного ",
+        "index": 3,
+        "id": 47919191
+      },
+      {
+        "expectedResult": "Высвечивается алерт<br /><img src=\"../rest/tests/1.0/attachment/image/6527321\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Ввести значение меньше возможного",
+        "index": 4,
+        "id": 47919192
+      },
+      {
+        "expectedResult": "Отображается статусный экран<br /><img src=\"../rest/tests/1.0/attachment/image/15550996\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Перейти в заявку из ИО",
+        "index": 12,
+        "id": 47919200
+      },
+      {
+        "expectedResult": "Высвечивается алерт<br /><img src=\"../rest/tests/1.0/attachment/image/6527322\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Оставить пустое поле ввода",
+        "index": 5,
+        "id": 47919193
+      },
+      {
+        "testData": "<br /><br />",
+        "expectedResult": "У клиента в смартбаннере отображается предложение по увеличению кредитного лимита или в настройках кредитной карты есть пункт \"Лимит кредитной карты\"<br /><br /><img src=\"../rest/tests/1.0/attachment/image/6527284\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" /><img src=\"../rest/tests/1.0/attachment/image/6527286\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" /><br /><br />",
+        "description": "Авторизоваться в МП",
+        "index": 0,
+        "id": 47919188
+      },
+      {
+        "expectedResult": "Отображается поле ввода Среднемесячного дохода<br /><img src=\"../rest/tests/1.0/attachment/image/15550988\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Ввести корректное значение лимита и нажать кнопку \"Продолжить\"",
+        "index": 6,
+        "id": 47919194
+      },
+      {
+        "expectedResult": "Отображается алерт<br /><img src=\"../rest/tests/1.0/attachment/image/6527332\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Ввести значение менее 2000",
+        "index": 7,
+        "id": 47919195
+      },
+      {
+        "expectedResult": "Отображается алерт<br /><img src=\"../rest/tests/1.0/attachment/image/6527332\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Ввести значение более 9999999999 ",
+        "index": 8,
+        "id": 47919196
+      },
+      {
+        "expectedResult": "Отображается алерт<br /><img src=\"../rest/tests/1.0/attachment/image/6527332\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" />",
+        "description": "Не вводить значение",
+        "index": 9,
+        "id": 47919197
+      },
+      {
+        "expectedResult": "Отображается экран принятия заявки на рассмотрение<br /><img src=\"../rest/tests/1.0/attachment/image/15550992\" style=\"width:300px\" class=\"fr-fic fr-fil fr-dib\" /><br />",
+        "description": "Ввести корректное значение в поле дохода и нажать Подтвердить",
+        "index": 10,
+        "id": 47919198
+      },
+      {
+        "testData": "",
+        "expectedResult": "Отображается главный экран МП. ",
+        "description": "Нажать кнопку \"Вернуться на главный\"",
+        "index": 11,
+        "id": 47919199
+      }
+    ]
+  },
+  "name": "[Android] MVP2. УЛКК. Выбрать больший лимит",
+  "precondition": "<strong><em>Аналитика</em></strong><em>:</em><br />https://confluence.sberbank.ru/pages/viewpage.action?pageId=7831617962<br /><br /><strong><em>Предусловия:</em></strong><br />включен локальный тоггл <strong>UFSKS_CREDIT_CARD_INCREASE_LIMIT_MB_MVP2</strong> <br />включен лаунчер <strong>UFSCreditCardIncreaseLimitMBMVP2 <strong><em>(\"value\": \"2.0\")</em></strong> </strong><br />включена привилегия в ФП Авторизация MB_IncreaseLimitCreditCard.Action.Access (=true)<br />Клиенту отображается смартбаннер <span>с предодобренным предложением</span><br /><strong><em><br />Клиенты:</em></strong><br />Клиент должен иметь УДБО, МБК, активную кредитную карту<br />Должен попасть в кампанию изменения лимита по кредитной карте*<br /><br /><span style=\"color:rgb(65, 168, 95)\">*Если срок компании подошел к концу, обратиться по поводу продления срока:</span><br />Тестирование АП CRM &lt;ActiveSalesCRMTesting@omega.sbrf.ru&gt;",
+  "priority": "Normal",
+  "majorVersion": 1,
+  "parameters": {
+    "variables": [],
+    "entries": []
+  },
+  "key": "SCBC-T3282",
+  "status": "Approved"
+}

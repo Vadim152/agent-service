@@ -94,3 +94,40 @@ def test_llm_endpoint_uses_fallback(tmp_path) -> None:
     payload = response.json()
     assert payload["reply"] == adapter.generate(prompt)
     assert payload["provider"] == adapter.__class__.__name__
+
+
+def test_validate_credentials_allows_corp_mode_without_oauth_credentials() -> None:
+    app = FastAPI()
+    adapter = GigaChatAdapter(
+        base_url=None,
+        auth_url=None,
+        client_id=None,
+        client_secret=None,
+        allow_fallback=False,
+        corp_mode=True,
+        corp_proxy_url="https://corp.local/sbe-ai-pdlc-integration-code-generator/v1/chat/proxy/completions",
+        cert_file="C:/secrets/client.crt",
+        key_file="C:/secrets/client.key",
+    )
+    orchestrator = SimpleNamespace(llm_client=adapter)
+
+    _validate_external_credentials(app, orchestrator)
+
+
+def test_validate_credentials_fails_for_incomplete_corp_mode_config() -> None:
+    app = FastAPI()
+    adapter = GigaChatAdapter(
+        base_url=None,
+        auth_url=None,
+        client_id=None,
+        client_secret=None,
+        allow_fallback=False,
+        corp_mode=True,
+        corp_proxy_url="https://corp.local/sbe-ai-pdlc-integration-code-generator/v1/chat/proxy/completions",
+        cert_file=None,
+        key_file="C:/secrets/client.key",
+    )
+    orchestrator = SimpleNamespace(llm_client=adapter)
+
+    with pytest.raises(RuntimeError, match="Corporate proxy settings"):
+        _validate_external_credentials(app, orchestrator)

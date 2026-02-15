@@ -112,7 +112,7 @@ class AiToolWindowPanel(
 
     private val inputArea = JBTextArea(4, 20)
     private val sendButton = JButton()
-    private val statusLabel = JBLabel("Connecting...")
+    private val statusLabel = JBLabel("Подключение...")
 
     private val approvalPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -174,12 +174,12 @@ class AiToolWindowPanel(
     }
 
     fun showScanResult(response: ScanStepsResponseDto) {
-        appendSystemLine("Scan completed: steps=${response.stepsCount}, updated=${response.updatedAt}.")
+        appendSystemLine("Сканирование завершено: steps=${response.stepsCount}, updated=${response.updatedAt}.")
     }
 
     fun showUnmappedSteps(unmappedSteps: List<UnmappedStepDto>) {
         if (unmappedSteps.isNotEmpty()) {
-            appendSystemLine("Unmapped steps: ${unmappedSteps.size}")
+            appendSystemLine("Несопоставленные шаги: ${unmappedSteps.size}")
         }
     }
 
@@ -205,12 +205,12 @@ class AiToolWindowPanel(
                 JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                     isOpaque = false
                     add(headerButton("+") { ensureSessionAsync(forceNew = true) })
-                    add(headerButton("History") {
+                    add(headerButton("История") {
                         showHistoryScreen()
                         loadSessionsHistoryAsync()
                     })
                     add(JButton(AllIcons.General.Settings).apply {
-                        toolTipText = "Settings"
+                        toolTipText = "Настройки"
                         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
                         foreground = theme.primaryText
                         background = theme.controlBackground
@@ -272,7 +272,7 @@ class AiToolWindowPanel(
         historyList.foreground = theme.primaryText
         historyList.selectionBackground = theme.controlBackground
         historyList.selectionForeground = theme.primaryText
-        historyList.emptyText.text = "No chats yet"
+        historyList.emptyText.text = "Пока нет чатов"
         historyList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
                 if (e.clickCount >= 2) {
@@ -286,7 +286,7 @@ class AiToolWindowPanel(
             add(
                 JPanel(BorderLayout()).apply {
                     isOpaque = false
-                    add(JButton("Back").apply {
+                    add(JButton("Назад").apply {
                         foreground = theme.primaryText
                         background = theme.controlBackground
                         border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
@@ -294,7 +294,7 @@ class AiToolWindowPanel(
                         isFocusPainted = false
                         addActionListener { showChatScreen() }
                     }, BorderLayout.WEST)
-                    add(JBLabel("History").apply { foreground = theme.primaryText }, BorderLayout.CENTER)
+                    add(JBLabel("История").apply { foreground = theme.primaryText }, BorderLayout.CENTER)
                 },
                 BorderLayout.NORTH
             )
@@ -307,7 +307,7 @@ class AiToolWindowPanel(
             }, BorderLayout.CENTER)
             add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
                 isOpaque = false
-                add(JButton("Open Chat").apply {
+                add(JButton("Открыть чат").apply {
                     foreground = theme.primaryText
                     background = theme.controlBackground
                     border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
@@ -415,12 +415,25 @@ class AiToolWindowPanel(
 
     private fun submitMessage(message: String) {
         if (isGenerating()) {
-            appendSystemLine("Wait until current response is finished.")
+            appendSystemLine("Дождитесь завершения текущего ответа.")
             return
         }
+        latestActivity = "busy"
+        upsertProgressLine("Идёт обработка запроса...")
+        updateSendButtonState()
+        updateStatusLabel()
         ApplicationManager.getApplication().executeOnPooledThread {
             val requireFreshSession = sessionId.isNullOrBlank() || (initialSessionRequested && !initialSessionReady)
-            val active = ensureSessionBlocking(forceNew = requireFreshSession) ?: return@executeOnPooledThread
+            val active = ensureSessionBlocking(forceNew = requireFreshSession)
+            if (active == null) {
+                SwingUtilities.invokeLater {
+                    latestActivity = "idle"
+                    removeProgressLine()
+                    updateSendButtonState()
+                    updateStatusLabel()
+                }
+                return@executeOnPooledThread
+            }
             try {
                 backendClient.sendChatMessage(active, ChatMessageRequestDto(content = message))
                 SwingUtilities.invokeLater {
@@ -434,7 +447,13 @@ class AiToolWindowPanel(
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to send chat message", ex)
-                SwingUtilities.invokeLater { appendSystemLine("Message failed: ${ex.message}") }
+                SwingUtilities.invokeLater {
+                    latestActivity = "idle"
+                    removeProgressLine()
+                    updateSendButtonState()
+                    updateStatusLabel()
+                    appendSystemLine("Не удалось отправить сообщение: ${ex.message}")
+                }
             }
         }
     }
@@ -448,7 +467,7 @@ class AiToolWindowPanel(
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to execute command", ex)
-                SwingUtilities.invokeLater { appendSystemLine("Command failed: ${ex.message}") }
+                SwingUtilities.invokeLater { appendSystemLine("Не удалось выполнить команду: ${ex.message}") }
             }
         }
     }
@@ -462,7 +481,7 @@ class AiToolWindowPanel(
             val active = ensureSessionBlocking(forceNew) ?: return@executeOnPooledThread
             SwingUtilities.invokeLater {
                 showChatScreen()
-                setConnectionState(ConnectionState.CONNECTING, "Session ${active.take(8)}")
+                setConnectionState(ConnectionState.CONNECTING, "Сессия ${active.take(8)}")
             }
             startEventStreamAsync(active)
             refreshControlPlaneAsync()
@@ -482,7 +501,7 @@ class AiToolWindowPanel(
 
             val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
             if (projectRoot.isBlank()) {
-                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Project root is empty") }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Корень проекта не указан") }
                 return null
             }
 
@@ -518,7 +537,7 @@ class AiToolWindowPanel(
                     initialSessionReady = false
                 }
                 logger.warn("Failed to create session", ex)
-                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Init failed: ${ex.message}") }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Ошибка инициализации: ${ex.message}") }
                 null
             }
         }
@@ -547,7 +566,7 @@ class AiToolWindowPanel(
     private fun loadSessionsHistoryAsync() {
         val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
         if (projectRoot.isBlank()) {
-            setConnectionState(ConnectionState.OFFLINE, "Project root is empty")
+            setConnectionState(ConnectionState.OFFLINE, "Корень проекта не указан")
             return
         }
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -559,7 +578,7 @@ class AiToolWindowPanel(
                 }
             } catch (ex: Exception) {
                 logger.warn("Failed to load sessions", ex)
-                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "History load failed") }
+                SwingUtilities.invokeLater { setConnectionState(ConnectionState.OFFLINE, "Не удалось загрузить историю") }
             }
         }
     }
@@ -653,12 +672,12 @@ class AiToolWindowPanel(
         updateSendButtonState()
 
         val progress = when (latestActivity) {
-            "busy" -> "Working: ${status.currentAction}"
+            "busy" -> "В работе: ${status.currentAction}"
             "retry" -> {
-                val retry = status.lastRetryAttempt?.let { "Retry #$it" } ?: "Retry"
+                val retry = status.lastRetryAttempt?.let { "Повтор #$it" } ?: "Повтор"
                 "$retry: ${status.lastRetryMessage ?: status.currentAction}"
             }
-            "waiting_permission" -> "Waiting approval: ${status.currentAction}"
+            "waiting_permission" -> "Ожидает подтверждения: ${status.currentAction}"
             else -> null
         }
         if (progress != null) {
@@ -680,14 +699,14 @@ class AiToolWindowPanel(
                 background = theme.containerBackground
                 isOpaque = true
             }
-            row.add(JBLabel("Approval: ${permission.title} (${permission.kind})").apply {
+            row.add(JBLabel("Подтверждение: ${permission.title} (${permission.kind})").apply {
                 foreground = theme.primaryText
             }, BorderLayout.CENTER)
             row.add(JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                 isOpaque = false
-                add(actionButton("Approve once") { submitApproval(permission, "approve_once") })
-                add(actionButton("Approve always") { submitApproval(permission, "approve_always") })
-                add(actionButton("Reject") { submitApproval(permission, "reject") })
+                add(actionButton("Разрешить один раз") { submitApproval(permission, "approve_once") })
+                add(actionButton("Разрешить всегда") { submitApproval(permission, "approve_always") })
+                add(actionButton("Отклонить") { submitApproval(permission, "reject") })
             }, BorderLayout.EAST)
             approvalPanel.add(row)
         }
@@ -706,7 +725,7 @@ class AiToolWindowPanel(
                 refreshControlPlaneAsync()
             } catch (ex: Exception) {
                 logger.warn("Failed to submit decision", ex)
-                SwingUtilities.invokeLater { appendSystemLine("Decision failed: ${ex.message}") }
+                SwingUtilities.invokeLater { appendSystemLine("Не удалось отправить решение: ${ex.message}") }
             }
         }
     }
@@ -732,8 +751,8 @@ class AiToolWindowPanel(
                     streamReconnectAttempt = 0
                     setConnectionState(ConnectionState.CONNECTED)
                     val source = response.body?.source() ?: run {
-                        setConnectionState(ConnectionState.RECONNECTING, "Empty response body")
-                        scheduleStreamReconnect(activeSession, "empty-body")
+                        setConnectionState(ConnectionState.RECONNECTING, "Пустое тело ответа")
+                        scheduleStreamReconnect(activeSession, "пустой ответ")
                         return@use
                     }
                     var hasData = false
@@ -753,8 +772,8 @@ class AiToolWindowPanel(
                 }
             } catch (ex: Exception) {
                 if (logger.isDebugEnabled) logger.debug("Stream disconnected", ex)
-                setConnectionState(ConnectionState.RECONNECTING, ex.message ?: "Stream disconnected")
-                scheduleStreamReconnect(activeSession, ex.message ?: "disconnected")
+                setConnectionState(ConnectionState.RECONNECTING, ex.message ?: "Поток отключен")
+                scheduleStreamReconnect(activeSession, ex.message ?: "отключено")
             } finally {
                 if (streamCall == call) streamCall = null
             }
@@ -766,7 +785,7 @@ class AiToolWindowPanel(
         val exponent = minOf(streamReconnectAttempt, 5)
         val delayMs = minOf(30_000L, 1200L * (1L shl exponent))
         streamReconnectAttempt = minOf(streamReconnectAttempt + 1, 10)
-        setConnectionState(ConnectionState.RECONNECTING, "Reconnecting in ${delayMs}ms ($reason)")
+        setConnectionState(ConnectionState.RECONNECTING, "Переподключение через ${delayMs}ms ($reason)")
         AppExecutorUtil.getAppScheduledExecutorService().schedule(
             {
                 if (isDisplayable && sessionId == activeSession) {
@@ -808,7 +827,7 @@ class AiToolWindowPanel(
             sendButton.background = theme.sendButtonBackground
             sendButton.foreground = JBColor.WHITE
         }
-        sendButton.toolTipText = if (isGenerating()) "Stop generation" else "Send message"
+        sendButton.toolTipText = if (isGenerating()) "Остановить генерацию" else "Отправить сообщение"
         sendButton.isOpaque = true
     }
 
@@ -824,17 +843,17 @@ class AiToolWindowPanel(
 
     private fun updateStatusLabel() {
         val activityText = when (latestActivity) {
-            "busy" -> "Working"
-            "retry" -> "Retrying"
-            "waiting_permission" -> "Waiting for approval"
-            "error" -> "Error"
-            else -> "Ready"
+            "busy" -> "В работе"
+            "retry" -> "Повтор"
+            "waiting_permission" -> "Ожидание подтверждения"
+            "error" -> "Ошибка"
+            else -> "Готов"
         }
         val connectionText = when (connectionState) {
-            ConnectionState.CONNECTING -> "connecting"
-            ConnectionState.CONNECTED -> "connected"
-            ConnectionState.RECONNECTING -> "reconnecting"
-            ConnectionState.OFFLINE -> "offline"
+            ConnectionState.CONNECTING -> "подключение"
+            ConnectionState.CONNECTED -> "подключено"
+            ConnectionState.RECONNECTING -> "переподключение"
+            ConnectionState.OFFLINE -> "не в сети"
         }
         val details = connectionDetails?.takeIf { it.isNotBlank() }
         val text = if (details != null) {
@@ -1162,7 +1181,7 @@ class AiToolWindowPanel(
             val text = if (item == null) {
                 ""
             } else {
-                val preview = item.lastMessagePreview?.takeIf { it.isNotBlank() } ?: "Session ${item.sessionId.take(8)}"
+                val preview = item.lastMessagePreview?.takeIf { it.isNotBlank() } ?: "Сессия ${item.sessionId.take(8)}"
                 "$preview  |  ${formatter.format(item.updatedAt)}  |  ${item.activity}"
             }
             return (super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {

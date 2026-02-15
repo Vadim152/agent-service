@@ -148,7 +148,19 @@ def create_orchestrator(settings: Settings | None = None):
     from agents.testcase_parser_agent import TestcaseParserAgent
 
     resolved_settings = settings or get_settings()
+    corp_proxy_url = None
+    if resolved_settings.corp_mode:
+        corp_proxy_url = (
+            f"{resolved_settings.corp_proxy_host}{resolved_settings.corp_proxy_path}"
+            if resolved_settings.corp_proxy_host
+            else None
+        )
     credentials_provided = bool(
+        resolved_settings.corp_mode
+        and resolved_settings.corp_proxy_host
+        and resolved_settings.corp_cert_file
+        and resolved_settings.corp_key_file
+    ) or bool(
         resolved_settings.llm_api_key
         or (
             resolved_settings.gigachat_client_id and resolved_settings.gigachat_client_secret
@@ -160,10 +172,16 @@ def create_orchestrator(settings: Settings | None = None):
         credentials=resolved_settings.llm_api_key,
         client_id=resolved_settings.gigachat_client_id,
         client_secret=resolved_settings.gigachat_client_secret,
-        model_name=resolved_settings.llm_model or "GigaChat",
+        model_name=resolved_settings.corp_model if resolved_settings.corp_mode else (resolved_settings.llm_model or "GigaChat"),
         scope=resolved_settings.gigachat_scope,
         verify_ssl_certs=resolved_settings.gigachat_verify_ssl,
         allow_fallback=not credentials_provided,
+        corp_mode=resolved_settings.corp_mode,
+        corp_proxy_url=corp_proxy_url,
+        cert_file=resolved_settings.corp_cert_file,
+        key_file=resolved_settings.corp_key_file,
+        ca_bundle_file=resolved_settings.corp_ca_bundle_file,
+        request_timeout_s=resolved_settings.corp_request_timeout_s,
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
     embeddings_store = EmbeddingsStore()

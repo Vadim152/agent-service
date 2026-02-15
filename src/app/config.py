@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from dotenv import load_dotenv
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,9 @@ class Settings(BaseSettings):
         "llm_api_key",
         "gigachat_client_secret",
         "gigachat_client_id",
+        "corp_cert_file",
+        "corp_key_file",
+        "corp_ca_bundle_file",
     }
 
     model_config = SettingsConfigDict(
@@ -87,6 +90,56 @@ class Settings(BaseSettings):
         description="Verify SSL certificates for GigaChat",
         validation_alias=AliasChoices("GIGACHAT_VERIFY_SSL", "AGENT_SERVICE_GIGACHAT_VERIFY_SSL"),
     )
+    corp_mode: bool = Field(
+        default=False,
+        description="Enable corporate proxy mode for chat completions with mTLS",
+    )
+    corp_proxy_host: str | None = Field(
+        default=None,
+        description="Corporate proxy host (scheme + host) without endpoint path",
+    )
+    corp_proxy_path: str = Field(
+        default="/sbe-ai-pdlc-integration-code-generator/v1/chat/proxy/completions",
+        description="Corporate proxy path for chat completions",
+    )
+    corp_model: str = Field(
+        default="GigaChat-2-Max",
+        description="Model name used in corporate proxy mode",
+    )
+    corp_cert_file: str | None = Field(
+        default=None,
+        description="Path to client certificate PEM/CRT for corporate proxy mTLS",
+    )
+    corp_key_file: str | None = Field(
+        default=None,
+        description="Path to client key file for corporate proxy mTLS",
+    )
+    corp_ca_bundle_file: str | None = Field(
+        default=None,
+        description="Optional CA bundle path for corporate TLS verification",
+    )
+    corp_request_timeout_s: float = Field(
+        default=30.0,
+        description="Timeout for corporate proxy requests in seconds",
+    )
+
+    @model_validator(mode="after")
+    def _validate_corporate_mode(self) -> "Settings":
+        if self.corp_proxy_host:
+            self.corp_proxy_host = self.corp_proxy_host.strip().rstrip("/")
+        self.corp_proxy_path = "/" + self.corp_proxy_path.strip().lstrip("/")
+
+        if not self.corp_mode:
+            return self
+
+        if not self.corp_proxy_host:
+            raise ValueError("corp_proxy_host is required when corp_mode=true")
+        if not self.corp_cert_file:
+            raise ValueError("corp_cert_file is required when corp_mode=true")
+        if not self.corp_key_file:
+            raise ValueError("corp_key_file is required when corp_mode=true")
+
+        return self
 
     def safe_model_dump(self) -> dict[str, Any]:
         """Return settings payload with secrets redacted for logging."""

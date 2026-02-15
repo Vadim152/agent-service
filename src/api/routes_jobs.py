@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import uuid
@@ -69,7 +70,37 @@ async def create_job(payload: JobCreateRequest, request: Request) -> JobCreateRe
     if not supervisor or not run_state_store:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Job control plane is not initialized")
 
+    idempotency_key = request.headers.get("Idempotency-Key")
+    payload_fingerprint = hashlib.sha256(
+        json.dumps(
+            payload.model_dump(by_alias=True, mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
     job_id = str(uuid.uuid4())
+    if idempotency_key:
+        claimed, existing_job_id = run_state_store.claim_idempotency_key(
+            idempotency_key,
+            fingerprint=payload_fingerprint,
+            job_id=job_id,
+        )
+        if not claimed and existing_job_id:
+            existing = run_state_store.get_job(existing_job_id)
+            if not existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Idempotency key is bound to missing job state",
+                )
+            return JobCreateResponse(
+                job_id=existing_job_id,
+                status=str(existing.get("status", "queued")),
+            )
+        if not claimed and not existing_job_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Idempotency key reuse with different payload is not allowed",
+            )
     zephyr_auth = (
         payload.zephyr_auth.model_dump(by_alias=True, mode="json")
         if payload.zephyr_auth

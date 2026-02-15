@@ -61,6 +61,9 @@ class _SupervisorStub:
         self.store = store
 
     async def execute_job(self, job_id: str) -> None:
+        job = self.store.get_job(job_id) or {}
+        testcase_text = str(job.get("test_case_text", "")).upper()
+        jira_key = "SCBC-T1" if "SCBC-T1" in testcase_text else None
         self.store.patch_job(
             job_id,
             status="succeeded",
@@ -74,7 +77,7 @@ class _SupervisorStub:
                 "stepsSummary": {"exact": 1, "fuzzy": 0, "unmatched": 0},
                 "meta": {"language": "ru"},
                 "pipeline": [
-                    {"stage": "source_resolve", "status": "raw_text", "details": {}},
+                    {"stage": "source_resolve", "status": "raw_text", "details": {"jiraKey": jira_key}},
                     {"stage": "parse", "status": "ok", "details": {}},
                 ],
                 "fileStatus": None,
@@ -307,8 +310,8 @@ def test_autotest_natural_message_creates_preview_and_pending_save() -> None:
 
     _wait_until(_has_pending_permission)
     history = client.get(f"/chat/sessions/{session_id}/history").json()
-    assert "Autotest preview is ready." in history["messages"][-1]["content"]
-    assert history["pendingPermissions"][0]["title"] == "Save generated feature file"
+    assert "Предпросмотр автотеста готов." in history["messages"][-1]["content"]
+    assert history["pendingPermissions"][0]["title"] == "Сохранить сгенерированный feature-файл"
 
 
 def test_autotest_save_permission_executes_save_tool() -> None:
@@ -331,5 +334,23 @@ def test_autotest_save_permission_executes_save_tool() -> None:
     assert decision.status_code == 200
     _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 0)
     history = client.get(f"/chat/sessions/{session_id}/history").json()
-    assert any("Feature file created" in msg["content"] for msg in history["messages"] if msg["role"] == "assistant")
+    assert any("Feature-файл создан" in msg["content"] for msg in history["messages"] if msg["role"] == "assistant")
+
+
+def test_autotest_uses_jira_key_as_default_target_path() -> None:
+    app = _build_autotest_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "Создай автотест для SCBC-T1"},
+    )
+    assert response.status_code == 200
+
+    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
+    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    pending = history["pendingPermissions"][0]
+    assert pending["metadata"]["target_path"] == "src/test/resources/features/SCBC-T1.feature"
 

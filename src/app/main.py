@@ -152,6 +152,13 @@ def _validate_external_credentials(_: FastAPI, orchestrator) -> None:
         raise RuntimeError("LLM клиент не сконфигурирован и fallback не задан")
 
     logger.debug("[Startup] Проверка LLM credentials")
+    if getattr(llm_client, "corp_mode", False):
+        try:
+            llm_client.validate_corp_config()  # type: ignore[attr-defined]
+        except Exception as exc:
+            raise RuntimeError("Corporate proxy settings are not configured correctly") from exc
+        return
+
     has_credentials = bool(
         getattr(llm_client, "credentials", None) or getattr(llm_client, "access_token", None)
     )

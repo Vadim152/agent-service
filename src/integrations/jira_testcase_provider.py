@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import json
-import random
 import re
 from pathlib import Path
 from typing import Any
@@ -22,6 +21,7 @@ JIRA_TESTCASE_FIELDS = (
 )
 
 _JIRA_KEY_RE = re.compile(r"\b([A-Z][A-Z0-9]+-[A-Z]*\d+)\b", re.IGNORECASE)
+_SPECIAL_STUB_KEY = "SCBC-T1"
 
 
 def extract_jira_testcase_key(text: str | None) -> str | None:
@@ -41,12 +41,12 @@ class JiraTestcaseProvider:
         settings: Settings | None = None,
         *,
         stub_payload_path: Path | None = None,
-        rng: random.Random | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        self.stub_payload_path = stub_payload_path or Path(__file__).resolve().parent / "stubs" / "jira_testcases.json"
-        self._rng = rng or random.Random()
-        self._stub_payloads: list[dict[str, Any]] | None = None
+        self.stub_payload_path = (
+            stub_payload_path or Path(__file__).resolve().parent / "stubs" / "jira_testcase_SCBC-T1.json"
+        )
+        self._special_stub_payload: dict[str, Any] | None = None
 
     @property
     def mode(self) -> str:
@@ -61,38 +61,34 @@ class JiraTestcaseProvider:
         if not key:
             raise ValueError("Jira testcase key is empty")
 
-        mode = self.mode
-        if mode == "disabled":
-            raise RuntimeError("Jira testcase retrieval is disabled")
-        if mode == "stub":
-            return self._fetch_stub(key)
-        if mode == "live":
-            return self._fetch_live(key, auth=auth, jira_instance=jira_instance)
-        raise RuntimeError(f"Unknown jira source mode: {mode}")
+        normalized_key = key.strip().upper()
+        if normalized_key == _SPECIAL_STUB_KEY:
+            return self._fetch_special_stub(normalized_key)
 
-    def _fetch_stub(self, key: str) -> dict[str, Any]:
-        payloads = self._load_stub_payloads()
-        selected = copy.deepcopy(self._rng.choice(payloads))
+        if self.mode == "disabled":
+            raise RuntimeError("Jira testcase retrieval is disabled")
+
+        return self._fetch_live(normalized_key, auth=auth, jira_instance=jira_instance)
+
+    def _fetch_special_stub(self, key: str) -> dict[str, Any]:
+        payload = self._load_special_stub_payload()
+        selected = copy.deepcopy(payload)
         selected["key"] = key
         return selected
 
-    def _load_stub_payloads(self) -> list[dict[str, Any]]:
-        if self._stub_payloads is not None:
-            return self._stub_payloads
+    def _load_special_stub_payload(self) -> dict[str, Any]:
+        if self._special_stub_payload is not None:
+            return self._special_stub_payload
         if not self.stub_payload_path.exists():
             raise RuntimeError(f"Jira stub payload file not found: {self.stub_payload_path}")
 
         raw = self.stub_payload_path.read_text(encoding="utf-8")
         parsed = json.loads(raw)
-        if not isinstance(parsed, list) or not parsed:
-            raise RuntimeError("Jira stub payloads must be a non-empty JSON array")
+        if not isinstance(parsed, dict):
+            raise RuntimeError("Jira special stub payload must be a JSON object")
 
-        payloads = [item for item in parsed if isinstance(item, dict)]
-        if not payloads:
-            raise RuntimeError("Jira stub payloads do not contain valid testcase objects")
-
-        self._stub_payloads = payloads
-        return payloads
+        self._special_stub_payload = parsed
+        return parsed
 
     def _fetch_live(
         self,

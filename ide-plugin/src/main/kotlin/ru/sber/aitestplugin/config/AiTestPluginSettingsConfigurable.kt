@@ -27,6 +27,7 @@ import java.awt.BorderLayout
 import java.awt.Font
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.GridLayout
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.ButtonGroup
@@ -59,12 +60,9 @@ class AiTestPluginSettingsConfigurable(
         isOpaque = true
     }
     private val stepsList = JBList<StepDefinitionDto>()
-    private val unmappedList = JBList<UnmappedStepDto>()
     private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
-    private val zephyrServiceRadio = JRadioButton("Zephyr", true)
-    private val testItServiceRadio = JRadioButton("Test IT")
     private val zephyrJiraLabel = JLabel("Jira:")
     private val zephyrJiraInstanceCombo = JComboBox(jiraInstanceOptions.keys.toTypedArray())
     private val zephyrTokenRadio = JRadioButton("Token", true)
@@ -152,35 +150,42 @@ class AiTestPluginSettingsConfigurable(
         }
 
         stepsList.emptyText.text = "Шаги ещё не найдены"
-        unmappedList.emptyText.text = "Неотображённые шаги отсутствуют"
         configureStepRenderer(stepsList)
-        configureUnmappedRenderer(unmappedList)
 
         val stepsPanel = createCardPanel().apply {
             add(sectionLabel("Найденные шаги"), BorderLayout.NORTH)
             add(JBScrollPane(stepsList), BorderLayout.CENTER)
         }
 
-        val unmappedPanel = createCardPanel().apply {
-            add(sectionLabel("Неотображённые шаги"), BorderLayout.NORTH)
-            add(JBScrollPane(unmappedList), BorderLayout.CENTER)
-        }
-
-        val listsSplitter = JBSplitter(false, 0.5f).apply {
-            firstComponent = stepsPanel
-            secondComponent = unmappedPanel
-        }
-
-        val settingsPanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+        val settingsPanel = JPanel(GridBagLayout()).apply {
             background = JBColor.PanelBackground
-            add(topPanel)
-            add(Box.createVerticalStrut(JBUI.scale(12)))
-            add(zephyrPanel)
+            val gbc = GridBagConstraints().apply {
+                gridx = 0
+                gridy = 0
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                anchor = GridBagConstraints.NORTHWEST
+                insets = JBUI.insetsBottom(12)
+            }
+            add(topPanel, gbc)
+            gbc.gridy++
+            gbc.insets = JBUI.emptyInsets()
+            add(zephyrPanel, gbc)
+            gbc.gridy++
+            gbc.weighty = 1.0
+            gbc.fill = GridBagConstraints.BOTH
+            add(JPanel(GridLayout()), gbc)
         }
 
-        rootPanel.add(settingsPanel, BorderLayout.NORTH)
-        rootPanel.add(listsSplitter, BorderLayout.CENTER)
+        val mainSplitter = JBSplitter(true, 0.62f).apply {
+            firstComponent = JBScrollPane(settingsPanel).apply {
+                border = JBUI.Borders.empty()
+                horizontalScrollBarPolicy = JBScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            }
+            secondComponent = stepsPanel
+        }
+
+        rootPanel.add(mainSplitter, BorderLayout.CENTER)
         rootPanel.add(statusLabel, BorderLayout.SOUTH)
 
         scanButton.addActionListener {
@@ -190,10 +195,6 @@ class AiTestPluginSettingsConfigurable(
         ButtonGroup().apply {
             add(zephyrTokenRadio)
             add(zephyrLoginRadio)
-        }
-        ButtonGroup().apply {
-            add(zephyrServiceRadio)
-            add(testItServiceRadio)
         }
         zephyrTokenRadio.addActionListener { updateZephyrAuthUi() }
         zephyrLoginRadio.addActionListener { updateZephyrAuthUi() }
@@ -224,7 +225,6 @@ class AiTestPluginSettingsConfigurable(
 
             override fun onSuccess() {
                 stepsList.setListData(responseSteps.toTypedArray())
-                unmappedList.setListData(emptyArray())
                 statusLabel.icon = AllIcons.General.InspectionsOK
                 statusLabel.text = statusMessage
             }
@@ -283,21 +283,6 @@ class AiTestPluginSettingsConfigurable(
             anchor = GridBagConstraints.NORTHWEST
         }
 
-        val servicePanel = JPanel().apply {
-            layout = BoxLayout(this, BoxLayout.X_AXIS)
-            background = JBColor.PanelBackground
-            add(zephyrServiceRadio)
-            add(Box.createHorizontalStrut(JBUI.scale(12)))
-            add(testItServiceRadio)
-        }
-        panel.add(servicePanel, gbc)
-        gbc.gridx++
-        gbc.weightx = 1.0
-        panel.add(JPanel().apply { background = JBColor.PanelBackground }, gbc)
-
-        gbc.gridx = 0
-        gbc.gridy++
-        gbc.weightx = 0.0
         panel.add(zephyrJiraLabel, gbc)
         gbc.gridx++
         gbc.weightx = 1.0
@@ -537,7 +522,6 @@ class AiTestPluginSettingsConfigurable(
 
             override fun onSuccess() {
                 stepsList.setListData(responseSteps.toTypedArray())
-                unmappedList.setListData(responseUnmapped.toTypedArray())
                 statusLabel.icon = AllIcons.General.InspectionsOK
                 statusLabel.text = statusMessage
             }
@@ -567,28 +551,6 @@ class AiTestPluginSettingsConfigurable(
                 value.summary?.takeIf { it.isNotBlank() }?.let {
                     append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
-            }
-        }
-    }
-
-    private fun configureUnmappedRenderer(list: JBList<UnmappedStepDto>) {
-        list.cellRenderer = object : ColoredListCellRenderer<UnmappedStepDto>() {
-            override fun customizeCellRenderer(
-                list: javax.swing.JList<out UnmappedStepDto>,
-                value: UnmappedStepDto?,
-                index: Int,
-                selected: Boolean,
-                hasFocus: Boolean,
-            ) {
-                if (value == null) return
-                val warningColor = JBColor(0xC77C02, 0xFFB86C)
-                val keyword = value.text.substringBefore(' ')
-                val rest = value.text.removePrefix(keyword).trimStart()
-                append(keyword, SimpleTextAttributes(SimpleTextAttributes.STYLE_UNDERLINE, warningColor))
-                if (rest.isNotBlank()) {
-                    append(" $rest", SimpleTextAttributes(SimpleTextAttributes.STYLE_PLAIN, warningColor))
-                }
-                value.reason?.let { append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
             }
         }
     }

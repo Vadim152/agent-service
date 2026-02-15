@@ -188,3 +188,52 @@ def test_job_events_store_supports_from_index() -> None:
     assert len(events) == 1
     assert events[0]["index"] == 1
     assert events[0]["event_type"] == "event.one"
+
+
+def test_create_job_with_same_idempotency_key_and_payload_returns_existing_job() -> None:
+    app, _ = _build_app()
+    client = TestClient(app)
+    headers = {"Idempotency-Key": "key-123"}
+    payload = {
+        "projectRoot": "/tmp/project",
+        "testCaseText": "Given something",
+        "source": "test-suite",
+        "profile": "quick",
+    }
+
+    first = client.post("/jobs", json=payload, headers=headers)
+    second = client.post("/jobs", json=payload, headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["jobId"] == first.json()["jobId"]
+
+
+def test_create_job_with_same_idempotency_key_and_different_payload_returns_409() -> None:
+    app, _ = _build_app()
+    client = TestClient(app)
+    headers = {"Idempotency-Key": "key-123"}
+
+    first = client.post(
+        "/jobs",
+        json={
+            "projectRoot": "/tmp/project",
+            "testCaseText": "Given something",
+            "source": "test-suite",
+            "profile": "quick",
+        },
+        headers=headers,
+    )
+    second = client.post(
+        "/jobs",
+        json={
+            "projectRoot": "/tmp/project",
+            "testCaseText": "Given another thing",
+            "source": "test-suite",
+            "profile": "quick",
+        },
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 409

@@ -27,6 +27,7 @@ import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
 import ru.sber.aitestplugin.model.JobCreateRequestDto
 import ru.sber.aitestplugin.model.JobCreateResponseDto
+import ru.sber.aitestplugin.model.JobEventResponseDto
 import ru.sber.aitestplugin.model.JobResultResponseDto
 import ru.sber.aitestplugin.model.JobStatusResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
@@ -41,6 +42,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.nio.charset.StandardCharsets
 import java.time.Duration
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -49,6 +51,8 @@ import java.util.concurrent.ConcurrentHashMap
 class HttpBackendClient(
     private val settingsProvider: () -> AiTestPluginSettings = { AiTestPluginSettings.current() }
 ) : BackendClient {
+    private val terminalJobStatuses = setOf("succeeded", "failed", "needs_attention", "cancelled")
+    private val terminalJobEvents = setOf("job.finished", "job.cancelled", "job.worker_failed")
 
     private val logger = Logger.getInstance(HttpBackendClient::class.java)
 
@@ -95,6 +99,9 @@ class HttpBackendClient(
     }
 
     override fun createJob(request: JobCreateRequestDto): JobCreateResponseDto =
+        createJob(request, idempotencyKey = UUID.randomUUID().toString())
+
+    fun createJob(request: JobCreateRequestDto, idempotencyKey: String?): JobCreateResponseDto =
         run {
             val settings = settingsProvider()
             val sanitizedRequest = request.copy(
@@ -111,7 +118,12 @@ class HttpBackendClient(
                 throw BackendException("Test case text must not be empty")
             }
 
-            post("/jobs", sanitizedRequest)
+            val headers = if (idempotencyKey.isNullOrBlank()) {
+                emptyMap()
+            } else {
+                mapOf("Idempotency-Key" to idempotencyKey.trim())
+            }
+            post("/jobs", sanitizedRequest, headers = headers)
         }
 
     override fun getJob(jobId: String): JobStatusResponseDto =
@@ -119,6 +131,24 @@ class HttpBackendClient(
 
     override fun getJobResult(jobId: String): JobResultResponseDto =
         get("/jobs/$jobId/result")
+
+    fun awaitTerminalJobStatus(jobId: String, timeoutMs: Int = 60_000): JobStatusResponseDto {
+        val sseStatus = tryAwaitTerminalStatusViaEvents(jobId, timeoutMs)
+        if (sseStatus != null) {
+            return sseStatus
+        }
+
+        val pollIntervalMs = 500L
+        val attempts = (timeoutMs / pollIntervalMs.toInt()).coerceAtLeast(1)
+        repeat(attempts) {
+            val status = getJob(jobId)
+            if (status.status in terminalJobStatuses) {
+                return status
+            }
+            Thread.sleep(pollIntervalMs)
+        }
+        return getJob(jobId)
+    }
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
         post("/feature/apply-feature", request)
@@ -132,8 +162,10 @@ class HttpBackendClient(
         return get("/chat/sessions?projectRoot=$encodedProjectRoot&limit=$boundedLimit")
     }
 
-    override fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto =
-        post("/chat/sessions/$sessionId/messages", request)
+    override fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto {
+        val settings = settingsProvider()
+        return post("/chat/sessions/$sessionId/messages", request, timeoutMs = settings.chatSendTimeoutMs)
+    }
 
     override fun getChatHistory(sessionId: String): ChatHistoryResponseDto =
         get("/chat/sessions/$sessionId/history")
@@ -301,5 +333,77 @@ class HttpBackendClient(
                 .readTimeout(duration)
                 .build()
         }
+    }
+
+    private fun tryAwaitTerminalStatusViaEvents(jobId: String, timeoutMs: Int): JobStatusResponseDto? {
+        val settings = settingsProvider()
+        val encodedJobId = URLEncoder.encode(jobId, StandardCharsets.UTF_8)
+        val url = "${settings.backendUrl.trimEnd('/')}/jobs/$encodedJobId/events?fromIndex=0"
+        val client = getHttpClient(timeoutMs)
+        val request = Request.Builder()
+            .url(URI.create(url).toURL())
+            .header("Accept", "text/event-stream")
+            .get()
+            .build()
+
+        val startedAtMs = System.currentTimeMillis()
+        val response = try {
+            client.newCall(request).execute()
+        } catch (ex: Exception) {
+            logger.info("SSE stream unavailable for $jobId, fallback to polling: ${ex.message}")
+            return null
+        }
+
+        response.use { httpResponse ->
+            if (!httpResponse.isSuccessful) {
+                logger.info("SSE stream responded ${httpResponse.code} for $jobId, fallback to polling")
+                return null
+            }
+
+            val body = httpResponse.body ?: return null
+            val source = body.source()
+            var currentEventType: String? = null
+            var currentData = StringBuilder()
+
+            while (!source.exhausted()) {
+                if (System.currentTimeMillis() - startedAtMs > timeoutMs) {
+                    return null
+                }
+
+                val line = source.readUtf8Line() ?: continue
+                if (line.isBlank()) {
+                    if (currentData.isNotEmpty()) {
+                        val rawData = currentData.toString().trim()
+                        val eventType = currentEventType ?: ""
+                        if (eventType in terminalJobEvents) {
+                            try {
+                                val event = mapper.readValue<JobEventResponseDto>(rawData)
+                                val status = event.payload["status"]?.toString()?.trim()?.lowercase()
+                                if (!status.isNullOrEmpty() && status in terminalJobStatuses) {
+                                    return getJob(jobId)
+                                }
+                            } catch (_: Exception) {
+                                return getJob(jobId)
+                            }
+                        }
+                    }
+                    currentEventType = null
+                    currentData = StringBuilder()
+                    continue
+                }
+
+                if (line.startsWith("event:")) {
+                    currentEventType = line.removePrefix("event:").trim()
+                    continue
+                }
+                if (line.startsWith("data:")) {
+                    if (currentData.isNotEmpty()) {
+                        currentData.append('\n')
+                    }
+                    currentData.append(line.removePrefix("data:").trim())
+                }
+            }
+        }
+        return null
     }
 }

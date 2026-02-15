@@ -5,7 +5,6 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.colors.EditorColorsManager
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.EffectType
@@ -20,7 +19,6 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.testFramework.LightVirtualFile
 import com.intellij.ui.JBColor
@@ -92,6 +90,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             private var featureText: String = ""
             private var resultTargetPath: String? = dialogOptions.targetPath
             private var unmappedSteps: List<UnmappedStepDto> = emptyList()
+            private var fileStatus: Map<String, Any?>? = null
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Creating job..."
@@ -106,16 +105,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                     )
                 )
 
-                var attemptsLeft = 120
-                var finalStatus = "queued"
-                while (attemptsLeft-- > 0) {
-                    val status = backendClient.getJob(job.jobId)
-                    finalStatus = status.status
-                    if (status.status in setOf("succeeded", "needs_attention", "failed", "cancelled")) {
-                        break
-                    }
-                    Thread.sleep(500)
-                }
+                indicator.text = "Waiting for job..."
+                val finalStatus = backendClient.awaitTerminalJobStatus(job.jobId, timeoutMs = 60_000).status
                 if (finalStatus == "cancelled") {
                     throw IllegalStateException("Job was cancelled")
                 }
@@ -128,18 +119,19 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                     throw IllegalStateException("Generated feature is empty")
                 }
                 unmappedSteps = feature.unmappedSteps
-                val targetFromFileStatus = feature.fileStatus?.get("targetPath") as? String
+                fileStatus = feature.fileStatus
+                val targetFromFileStatus = feature.fileStatus?.get("targetPath")?.toString()
                 resultTargetPath = targetFromFileStatus ?: resultTargetPath
             }
 
             override fun onSuccess() {
-                val file = createOrUpdateFeatureFile(project, projectRoot, resultTargetPath, options, featureText)
+                val file = resolveFeatureFile(projectRoot, resultTargetPath, featureText)
                 FileEditorManager.getInstance(project).openFile(file, true)
                 highlightUnmappedSteps(project, file, unmappedSteps)
                 updateToolWindowUnmapped(project, unmappedSteps)
                 notify(
                     project,
-                    "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}",
+                    buildNotificationMessage(unmappedSteps, fileStatus),
                     NotificationType.INFORMATION
                 )
             }
@@ -151,41 +143,18 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         })
     }
 
-    private fun createOrUpdateFeatureFile(
-        project: Project,
+    private fun resolveFeatureFile(
         projectRoot: String,
         targetPath: String?,
-        options: GenerateFeatureOptionsDto?,
         featureText: String
     ): VirtualFile {
         val normalizedTarget = targetPath?.takeIf { it.isNotBlank() }
         val filePath = normalizedTarget?.let { toAbsolutePath(projectRoot, it) }
-        val shouldCreateFile = options?.createFile == true
-        val shouldOverwrite = options?.overwriteExisting == true
 
         if (filePath != null) {
             val existing = LocalFileSystem.getInstance().refreshAndFindFileByPath(filePath.toString())
             if (existing != null) {
-                if (shouldOverwrite) {
-                    WriteCommandAction.runWriteCommandAction(project) {
-                        VfsUtil.saveText(existing, featureText)
-                    }
-                    return existing
-                }
-                return LightVirtualFile(filePath.fileName.toString(), featureText)
-            }
-
-            if (shouldCreateFile) {
-                var createdFile: VirtualFile? = null
-                WriteCommandAction.runWriteCommandAction(project) {
-                    val parent = filePath.parent ?: throw IllegalArgumentException("Target path must include file name")
-                    val parentDir = VfsUtil.createDirectories(parent.toString())
-                    val fileName = filePath.fileName.toString()
-                    val file = parentDir.createChildData(this, fileName)
-                    VfsUtil.saveText(file, featureText)
-                    createdFile = file
-                }
-                return createdFile ?: throw IllegalStateException("Failed to create feature file")
+                return existing
             }
         }
 
@@ -247,6 +216,15 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             .getNotificationGroup("Агентум")
             .createNotification(message, type)
             .notify(project)
+    }
+
+    private fun buildNotificationMessage(
+        unmappedSteps: List<UnmappedStepDto>,
+        fileStatus: Map<String, Any?>?
+    ): String {
+        val base = "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}"
+        val status = fileStatus?.get("status")?.toString()
+        return if (status.isNullOrBlank()) base else "$base (file: $status)"
     }
 
     private fun updateToolWindowUnmapped(project: Project, unmappedSteps: List<UnmappedStepDto>) {

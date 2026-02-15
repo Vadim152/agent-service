@@ -91,6 +91,28 @@ class FeatureFileToGherkinTestCase(unittest.TestCase):
 
         self.assertEqual(expected, feature.to_gherkin())
 
+    def test_to_gherkin_renders_testcase_tag_for_feature_and_scenario(self) -> None:
+        feature = FeatureFile(
+            name="Jira testcase",
+            description=None,
+            language="en",
+            tags=["SCBC-T1"],
+            background_steps=[],
+            scenarios=[
+                FeatureScenario(
+                    name="Resolved from Jira",
+                    tags=["SCBC-T1"],
+                    steps=["Given data is prepared"],
+                )
+            ],
+        )
+
+        rendered = feature.to_gherkin()
+        lines = rendered.splitlines()
+        self.assertEqual(lines[1], "@SCBC-T1")
+        self.assertEqual(rendered.count("@SCBC-T1"), 2)
+        self.assertIn("Scenario: Resolved from Jira", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

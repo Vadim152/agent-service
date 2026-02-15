@@ -1,4 +1,4 @@
-"""Normalize Jira/Zephyr testcase payload into plain scenario text."""
+﻿"""Normalize Jira/Zephyr testcase payload into plain scenario text."""
 from __future__ import annotations
 
 import html
@@ -9,6 +9,7 @@ from typing import Any
 _TAG_RE = re.compile(r"<[^>]+>")
 _BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 _SPACE_RE = re.compile(r"[ \t]+")
+_SPECIAL_SCENARIO_NAME_KEY = "SCBC-T1"
 
 
 def _clean_html_text(value: Any) -> str:
@@ -48,30 +49,34 @@ def normalize_jira_testcase_to_text(payload: dict[str, Any]) -> str:
     if not isinstance(payload, dict):
         raise ValueError("Jira testcase payload must be a JSON object")
 
-    name = _clean_html_text(payload.get("name")) or _clean_html_text(payload.get("key")) or "Без названия"
+    payload_key = _clean_html_text(payload.get("key")).upper()
+    name = _clean_html_text(payload.get("name")) or payload_key or "Р‘РµР· РЅР°Р·РІР°РЅРёСЏ"
+    if payload_key == _SPECIAL_SCENARIO_NAME_KEY:
+        name = _SPECIAL_SCENARIO_NAME_KEY
+
     precondition = _clean_html_text(payload.get("precondition"))
     test_script = payload.get("testScript")
     if not isinstance(test_script, dict):
         raise ValueError("Jira testcase payload is invalid: missing testScript object")
 
     steps = _sorted_steps(test_script)
-    lines: list[str] = [f"Сценарий: {name}"]
+    lines: list[str] = [f"РЎС†РµРЅР°СЂРёР№: {name}"]
     if precondition:
         lines.append("")
-        lines.append(f"Предусловия: {precondition}")
+        lines.append(f"РџСЂРµРґСѓСЃР»РѕРІРёСЏ: {precondition}")
 
     lines.append("")
     for number, step in enumerate(steps, start=1):
-        description = _clean_html_text(step.get("description")) or f"Шаг {number}"
+        description = _clean_html_text(step.get("description")) or f"РЁР°Рі {number}"
         lines.append(f"{number}. {description}")
 
         expected = _clean_html_text(step.get("expectedResult"))
         if expected:
-            lines.append(f"Ожидаемый результат: {expected}")
+            lines.append(f"РћР¶РёРґР°РµРјС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚: {expected}")
 
         test_data = _clean_html_text(step.get("testData"))
         if test_data:
-            lines.append(f"Тестовые данные: {test_data}")
+            lines.append(f"РўРµСЃС‚РѕРІС‹Рµ РґР°РЅРЅС‹Рµ: {test_data}")
 
         lines.append("")
 

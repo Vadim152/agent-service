@@ -85,7 +85,7 @@ def test_supervisor_passes_jira_context_to_orchestrator(tmp_path: Path) -> None:
             "status": "queued",
             "cancel_requested": False,
             "project_root": "/tmp/project",
-            "test_case_text": "создай автотест по SCBC-T3282",
+            "test_case_text": "создай автотест по SCBC-T1",
             "target_path": None,
             "create_file": False,
             "overwrite_existing": False,

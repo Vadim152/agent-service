@@ -31,6 +31,7 @@ class RunStateStore:
         self._jobs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._events: dict[str, list[StoreEvent]] = {}
         self._next_event_index: dict[str, int] = {}
+        self._idempotency_map: dict[str, dict[str, str]] = {}
 
     def put_job(self, job: dict[str, Any]) -> None:
         with self._lock:
@@ -115,8 +116,30 @@ class RunStateStore:
             next_index = self._next_event_index.get(job_id, 0)
             return result, next_index
 
+    def claim_idempotency_key(
+        self,
+        key: str,
+        *,
+        fingerprint: str,
+        job_id: str,
+    ) -> tuple[bool, str | None]:
+        with self._lock:
+            existing = self._idempotency_map.get(key)
+            if existing:
+                if existing.get("fingerprint") != fingerprint:
+                    return False, None
+                return False, existing.get("job_id")
+
+            self._idempotency_map[key] = {"fingerprint": fingerprint, "job_id": job_id}
+            return True, None
+
     def _evict_jobs_if_needed_locked(self) -> None:
         while len(self._jobs) > self._max_jobs:
             stale_job_id, _ = self._jobs.popitem(last=False)
             self._events.pop(stale_job_id, None)
             self._next_event_index.pop(stale_job_id, None)
+            stale_keys = [
+                key for key, data in self._idempotency_map.items() if data.get("job_id") == stale_job_id
+            ]
+            for key in stale_keys:
+                self._idempotency_map.pop(key, None)

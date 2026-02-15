@@ -145,7 +145,7 @@ class Orchestrator:
                     f"Jira testcase key detected but retrieval failed: {exc}"
                 ) from exc
 
-            source = f"jira_{self.jira_testcase_provider.mode}"
+            source = "jira_stub_fixed" if key.upper() == "SCBC-T1" else "jira_live"
             logger.info("[Orchestrator] Resolved testcase key %s from %s", key, source)
             return {
                 "testcase_text": normalized,
@@ -165,9 +165,41 @@ class Orchestrator:
     def _parse_testcase_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:
             scenario_dict = self.testcase_parser_agent.parse_testcase(state["testcase_text"])
+            resolved_key = state.get("resolved_testcase_key")
+            if resolved_key:
+                scenario_dict["tags"] = self._merge_scenario_tags(
+                    scenario_dict.get("tags"),
+                    resolved_key,
+                )
             return {"scenario": scenario_dict}
 
         return _node
+
+    @staticmethod
+    def _merge_scenario_tags(existing_tags: Any, testcase_key: str) -> list[str]:
+        tags: list[str] = []
+        if isinstance(existing_tags, list):
+            tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
+        elif isinstance(existing_tags, (tuple, set)):
+            tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
+        elif existing_tags:
+            value = str(existing_tags).strip()
+            if value:
+                tags = [value]
+
+        key_value = str(testcase_key).strip()
+        if key_value:
+            tags.append(key_value)
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for tag in tags:
+            marker = tag.upper()
+            if marker in seen:
+                continue
+            seen.add(marker)
+            deduped.append(tag)
+        return deduped
 
     def _match_steps_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:

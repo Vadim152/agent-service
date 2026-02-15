@@ -19,6 +19,8 @@ from chat.state_store import ChatStateStore
 from chat.tool_registry import ChatToolRegistry, ToolDescriptor
 from infrastructure.runtime_errors import ChatRuntimeError
 
+_JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-[A-Z]*\d+$")
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -56,10 +58,10 @@ class GraphChatEngine:
         prompt = "\n".join(str(message.content) for message in messages)
         if self._llm_generate:
             reply = self._llm_generate(prompt)
-            return str(reply).strip() or "Done."
+            return str(reply).strip() or "Готово."
         if messages:
             return f"echo: {messages[-1].content}"
-        return "Done."
+        return "Готово."
 
     def _build_graph(self):
         graph = StateGraph(_ChatGraphState)
@@ -91,10 +93,10 @@ class GraphChatEngine:
     def _request_approval_node(state: _ChatGraphState) -> dict[str, Any]:
         content = str(state.get("content", "")).strip()
         return {
-            "response": "This action requires confirmation before executing a write-like tool.",
+            "response": "Для этого действия нужно подтверждение перед выполнением инструмента записи.",
             "pending_tool": {
                 "toolName": "compose_feature_patch",
-                "title": "Approve feature file modification",
+                "title": "Подтвердить изменение feature-файла",
                 "kind": "tool",
                 "args": {"request": content},
                 "risk": "high",
@@ -169,7 +171,7 @@ class ChatAgentRuntime:
     def _tool_compose_feature_patch(*, request: str) -> dict[str, Any]:
         file_path = "features/generated.feature"
         return {
-            "message": "Prepared feature update draft.",
+            "message": "Подготовлен черновик обновления feature-файла.",
             "diff": {
                 "summary": {"files": 1, "additions": 8, "deletions": 0},
                 "files": [
@@ -193,7 +195,7 @@ class ChatAgentRuntime:
         overwrite_existing: bool = False,
     ) -> dict[str, Any]:
         if self._orchestrator is None:
-            raise ChatRuntimeError("Feature save is unavailable: orchestrator is not configured", status_code=503)
+            raise ChatRuntimeError("Сохранение feature недоступно: orchestrator не настроен", status_code=503)
         result = self._orchestrator.apply_feature(
             project_root,
             target_path,
@@ -201,8 +203,13 @@ class ChatAgentRuntime:
             overwrite_existing=bool(overwrite_existing),
         )
         status = str(result.get("status", "created"))
+        localized_status = {
+            "created": "создан",
+            "overwritten": "перезаписан",
+            "skipped": "пропущен",
+        }.get(status, status)
         message = (
-            f"Feature file {status}: {result.get('targetPath', target_path)}"
+            f"Feature-файл {localized_status}: {result.get('targetPath', target_path)}"
             if not result.get("message")
             else str(result.get("message"))
         )
@@ -270,8 +277,23 @@ class ChatAgentRuntime:
         }
 
     @staticmethod
-    def _default_target_path() -> str:
-        return "src/test/resources/features/generated.feature"
+    def _default_target_path(feature_payload: dict[str, Any] | None = None) -> str:
+        fallback = "src/test/resources/features/generated.feature"
+        if not isinstance(feature_payload, dict):
+            return fallback
+        pipeline = feature_payload.get("pipeline")
+        if not isinstance(pipeline, list):
+            return fallback
+        for item in pipeline:
+            if not isinstance(item, dict):
+                continue
+            details = item.get("details")
+            if not isinstance(details, dict):
+                continue
+            jira_key = str(details.get("jiraKey", "")).strip().upper()
+            if jira_key and _JIRA_KEY_RE.fullmatch(jira_key):
+                return f"src/test/resources/features/{jira_key}.feature"
+        return fallback
 
     async def _run_autotest_job(
         self,
@@ -283,7 +305,7 @@ class ChatAgentRuntime:
         intent: _AutotestIntent,
     ) -> tuple[dict[str, Any] | None, str | None]:
         if not self._run_state_store or not self._execution_supervisor:
-            raise ChatRuntimeError("Autotest generation is unavailable: job control plane is not configured", status_code=503)
+            raise ChatRuntimeError("Генерация автотеста недоступна: job control plane не настроен", status_code=503)
 
         job_id = str(uuid.uuid4())
         self.state_store.append_event(
@@ -294,7 +316,7 @@ class ChatAgentRuntime:
         self.state_store.update_session(
             session_id,
             activity="busy",
-            current_action="Preparing autotest generation job",
+            current_action="Подготовка задачи генерации автотеста",
         )
 
         self._run_state_store.put_job(
@@ -332,7 +354,7 @@ class ChatAgentRuntime:
         self.state_store.update_session(
             session_id,
             activity="busy",
-            current_action=f"Running autotest job {job_id[:8]}",
+            current_action=f"Выполнение задачи автотеста {job_id[:8]}",
         )
 
         await self._execution_supervisor.execute_job(job_id)
@@ -358,9 +380,9 @@ class ChatAgentRuntime:
         pipeline_summary = ", ".join(str(step.get("stage", "?")) for step in pipeline)
         preview = feature_text[:1800] if feature_text else "<empty>"
         return (
-            "Autotest preview is ready.\n"
-            f"Steps summary: exact={exact}, fuzzy={fuzzy}, unmatched={unmatched}.\n"
-            f"Pipeline: {pipeline_summary or 'n/a'}.\n\n"
+            "Предпросмотр автотеста готов.\n"
+            f"Сводка шагов: exact={exact}, fuzzy={fuzzy}, unmatched={unmatched}.\n"
+            f"Пайплайн: {pipeline_summary or 'n/a'}.\n\n"
             f"{preview}"
         )
 
@@ -379,7 +401,7 @@ class ChatAgentRuntime:
     def _require_session(self, session_id: str) -> dict[str, Any]:
         session = self.state_store.get_session(session_id)
         if not session:
-            raise ChatRuntimeError(f"Session not found: {session_id}", status_code=404)
+            raise ChatRuntimeError(f"Сессия не найдена: {session_id}", status_code=404)
         return session
 
     def _build_context(self, session: dict[str, Any]) -> str:
@@ -391,7 +413,7 @@ class ChatAgentRuntime:
     def _to_history_payload(self, session: dict[str, Any], *, limit: int) -> dict[str, Any]:
         history = self.state_store.history(session["session_id"], limit=limit)
         if not history:
-            raise ChatRuntimeError(f"Session not found: {session['session_id']}", status_code=404)
+            raise ChatRuntimeError(f"Сессия не найдена: {session['session_id']}", status_code=404)
         return {
             "sessionId": history["session_id"],
             "projectRoot": history["project_root"],
@@ -450,7 +472,7 @@ class ChatAgentRuntime:
         )
         defaults = {
             "activity": "idle",
-            "current_action": "Idle",
+            "current_action": "Ожидание",
             "totals": {"tokens": {"input": 0, "output": 0, "reasoning": 0, "cacheRead": 0, "cacheWrite": 0}, "cost": 0.0},
             "limits": {"contextWindow": self._context_window, "used": 0, "percent": 0.0},
             "diff": {"summary": {"files": 0, "additions": 0, "deletions": 0}, "files": []},
@@ -489,7 +511,7 @@ class ChatAgentRuntime:
             self.state_store.update_session(
                 session_id,
                 activity="busy",
-                current_action="Processing request",
+                current_action="Обработка запроса",
             )
             self.state_store.append_message(
                 session_id,
@@ -523,14 +545,14 @@ class ChatAgentRuntime:
                 except ChatRuntimeError:
                     raise
                 except Exception as exc:
-                    raise ChatRuntimeError(f"Autotest generation failed: {exc}", status_code=503) from exc
+                    raise ChatRuntimeError(f"Генерация автотеста завершилась ошибкой: {exc}", status_code=503) from exc
 
                 if feature_payload:
                     assistant_text = self._format_autotest_preview(feature_payload)
-                    target_path = intent.get("target_path") or self._default_target_path()
+                    target_path = intent.get("target_path") or self._default_target_path(feature_payload)
                     pending_tool = {
                         "toolName": "save_generated_feature",
-                        "title": "Save generated feature file",
+                        "title": "Сохранить сгенерированный feature-файл",
                         "kind": "tool",
                         "args": {
                             "project_root": str(session.get("project_root", "")),
@@ -541,8 +563,8 @@ class ChatAgentRuntime:
                         "risk": "high",
                     }
                     assistant_text += (
-                        "\n\nSaving is pending confirmation."
-                        f" Target path: {target_path}"
+                        "\n\nСохранение ожидает подтверждения."
+                        f" Целевой путь: {target_path}"
                     )
                     self.state_store.append_event(
                         session_id,
@@ -550,12 +572,12 @@ class ChatAgentRuntime:
                         {"sessionId": session_id, "runId": run_id},
                     )
                 else:
-                    incident_suffix = f" Incident: {incident_uri}" if incident_uri else ""
-                    assistant_text = f"Autotest job finished without feature result.{incident_suffix}"
+                    incident_suffix = f" Инцидент: {incident_uri}" if incident_uri else ""
+                    assistant_text = f"Задача автотеста завершилась без feature-результата.{incident_suffix}"
             else:
                 result = self._engine.invoke(content=content, context=self._build_context(session))
                 pending_tool = result.get("pending_tool")
-                assistant_text = str(result.get("response", "")).strip() or "Done."
+                assistant_text = str(result.get("response", "")).strip() or "Готово."
 
             if pending_tool:
                 tool_call_id = str(uuid.uuid4())
@@ -566,7 +588,7 @@ class ChatAgentRuntime:
                     args=dict(pending_tool.get("args", {})),
                     risk_level=str(pending_tool.get("risk", "high")),
                     requires_confirmation=True,
-                    title=str(pending_tool.get("title", "Approve tool execution")),
+                    title=str(pending_tool.get("title", "Подтвердите выполнение инструмента")),
                     kind=str(pending_tool.get("kind", "tool")),
                     message_id=message_id,
                 )
@@ -585,7 +607,7 @@ class ChatAgentRuntime:
                 self.state_store.update_session(
                     session_id,
                     activity="waiting_permission",
-                    current_action="Waiting for approval",
+                    current_action="Ожидание подтверждения",
                 )
             else:
                 self.state_store.append_message(
@@ -603,7 +625,7 @@ class ChatAgentRuntime:
                 self.state_store.update_session(
                     session_id,
                     activity="idle",
-                    current_action="Idle",
+                    current_action="Ожидание",
                 )
 
             updated = self._require_session(session_id)
@@ -646,7 +668,7 @@ class ChatAgentRuntime:
                 self.state_store.append_message(
                     session_id,
                     role="assistant",
-                    content="Tool execution was rejected.",
+                    content="Выполнение инструмента отклонено.",
                     metadata={"permissionId": permission_id, "decision": decision},
                 )
                 self.state_store.append_event(
@@ -654,11 +676,11 @@ class ChatAgentRuntime:
                     "permission.rejected",
                     {"sessionId": session_id, "permissionId": permission_id},
                 )
-                self.state_store.update_session(session_id, activity="idle", current_action="Idle")
+                self.state_store.update_session(session_id, activity="idle", current_action="Ожидание")
                 return
 
             if decision not in {"approve_once", "approve_always"}:
-                raise ChatRuntimeError(f"Unsupported decision: {decision}", status_code=422)
+                raise ChatRuntimeError(f"Неподдерживаемое решение: {decision}", status_code=422)
 
             if decision == "approve_always":
                 always = list(session.get("always_approved_tools", []))
@@ -671,7 +693,7 @@ class ChatAgentRuntime:
             try:
                 descriptor = self._tool_registry.get(tool_name)
             except KeyError as exc:
-                raise ChatRuntimeError(f"Tool is not registered: {tool_name}", status_code=422) from exc
+                raise ChatRuntimeError(f"Инструмент не зарегистрирован: {tool_name}", status_code=422) from exc
             result = descriptor.handler(**pending.get("args", {}))
             self.state_store.pop_pending_tool_call(session_id, permission_id)
             self.state_store.append_event(
@@ -682,7 +704,7 @@ class ChatAgentRuntime:
             self.state_store.append_message(
                 session_id,
                 role="assistant",
-                content=str(result.get("message", "Tool executed.")),
+                content=str(result.get("message", "Инструмент выполнен.")),
                 metadata={"permissionId": permission_id, "tool": tool_name},
             )
             if isinstance(result.get("diff"), dict):
@@ -693,7 +715,7 @@ class ChatAgentRuntime:
                     "autotest.saved",
                     {"sessionId": session_id, "permissionId": permission_id},
                 )
-            self.state_store.update_session(session_id, activity="idle", current_action="Idle")
+            self.state_store.update_session(session_id, activity="idle", current_action="Ожидание")
 
     async def get_history(self, *, session_id: str, limit: int = 200) -> dict[str, Any]:
         session = self._require_session(session_id)
@@ -717,7 +739,7 @@ class ChatAgentRuntime:
                     "profile": row.get("profile", "quick"),
                     "status": row.get("status", "active"),
                     "activity": row.get("activity", "idle"),
-                    "currentAction": row.get("current_action", "Idle"),
+                    "currentAction": row.get("current_action", "Ожидание"),
                     "createdAt": row["created_at"],
                     "updatedAt": row["updated_at"],
                     "lastMessagePreview": last_preview,
@@ -733,7 +755,7 @@ class ChatAgentRuntime:
         return {
             "sessionId": session["session_id"],
             "activity": session.get("activity", "idle"),
-            "currentAction": session.get("current_action", "Idle"),
+            "currentAction": session.get("current_action", "Ожидание"),
             "lastEventAt": last_event,
             "updatedAt": session.get("updated_at", _utcnow()),
             "pendingPermissionsCount": len(session.get("pending_tool_calls", [])),
@@ -763,13 +785,13 @@ class ChatAgentRuntime:
     async def execute_command(self, *, session_id: str, command: str) -> dict[str, Any]:
         session = self._require_session(session_id)
         if command == "abort":
-            self.state_store.update_session(session_id, activity="idle", current_action="Aborted")
-            result: dict[str, Any] = {"ok": True, "message": "Aborted current activity"}
+            self.state_store.update_session(session_id, activity="idle", current_action="Прервано")
+            result: dict[str, Any] = {"ok": True, "message": "Текущее действие прервано"}
         elif command == "compact":
             history = self.state_store.history(session_id, limit=80)
             messages = history.get("messages", []) if history else []
             self.state_store.update_session(session_id, messages=messages)
-            result = {"ok": True, "message": "History compacted"}
+            result = {"ok": True, "message": "История сжата"}
         elif command == "status":
             result = {"ok": True, "status": await self.get_status(session_id=session_id)}
         elif command == "diff":
@@ -777,7 +799,7 @@ class ChatAgentRuntime:
         elif command == "help":
             result = {"ok": True, "commands": ["status", "diff", "compact", "abort", "help"]}
         else:
-            raise ChatRuntimeError(f"Unsupported command: {command}", status_code=422)
+            raise ChatRuntimeError(f"Неподдерживаемая команда: {command}", status_code=422)
 
         self.state_store.append_event(
             session_id,
