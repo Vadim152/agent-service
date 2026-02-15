@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from api.schemas import ApiBaseModel
+from api.schemas import ZephyrAuth
 
 
 class ChatSessionCreateRequest(ApiBaseModel):
@@ -14,6 +15,8 @@ class ChatSessionCreateRequest(ApiBaseModel):
     source: str = Field(default="ide-plugin")
     profile: str = Field(default="quick")
     reuse_existing: bool = Field(default=True, alias="reuseExisting")
+    zephyr_auth: ZephyrAuth | None = Field(default=None, alias="zephyrAuth")
+    jira_instance: str | None = Field(default=None, alias="jiraInstance")
 
 
 class ChatSessionCreateResponse(ApiBaseModel):

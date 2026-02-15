@@ -129,6 +129,12 @@ async def create_chat_session(payload: ChatSessionCreateRequest, request: Reques
             source=payload.source,
             profile=payload.profile,
             reuse_existing=payload.reuse_existing,
+            zephyr_auth=(
+                payload.zephyr_auth.model_dump(by_alias=True, mode="json")
+                if payload.zephyr_auth
+                else None
+            ),
+            jira_instance=payload.jira_instance,
         )
     except ChatRuntimeError as exc:
         raise _runtime_to_http_error(exc) from exc

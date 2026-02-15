@@ -95,13 +95,14 @@ class AiTestPluginSettingsConfigurable(
         val currentToken = String(zephyrTokenField.password).trim().ifEmpty { null }
         val currentLogin = zephyrLoginField.text.trim().ifEmpty { null }
         val currentPassword = String(zephyrPasswordField.password).trim().ifEmpty { null }
-        val currentJiraInstance = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
+        val currentJiraInstanceUrl = resolveJiraInstanceUrl(zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty())
+        val savedJiraInstanceUrl = resolveJiraInstanceUrl(saved.zephyrJiraInstance)
         return projectRootField.text.trim() != (saved.scanProjectRoot ?: "") ||
             currentAuthType != saved.zephyrAuthType ||
             currentToken != saved.zephyrToken ||
             currentLogin != saved.zephyrLogin ||
             currentPassword != saved.zephyrPassword ||
-            currentJiraInstance != saved.zephyrJiraInstance ||
+            currentJiraInstanceUrl != savedJiraInstanceUrl ||
             jiraProjects != saved.zephyrProjects
     }
 
@@ -112,7 +113,8 @@ class AiTestPluginSettingsConfigurable(
         settingsService.settings.zephyrToken = String(zephyrTokenField.password).trim().ifEmpty { null }
         settingsService.settings.zephyrLogin = zephyrLoginField.text.trim().ifEmpty { null }
         settingsService.settings.zephyrPassword = String(zephyrPasswordField.password).trim().ifEmpty { null }
-        settingsService.settings.zephyrJiraInstance = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
+        settingsService.settings.zephyrJiraInstance =
+            resolveJiraInstanceUrl(zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()).orEmpty()
         settingsService.settings.zephyrProjects = jiraProjects.toMutableList()
     }
 
@@ -125,7 +127,8 @@ class AiTestPluginSettingsConfigurable(
         zephyrTokenField.text = saved.zephyrToken.orEmpty()
         zephyrLoginField.text = saved.zephyrLogin.orEmpty()
         zephyrPasswordField.text = saved.zephyrPassword.orEmpty()
-        zephyrJiraInstanceCombo.setSelectedItem(saved.zephyrJiraInstance)
+        val savedJiraLabel = resolveJiraInstanceLabel(saved.zephyrJiraInstance)
+        zephyrJiraInstanceCombo.setSelectedItem(savedJiraLabel)
         jiraProjects.clear()
         jiraProjects.addAll(saved.zephyrProjects)
         refreshJiraProjects()

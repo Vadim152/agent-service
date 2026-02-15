@@ -96,6 +96,7 @@ def _build_autotest_app() -> FastAPI:
         run_state_store=run_state_store,
         execution_supervisor=_SupervisorStub(run_state_store),
     )
+    app.state.run_state_store = run_state_store
     app.include_router(chat_router)
     return app
 
@@ -353,4 +354,40 @@ def test_autotest_uses_jira_key_as_default_target_path() -> None:
     history = client.get(f"/chat/sessions/{session_id}/history").json()
     pending = history["pendingPermissions"][0]
     assert pending["metadata"]["target_path"] == "src/test/resources/features/SCBC-T1.feature"
+
+
+def test_chat_autotest_job_inherits_session_zephyr_auth_and_jira_instance() -> None:
+    app = _build_autotest_app()
+    client = TestClient(app)
+    session = client.post(
+        "/chat/sessions",
+        json={
+            "projectRoot": "/tmp/project",
+            "zephyrAuth": {"authType": "TOKEN", "token": "demo-token"},
+            "jiraInstance": "https://jira.sberbank.ru",
+        },
+    ).json()
+    session_id = session["sessionId"]
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "Создай автотест для SCBC-T3282"},
+    )
+    assert response.status_code == 200
+
+    def _has_job_with_auth() -> bool:
+        jobs = getattr(app.state.run_state_store, "_jobs", {})
+        return any(item.get("zephyr_auth") for item in jobs.values())
+
+    _wait_until(_has_job_with_auth)
+    jobs = getattr(app.state.run_state_store, "_jobs", {})
+    assert jobs
+    created_job = next(iter(jobs.values()))
+    assert created_job["zephyr_auth"] == {
+        "authType": "TOKEN",
+        "token": "demo-token",
+        "login": None,
+        "password": None,
+    }
+    assert created_job["jira_instance"] == "https://jira.sberbank.ru"
 

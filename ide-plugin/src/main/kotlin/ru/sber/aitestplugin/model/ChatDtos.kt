@@ -6,7 +6,9 @@ data class ChatSessionCreateRequestDto(
     val projectRoot: String,
     val source: String = "ide-plugin",
     val profile: String = "quick",
-    val reuseExisting: Boolean = false
+    val reuseExisting: Boolean = false,
+    val zephyrAuth: ZephyrAuthDto? = null,
+    val jiraInstance: String? = null
 )
 
 data class ChatSessionCreateResponseDto(

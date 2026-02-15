@@ -9,6 +9,7 @@ import com.intellij.openapi.diagnostic.Logger
 import ru.sber.aitestplugin.config.AiTestPluginSettings
 import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.config.toZephyrAuthHeaders
+import ru.sber.aitestplugin.config.toJiraInstanceUrl
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
@@ -108,7 +109,7 @@ class HttpBackendClient(
                 projectRoot = request.projectRoot.trim(),
                 testCaseText = request.testCaseText.trim(),
                 zephyrAuth = request.zephyrAuth ?: settings.toZephyrAuthDto(),
-                jiraInstance = request.jiraInstance ?: settings.zephyrJiraInstance.trim().ifBlank { null }
+                jiraInstance = request.jiraInstance ?: settings.toJiraInstanceUrl()
             )
 
             if (sanitizedRequest.projectRoot.isBlank()) {

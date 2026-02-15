@@ -2,6 +2,10 @@ package ru.sber.aitestplugin.config
 
 import ru.sber.aitestplugin.model.ZephyrAuthDto
 
+private val jiraInstanceOptions = mapOf(
+    "Sigma" to "https://jira.sberbank.ru"
+)
+
 fun AiTestPluginSettings.zephyrAuthValidationError(): String? =
     when (zephyrAuthType) {
         ZephyrAuthType.TOKEN -> {
@@ -45,3 +49,18 @@ fun AiTestPluginSettings.toZephyrAuthHeaders(): Map<String, String> {
     }
     return headers
 }
+
+fun resolveJiraInstanceUrl(raw: String?): String? {
+    val value = raw?.trim().orEmpty()
+    if (value.isBlank()) return null
+    if (value.startsWith("http://") || value.startsWith("https://")) return value
+    return jiraInstanceOptions[value]
+}
+
+fun resolveJiraInstanceLabel(raw: String?): String {
+    val value = raw?.trim().orEmpty()
+    if (value.isBlank()) return ""
+    return jiraInstanceOptions.entries.firstOrNull { it.value == value }?.key ?: value
+}
+
+fun AiTestPluginSettings.toJiraInstanceUrl(): String? = resolveJiraInstanceUrl(zephyrJiraInstance)

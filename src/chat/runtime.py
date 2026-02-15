@@ -303,6 +303,7 @@ class ChatAgentRuntime:
         project_root: str,
         content: str,
         intent: _AutotestIntent,
+        session: dict[str, Any],
     ) -> tuple[dict[str, Any] | None, str | None]:
         if not self._run_state_store or not self._execution_supervisor:
             raise ChatRuntimeError("Генерация автотеста недоступна: job control plane не настроен", status_code=503)
@@ -331,8 +332,8 @@ class ChatAgentRuntime:
                 "create_file": False,
                 "overwrite_existing": False,
                 "language": intent.get("language"),
-                "zephyr_auth": None,
-                "jira_instance": None,
+                "zephyr_auth": session.get("zephyr_auth"),
+                "jira_instance": session.get("jira_instance"),
                 "profile": "quick",
                 "source": "chat-runtime",
                 "started_at": _utcnow(),
@@ -463,6 +464,8 @@ class ChatAgentRuntime:
         source: str,
         profile: str,
         reuse_existing: bool,
+        zephyr_auth: dict[str, Any] | None = None,
+        jira_instance: str | None = None,
     ) -> dict[str, Any]:
         payload, reused = self.state_store.create_session(
             project_root=project_root,
@@ -480,6 +483,8 @@ class ChatAgentRuntime:
             "last_retry_message": None,
             "last_retry_attempt": None,
             "last_retry_at": None,
+            "zephyr_auth": zephyr_auth,
+            "jira_instance": jira_instance,
         }
         self.state_store.update_session(payload["session_id"], **defaults)
         session = self._require_session(payload["session_id"])
@@ -541,6 +546,7 @@ class ChatAgentRuntime:
                         project_root=str(session.get("project_root", "")),
                         content=content,
                         intent=intent,
+                        session=session,
                     )
                 except ChatRuntimeError:
                     raise

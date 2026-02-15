@@ -24,6 +24,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import ru.sber.aitestplugin.config.AiTestPluginSettingsConfigurable
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
+import ru.sber.aitestplugin.config.toJiraInstanceUrl
+import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.model.ChatCommandRequestDto
 import ru.sber.aitestplugin.model.ChatHistoryResponseDto
 import ru.sber.aitestplugin.model.ChatMessageRequestDto
@@ -511,7 +513,9 @@ class AiToolWindowPanel(
                         projectRoot = projectRoot,
                         source = "ide-plugin",
                         profile = "quick",
-                        reuseExisting = !forceNew
+                        reuseExisting = !forceNew,
+                        zephyrAuth = settings.toZephyrAuthDto(),
+                        jiraInstance = settings.toJiraInstanceUrl()
                     )
                 )
                 sessionId = created.sessionId
