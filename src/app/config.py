@@ -130,12 +130,38 @@ class Settings(BaseSettings):
         default=30.0,
         description="Timeout for corporate proxy requests in seconds",
     )
+    corp_retry_attempts: int = Field(
+        default=3,
+        description="Max retry attempts for transient corporate proxy errors",
+    )
+    corp_retry_base_delay_s: float = Field(
+        default=0.5,
+        description="Base delay for exponential backoff between corporate proxy retries",
+    )
+    corp_retry_max_delay_s: float = Field(
+        default=4.0,
+        description="Maximum delay for corporate proxy retry backoff",
+    )
+    corp_retry_jitter_s: float = Field(
+        default=0.2,
+        description="Max random jitter added to each corporate proxy retry delay",
+    )
 
     @model_validator(mode="after")
     def _validate_corporate_mode(self) -> "Settings":
         if self.corp_proxy_host:
             self.corp_proxy_host = self.corp_proxy_host.strip().rstrip("/")
         self.corp_proxy_path = "/" + self.corp_proxy_path.strip().lstrip("/")
+        if self.corp_retry_attempts < 1:
+            raise ValueError("corp_retry_attempts must be >= 1")
+        if self.corp_retry_base_delay_s < 0:
+            raise ValueError("corp_retry_base_delay_s must be >= 0")
+        if self.corp_retry_max_delay_s < 0:
+            raise ValueError("corp_retry_max_delay_s must be >= 0")
+        if self.corp_retry_jitter_s < 0:
+            raise ValueError("corp_retry_jitter_s must be >= 0")
+        if self.corp_retry_max_delay_s < self.corp_retry_base_delay_s:
+            raise ValueError("corp_retry_max_delay_s must be >= corp_retry_base_delay_s")
 
         if not self.corp_mode:
             return self

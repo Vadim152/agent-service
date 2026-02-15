@@ -34,6 +34,12 @@ class _CapturingOrchestrator:
         }
 
 
+class _FailingOrchestrator:
+    def generate_feature(self, *args, **kwargs):
+        _ = (args, kwargs)
+        raise RuntimeError("Corporate proxy request failed: 503; body=temporary unavailable")
+
+
 def test_supervisor_respects_cancel_requested_after_attempt(tmp_path: Path) -> None:
     store = RunStateStore()
     job_id = "job-cancel-mid-flight"
@@ -113,3 +119,42 @@ def test_supervisor_passes_jira_context_to_orchestrator(tmp_path: Path) -> None:
     kwargs = orchestrator.calls[0]["kwargs"]
     assert kwargs["zephyr_auth"] == {"authType": "TOKEN", "token": "token-value"}
     assert kwargs["jira_instance"] == "https://jira.sberbank.ru"
+
+
+def test_supervisor_classifies_503_exception_as_infra(tmp_path: Path) -> None:
+    store = RunStateStore()
+    job_id = "job-503-classification"
+    store.put_job(
+        {
+            "job_id": job_id,
+            "status": "queued",
+            "cancel_requested": False,
+            "project_root": "/tmp/project",
+            "test_case_text": "generate autotest",
+            "target_path": None,
+            "create_file": False,
+            "overwrite_existing": False,
+            "language": None,
+            "profile": "quick",
+            "source": "tests",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+            "attempts": [],
+            "result": None,
+        }
+    )
+
+    supervisor = ExecutionSupervisor(
+        orchestrator=_FailingOrchestrator(),
+        run_state_store=store,
+        artifact_store=ArtifactStore(tmp_path / "artifacts"),
+    )
+    asyncio.run(supervisor.execute_job(job_id))
+
+    item = store.get_job(job_id)
+    assert item is not None
+    assert item["status"] == "needs_attention"
+    attempts = item.get("attempts", [])
+    assert attempts
+    classification = attempts[0].get("classification", {})
+    assert classification.get("category") == "infra"

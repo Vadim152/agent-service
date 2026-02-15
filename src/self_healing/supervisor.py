@@ -292,16 +292,17 @@ class ExecutionSupervisor:
                 metrics.inc("jobs.rerun_scheduled")
                 await asyncio.sleep(0.05)
             except Exception as exc:
-                fallback_classification = {"category": "automation", "confidence": 0.9}
+                classification_result = self.classifier.classify({"exception": str(exc)})
+                classification_payload = classification_result.to_dict()
                 self.run_state_store.patch_attempt(
                     job_id,
                     attempt_id,
                     status="failed",
                     finished_at=_utcnow(),
-                    classification=fallback_classification,
+                    classification=classification_payload,
                     artifacts=artifacts,
                 )
-                incident = self._build_incident(job, run_id, attempt_id, fallback_classification, str(exc))
+                incident = self._build_incident(job, run_id, attempt_id, classification_payload, str(exc))
                 break
 
         if cancelled:

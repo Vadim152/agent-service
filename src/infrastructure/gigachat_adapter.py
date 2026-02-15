@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 from base64 import b64encode
+import logging
+import random
+import time
 from typing import Any, Iterable, List
 
 import httpx
@@ -15,6 +18,10 @@ except ImportError:  # pragma: no cover - compatibility with older SDK
     from gigachat.models import EmbeddingsResponse as Embeddings  # type: ignore
 
 from infrastructure.llm_client import LLMClient
+
+
+logger = logging.getLogger(__name__)
+_RETRIABLE_STATUS_CODES = {429, 502, 503, 504}
 
 
 class GigaChatAdapter(LLMClient):
@@ -39,6 +46,10 @@ class GigaChatAdapter(LLMClient):
         key_file: str | None = None,
         ca_bundle_file: str | None = None,
         request_timeout_s: float = 30.0,
+        corp_retry_attempts: int = 3,
+        corp_retry_base_delay_s: float = 0.5,
+        corp_retry_max_delay_s: float = 4.0,
+        corp_retry_jitter_s: float = 0.2,
     ) -> None:
         self.credentials = credentials or self._build_credentials(client_id, client_secret)
         fallback_enabled = (
@@ -63,6 +74,10 @@ class GigaChatAdapter(LLMClient):
         self.key_file = key_file
         self.ca_bundle_file = ca_bundle_file
         self.request_timeout_s = request_timeout_s
+        self.corp_retry_attempts = max(1, int(corp_retry_attempts))
+        self.corp_retry_base_delay_s = max(0.0, float(corp_retry_base_delay_s))
+        self.corp_retry_max_delay_s = max(self.corp_retry_base_delay_s, float(corp_retry_max_delay_s))
+        self.corp_retry_jitter_s = max(0.0, float(corp_retry_jitter_s))
 
     @staticmethod
     def _build_credentials(client_id: str | None, client_secret: str | None) -> str | None:
@@ -176,34 +191,86 @@ class GigaChatAdapter(LLMClient):
         if self.ca_bundle_file:
             verify = self.ca_bundle_file
 
-        try:
-            response = httpx.post(
-                self.corp_proxy_url,
-                json=payload,
-                cert=(self.cert_file, self.key_file),
-                verify=verify,
-                timeout=self.request_timeout_s,
-            )
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            status_code = exc.response.status_code if exc.response is not None else "unknown"
-            body_preview = exc.response.text[:512] if exc.response is not None else ""
-            raise RuntimeError(
-                f"Corporate proxy request failed: {status_code}; body={body_preview}"
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise RuntimeError("Corporate proxy request failed") from exc
+        attempts = self.corp_retry_attempts
+        last_error: RuntimeError | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response = httpx.post(
+                    self.corp_proxy_url,
+                    json=payload,
+                    cert=(self.cert_file, self.key_file),
+                    verify=verify,
+                    timeout=self.request_timeout_s,
+                )
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else "unknown"
+                body_preview = exc.response.text[:512] if exc.response is not None else ""
+                error_text = f"Corporate proxy request failed: {status_code}; body={body_preview}"
+                retriable = isinstance(status_code, int) and status_code in _RETRIABLE_STATUS_CODES
+                if not retriable or attempt >= attempts:
+                    if attempt > 1:
+                        error_text = f"{error_text}; attempts={attempt}/{attempts}"
+                    raise RuntimeError(error_text) from exc
+                delay_s = self._retry_delay_s(attempt)
+                logger.warning(
+                    "Corporate proxy transient HTTP error (status=%s, attempt=%s/%s), retry in %.2fs",
+                    status_code,
+                    attempt,
+                    attempts,
+                    delay_s,
+                )
+                time.sleep(delay_s)
+                continue
+            except httpx.HTTPError as exc:
+                error_text = "Corporate proxy request failed"
+                if attempt >= attempts:
+                    if attempt > 1:
+                        error_text = f"{error_text} after {attempt} attempts"
+                    raise RuntimeError(error_text) from exc
+                delay_s = self._retry_delay_s(attempt)
+                logger.warning(
+                    "Corporate proxy transport error on attempt=%s/%s, retry in %.2fs: %s",
+                    attempt,
+                    attempts,
+                    delay_s,
+                    exc,
+                )
+                time.sleep(delay_s)
+                continue
 
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise RuntimeError("Corporate proxy returned non-JSON response") from exc
+            try:
+                data = response.json()
+            except ValueError as exc:
+                last_error = RuntimeError("Corporate proxy returned non-JSON response")
+                if attempt >= attempts:
+                    raise last_error from exc
+                delay_s = self._retry_delay_s(attempt)
+                logger.warning(
+                    "Corporate proxy returned non-JSON response on attempt=%s/%s, retry in %.2fs",
+                    attempt,
+                    attempts,
+                    delay_s,
+                )
+                time.sleep(delay_s)
+                continue
 
-        choices = data.get("choices")
-        if not isinstance(choices, list) or not choices:
-            return ""
+            choices = data.get("choices")
+            if not isinstance(choices, list) or not choices:
+                return ""
 
-        first = choices[0] if isinstance(choices[0], dict) else {}
-        message = first.get("message") if isinstance(first, dict) else {}
-        content = message.get("content") if isinstance(message, dict) else None
-        return content if isinstance(content, str) else ""
+            first = choices[0] if isinstance(choices[0], dict) else {}
+            message = first.get("message") if isinstance(first, dict) else {}
+            content = message.get("content") if isinstance(message, dict) else None
+            return content if isinstance(content, str) else ""
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Corporate proxy request failed")
+
+    def _retry_delay_s(self, attempt: int) -> float:
+        base = self.corp_retry_base_delay_s * (2 ** max(0, attempt - 1))
+        bounded = min(base, self.corp_retry_max_delay_s)
+        if self.corp_retry_jitter_s <= 0:
+            return bounded
+        return bounded + random.uniform(0.0, self.corp_retry_jitter_s)

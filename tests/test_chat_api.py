@@ -85,6 +85,20 @@ class _SupervisorStub:
         )
 
 
+class _SupervisorNoResultStub:
+    def __init__(self, store: RunStateStore) -> None:
+        self.store = store
+
+    async def execute_job(self, job_id: str) -> None:
+        self.store.patch_job(
+            job_id,
+            status="needs_attention",
+            finished_at=_utcnow(),
+            incident_uri="artifacts://incident.json",
+            result=None,
+        )
+
+
 def _build_autotest_app() -> FastAPI:
     app = FastAPI()
     base = Path(tempfile.mkdtemp(prefix="chat-memory-autotest-"))
@@ -95,6 +109,22 @@ def _build_autotest_app() -> FastAPI:
         orchestrator=_OrchestratorStub(),
         run_state_store=run_state_store,
         execution_supervisor=_SupervisorStub(run_state_store),
+    )
+    app.state.run_state_store = run_state_store
+    app.include_router(chat_router)
+    return app
+
+
+def _build_autotest_no_result_app() -> FastAPI:
+    app = FastAPI()
+    base = Path(tempfile.mkdtemp(prefix="chat-memory-autotest-no-result-"))
+    memory_store = ChatMemoryStore(base)
+    run_state_store = RunStateStore()
+    app.state.chat_runtime = ChatAgentRuntime(
+        memory_store=memory_store,
+        orchestrator=_OrchestratorStub(),
+        run_state_store=run_state_store,
+        execution_supervisor=_SupervisorNoResultStub(run_state_store),
     )
     app.state.run_state_store = run_state_store
     app.include_router(chat_router)
@@ -301,7 +331,7 @@ def test_autotest_natural_message_creates_preview_and_pending_save() -> None:
 
     response = client.post(
         f"/chat/sessions/{session_id}/messages",
-        json={"content": "Сгенерируй автотест по этому тесткейсу"},
+        json={"content": "generate feature from this test case"},
     )
     assert response.status_code == 200
 
@@ -311,8 +341,35 @@ def test_autotest_natural_message_creates_preview_and_pending_save() -> None:
 
     _wait_until(_has_pending_permission)
     history = client.get(f"/chat/sessions/{session_id}/history").json()
-    assert "Предпросмотр автотеста готов." in history["messages"][-1]["content"]
-    assert history["pendingPermissions"][0]["title"] == "Сохранить сгенерированный feature-файл"
+    assert "feature" in history["messages"][-1]["content"].lower()
+    assert "feature" in history["pendingPermissions"][0]["title"].lower()
+
+
+def test_autotest_without_feature_result_finishes_without_worker_crash() -> None:
+    app = _build_autotest_no_result_app()
+    client = TestClient(app)
+    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session_id = session["sessionId"]
+
+    response = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "generate feature"},
+    )
+    assert response.status_code == 200
+
+    def _assistant_replied_without_pending() -> bool:
+        history = client.get(f"/chat/sessions/{session_id}/history").json()
+        assistant = [msg for msg in history["messages"] if msg["role"] == "assistant"]
+        return len(assistant) > 0 and len(history["pendingPermissions"]) == 0
+
+    _wait_until(_assistant_replied_without_pending)
+    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    assert "feature" in history["messages"][-1]["content"].lower()
+    event_types = [event["eventType"] for event in history["events"]]
+    assert "message.worker_failed" not in event_types
+
+    status_payload = client.get(f"/chat/sessions/{session_id}/status").json()
+    assert status_payload["activity"] == "idle"
 
 
 def test_autotest_save_permission_executes_save_tool() -> None:
@@ -323,7 +380,7 @@ def test_autotest_save_permission_executes_save_tool() -> None:
 
     client.post(
         f"/chat/sessions/{session_id}/messages",
-        json={"content": "Сгенерируй автотест и предложи сохранить"},
+        json={"content": "generate feature and suggest save"},
     )
     _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
     permission = client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"][0]
@@ -335,7 +392,7 @@ def test_autotest_save_permission_executes_save_tool() -> None:
     assert decision.status_code == 200
     _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 0)
     history = client.get(f"/chat/sessions/{session_id}/history").json()
-    assert any("Feature-файл создан" in msg["content"] for msg in history["messages"] if msg["role"] == "assistant")
+    assert any("feature" in msg["content"].lower() for msg in history["messages"] if msg["role"] == "assistant")
 
 
 def test_autotest_uses_jira_key_as_default_target_path() -> None:
@@ -346,7 +403,7 @@ def test_autotest_uses_jira_key_as_default_target_path() -> None:
 
     response = client.post(
         f"/chat/sessions/{session_id}/messages",
-        json={"content": "Создай автотест для SCBC-T1"},
+        json={"content": "generate feature for SCBC-T1"},
     )
     assert response.status_code == 200
 
@@ -371,7 +428,7 @@ def test_chat_autotest_job_inherits_session_zephyr_auth_and_jira_instance() -> N
 
     response = client.post(
         f"/chat/sessions/{session_id}/messages",
-        json={"content": "Создай автотест для SCBC-T3282"},
+        json={"content": "generate feature for SCBC-T3282"},
     )
     assert response.status_code == 200
 

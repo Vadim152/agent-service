@@ -533,6 +533,7 @@ class ChatAgentRuntime:
 
             pending_tool: dict[str, Any] | None = None
             assistant_text = ""
+            output_text_for_tokens = ""
             can_run_autotest = (
                 bool(intent.get("enabled"))
                 and self._run_state_store is not None
@@ -584,6 +585,10 @@ class ChatAgentRuntime:
                 result = self._engine.invoke(content=content, context=self._build_context(session))
                 pending_tool = result.get("pending_tool")
                 assistant_text = str(result.get("response", "")).strip() or "Готово."
+                output_text_for_tokens = assistant_text
+
+            if not output_text_for_tokens:
+                output_text_for_tokens = assistant_text
 
             if pending_tool:
                 tool_call_id = str(uuid.uuid4())
@@ -639,9 +644,7 @@ class ChatAgentRuntime:
             token_totals = dict(totals.get("tokens", {}))
             token_totals["input"] = int(token_totals.get("input", 0)) + self._token_estimate(content)
             if not pending_tool:
-                token_totals["output"] = int(token_totals.get("output", 0)) + self._token_estimate(
-                    str(result.get("response", ""))
-                )
+                token_totals["output"] = int(token_totals.get("output", 0)) + self._token_estimate(output_text_for_tokens)
             totals["tokens"] = token_totals
             limits = dict(updated.get("limits", {}))
             used = int(limits.get("used", 0)) + self._token_estimate(content)

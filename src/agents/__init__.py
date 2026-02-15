@@ -182,6 +182,10 @@ def create_orchestrator(settings: Settings | None = None):
         key_file=resolved_settings.corp_key_file,
         ca_bundle_file=resolved_settings.corp_ca_bundle_file,
         request_timeout_s=resolved_settings.corp_request_timeout_s,
+        corp_retry_attempts=resolved_settings.corp_retry_attempts,
+        corp_retry_base_delay_s=resolved_settings.corp_retry_base_delay_s,
+        corp_retry_max_delay_s=resolved_settings.corp_retry_max_delay_s,
+        corp_retry_jitter_s=resolved_settings.corp_retry_jitter_s,
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
     embeddings_store = EmbeddingsStore()

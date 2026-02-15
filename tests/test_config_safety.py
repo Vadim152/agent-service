@@ -69,3 +69,19 @@ def test_corp_mode_requires_cert_and_key() -> None:
             corp_proxy_host="https://corp.local",
             corp_cert_file="C:/secrets/client.crt",
         )
+
+
+def test_corp_retry_defaults() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.corp_retry_attempts == 3
+    assert settings.corp_retry_base_delay_s == 0.5
+    assert settings.corp_retry_max_delay_s == 4.0
+    assert settings.corp_retry_jitter_s == 0.2
+
+
+def test_corp_retry_validation() -> None:
+    with pytest.raises(ValueError, match="corp_retry_attempts"):
+        Settings(_env_file=None, corp_retry_attempts=0)
+
+    with pytest.raises(ValueError, match="corp_retry_max_delay_s must be >= corp_retry_base_delay_s"):
+        Settings(_env_file=None, corp_retry_base_delay_s=1.0, corp_retry_max_delay_s=0.5)
