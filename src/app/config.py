@@ -54,6 +54,14 @@ class Settings(BaseSettings):
         default="https://jira.sberbank.ru",
         description="Default Jira instance URL for testcase retrieval",
     )
+    jira_verify_ssl: bool = Field(
+        default=True,
+        description="Verify SSL certificates for Jira testcase retrieval",
+    )
+    jira_ca_bundle_file: str | None = Field(
+        default=None,
+        description="Optional CA bundle path for Jira TLS verification",
+    )
 
     llm_endpoint: str | None = Field(default=None, description="LLM service endpoint")
     llm_api_key: str | None = Field(default=None, description="LLM API key")

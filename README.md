@@ -165,6 +165,8 @@ curl http://localhost:8000/health
 - `AGENT_SERVICE_JIRA_SOURCE_MODE` (default `stub`, available: `stub|live|disabled`)
 - `AGENT_SERVICE_JIRA_DEFAULT_INSTANCE` (default `https://jira.sberbank.ru`)
 - `AGENT_SERVICE_JIRA_REQUEST_TIMEOUT_S` (default `20`)
+- `AGENT_SERVICE_JIRA_VERIFY_SSL` (default `true`)
+- `AGENT_SERVICE_JIRA_CA_BUNDLE_FILE` (optional custom CA bundle path for Jira TLS)
 - `GIGACHAT_VERIFY_SSL` (default `true`)
 - `AGENT_SERVICE_CORP_MODE` (default `false`)
 - `AGENT_SERVICE_CORP_PROXY_HOST` (no default, required when corp mode is enabled)
@@ -192,14 +194,27 @@ In this mode, chat uses `AGENT_SERVICE_CORP_MODEL` (default `GigaChat-2-Max`) an
 
 ## SSL Troubleshooting (Corporate Certificates)
 
-If chat requests fail with `CERTIFICATE_VERIFY_FAILED` and your network uses TLS interception,
+If Jira testcase retrieval fails with `CERTIFICATE_VERIFY_FAILED` and your network uses TLS interception,
 you can disable SSL verification for local development:
+
+```powershell
+$env:AGENT_SERVICE_JIRA_VERIFY_SSL='false'
+```
+
+Safer alternative for local/corporate setup:
+
+```powershell
+$env:AGENT_SERVICE_JIRA_VERIFY_SSL='true'
+$env:AGENT_SERVICE_JIRA_CA_BUNDLE_FILE='C:\\certs\\corp-ca.pem'
+```
+
+If chat requests fail with `CERTIFICATE_VERIFY_FAILED`, you can disable SSL verification for local development:
 
 ```powershell
 $env:GIGACHAT_VERIFY_SSL='false'
 ```
 
-This is less secure and should be used only in trusted local environments.
+Disabling verification is less secure and should be used only in trusted local environments.
 
 ## Verification
 

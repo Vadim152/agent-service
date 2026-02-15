@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+import integrations.jira_testcase_provider as jira_provider_module
 from agents.orchestrator import Orchestrator
 from app.config import Settings
 from integrations.jira_testcase_normalizer import normalize_jira_testcase_to_text
@@ -261,3 +262,74 @@ def test_jira_provider_disabled_mode_raises_for_non_special_key() -> None:
     provider = JiraTestcaseProvider(settings=Settings(jira_source_mode="disabled"))
     with pytest.raises(RuntimeError, match="disabled"):
         provider.fetch_testcase("SCBC-T9999")
+
+
+def test_jira_provider_live_client_uses_verify_false_when_disabled(monkeypatch) -> None:
+    provider = JiraTestcaseProvider(
+        settings=Settings(
+            jira_source_mode="live",
+            jira_verify_ssl=False,
+        )
+    )
+    captured: dict[str, Any] = {}
+
+    class _ResponseStub:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"key": "SCBC-T9999", "testScript": {"steps": [{"index": 0, "description": "step"}]}}
+
+    class _ClientStub:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured["client_kwargs"] = kwargs
+
+        def __enter__(self) -> "_ClientStub":
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb) -> None:
+            return None
+
+        def get(self, *args: Any, **kwargs: Any) -> _ResponseStub:
+            captured["get_kwargs"] = kwargs
+            return _ResponseStub()
+
+    monkeypatch.setattr(jira_provider_module.httpx, "Client", _ClientStub)
+    provider.fetch_testcase("SCBC-T9999")
+    assert captured["client_kwargs"]["verify"] is False
+
+
+def test_jira_provider_live_client_uses_ca_bundle_when_configured(monkeypatch) -> None:
+    provider = JiraTestcaseProvider(
+        settings=Settings(
+            jira_source_mode="live",
+            jira_verify_ssl=True,
+            jira_ca_bundle_file="C:/certs/jira-ca.pem",
+        )
+    )
+    captured: dict[str, Any] = {}
+
+    class _ResponseStub:
+        status_code = 200
+
+        @staticmethod
+        def json() -> dict[str, Any]:
+            return {"key": "SCBC-T9999", "testScript": {"steps": [{"index": 0, "description": "step"}]}}
+
+    class _ClientStub:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured["client_kwargs"] = kwargs
+
+        def __enter__(self) -> "_ClientStub":
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb) -> None:
+            return None
+
+        def get(self, *args: Any, **kwargs: Any) -> _ResponseStub:
+            captured["get_kwargs"] = kwargs
+            return _ResponseStub()
+
+    monkeypatch.setattr(jira_provider_module.httpx, "Client", _ClientStub)
+    provider.fetch_testcase("SCBC-T9999")
+    assert captured["client_kwargs"]["verify"] == "C:/certs/jira-ca.pem"

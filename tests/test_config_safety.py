@@ -34,10 +34,13 @@ def test_safe_model_dump_redacts_corp_tls_paths() -> None:
 def test_safe_defaults_for_local_runtime(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_SERVICE_HOST", raising=False)
     monkeypatch.delenv("AGENT_SERVICE_GIGACHAT_VERIFY_SSL", raising=False)
+    monkeypatch.delenv("AGENT_SERVICE_JIRA_VERIFY_SSL", raising=False)
     monkeypatch.delenv("GIGACHAT_VERIFY_SSL", raising=False)
     settings = Settings(_env_file=None)
     assert settings.host == "127.0.0.1"
     assert settings.gigachat_verify_ssl is True
+    assert settings.jira_verify_ssl is True
+    assert settings.jira_ca_bundle_file is None
 
 
 def test_corp_mode_requires_proxy_host() -> None:

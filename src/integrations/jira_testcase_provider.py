@@ -119,8 +119,15 @@ class JiraTestcaseProvider:
 
         url = f"{base_url}/rest/atm/1.0/testcase/{key}"
         timeout = max(1, int(self.settings.jira_request_timeout_s))
+        verify: bool | str = True
+        if not self.settings.jira_verify_ssl:
+            verify = False
+        else:
+            ca_bundle = str(self.settings.jira_ca_bundle_file or "").strip()
+            if ca_bundle:
+                verify = ca_bundle
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            with httpx.Client(timeout=timeout, follow_redirects=True, verify=verify) as client:
                 response = client.get(
                     url,
                     params={"fields": JIRA_TESTCASE_FIELDS},
@@ -128,7 +135,7 @@ class JiraTestcaseProvider:
                     auth=auth_tuple,
                 )
         except httpx.HTTPError as exc:
-            raise RuntimeError(f"Jira request failed: {exc}") from exc
+            raise RuntimeError(f"Jira request failed: {exc}{self._ssl_troubleshooting_hint()}") from exc
 
         if response.status_code >= 400:
             detail = response.text.strip()
@@ -146,6 +153,17 @@ class JiraTestcaseProvider:
         if not isinstance(payload, dict):
             raise RuntimeError("Jira payload is not a JSON object")
         return payload
+
+    def _ssl_troubleshooting_hint(self) -> str:
+        if not self.settings.jira_verify_ssl:
+            return ""
+        ca_bundle = str(self.settings.jira_ca_bundle_file or "").strip()
+        if ca_bundle:
+            return ""
+        return (
+            " (TLS hint: set AGENT_SERVICE_JIRA_CA_BUNDLE_FILE to a trusted CA bundle"
+            " or use AGENT_SERVICE_JIRA_VERIFY_SSL=false for local development)"
+        )
 
 
 __all__ = ["JiraTestcaseProvider", "extract_jira_testcase_key", "JIRA_TESTCASE_FIELDS"]
