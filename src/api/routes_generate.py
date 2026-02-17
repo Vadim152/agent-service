@@ -18,6 +18,7 @@ from api.schemas import (
     GenerateFeatureRequest,
     GenerateFeatureResponse,
     PipelineStepDto,
+    StepDetailDto,
     StepsSummaryDto,
     StepDefinitionDto,
     UnmappedStepDto,
@@ -207,6 +208,13 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         for step_text in feature_payload.get("unmappedSteps", [])
     ]
     used_steps = _dedup_used_steps(match_payload.get("matched", []))
+    step_details_raw = feature_payload.get("stepDetails") or []
+    step_details = []
+    for entry in step_details_raw:
+        try:
+            step_details.append(StepDetailDto.model_validate(entry))
+        except Exception:
+            continue
     steps_summary_raw = feature_payload.get("stepsSummary") or {}
     steps_summary = StepsSummaryDto(
         exact=steps_summary_raw.get("exact", 0),
@@ -229,6 +237,8 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         steps_summary=steps_summary,
         meta=feature_payload.get("meta"),
         pipeline=pipeline,
+        step_details=step_details,
+        parameter_fill_summary=feature_payload.get("parameterFillSummary") or {},
     )
 
 

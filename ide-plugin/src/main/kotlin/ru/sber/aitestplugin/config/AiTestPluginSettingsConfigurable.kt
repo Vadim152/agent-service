@@ -551,6 +551,13 @@ class AiTestPluginSettingsConfigurable(
                 val keywordAttributes = SimpleTextAttributes(SimpleTextAttributes.STYLE_UNDERLINE, JBColor(0x0B874B, 0x7DE390))
                 append(value.keyword, keywordAttributes)
                 append(" ${value.pattern}")
+                val params = value.parameters.orEmpty()
+                if (params.isNotEmpty()) {
+                    val signature = params.joinToString(", ") { param ->
+                        if (param.type.isNullOrBlank()) param.name else "${param.name}:${param.type}"
+                    }
+                    append(" [$signature]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                }
                 value.summary?.takeIf { it.isNotBlank() }?.let {
                     append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }

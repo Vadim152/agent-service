@@ -258,6 +258,11 @@ class Orchestrator:
                         "language": state.get("feature", {}).get("meta", {}).get("language"),
                     },
                 },
+                {
+                    "stage": "parameter_fill",
+                    "status": "ok",
+                    "details": state.get("feature", {}).get("parameterFillSummary", {}),
+                },
             ]
             return {"pipeline": pipeline}
 

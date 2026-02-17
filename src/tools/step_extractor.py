@@ -1,4 +1,4 @@
-"""Извлечение Cucumber-шагов из исходных файлов тестового фреймворка."""
+﻿"""РР·РІР»РµС‡РµРЅРёРµ Cucumber-С€Р°РіРѕРІ РёР· РёСЃС…РѕРґРЅС‹С… С„Р°Р№Р»РѕРІ С‚РµСЃС‚РѕРІРѕРіРѕ С„СЂРµР№РјРІРѕСЂРєР°."""
 from __future__ import annotations
 
 import re
@@ -22,7 +22,7 @@ _ANNOTATION_RE = re.compile(
 
 @dataclass
 class ExtractedAnnotation:
-    """Вспомогательная структура для найденной аннотации шага."""
+    """Р’СЃРїРѕРјРѕРіР°С‚РµР»СЊРЅР°СЏ СЃС‚СЂСѓРєС‚СѓСЂР° РґР»СЏ РЅР°Р№РґРµРЅРЅРѕР№ Р°РЅРЅРѕС‚Р°С†РёРё С€Р°РіР°."""
 
     keyword: StepKeyword
     pattern: str
@@ -36,19 +36,19 @@ class ExtractedAnnotation:
 
     @property
     def regex(self) -> str:
-        """Возвращает строковое представление регулярки (пока тот же паттерн)."""
+        """Р’РѕР·РІСЂР°С‰Р°РµС‚ СЃС‚СЂРѕРєРѕРІРѕРµ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёРµ СЂРµРіСѓР»СЏСЂРєРё (РїРѕРєР° С‚РѕС‚ Р¶Рµ РїР°С‚С‚РµСЂРЅ)."""
 
         return self.pattern
 
 
 class StepExtractor:
-    """Извлекает определения шагов BDD из исходников, используя FsRepository.
+    """РР·РІР»РµРєР°РµС‚ РѕРїСЂРµРґРµР»РµРЅРёСЏ С€Р°РіРѕРІ BDD РёР· РёСЃС…РѕРґРЅРёРєРѕРІ, РёСЃРїРѕР»СЊР·СѓСЏ FsRepository.
 
-    Поддерживаются аннотации Java/Kotlin/Groovy/Python вида
-    ``@Given("...")``, ``@When("^")`` и т.д. Логика намеренно простая и
-    ориентирована на построчный разбор файлов, чтобы быстро получить черновой
-    индекс шагов. В будущем сюда можно добавить полноценный разбор AST и
-    расширить поддержку языков.
+    РџРѕРґРґРµСЂР¶РёРІР°СЋС‚СЃСЏ Р°РЅРЅРѕС‚Р°С†РёРё Java/Kotlin/Groovy/Python РІРёРґР°
+    ``@Given("...")``, ``@When("^")`` Рё С‚.Рґ. Р›РѕРіРёРєР° РЅР°РјРµСЂРµРЅРЅРѕ РїСЂРѕСЃС‚Р°СЏ Рё
+    РѕСЂРёРµРЅС‚РёСЂРѕРІР°РЅР° РЅР° РїРѕСЃС‚СЂРѕС‡РЅС‹Р№ СЂР°Р·Р±РѕСЂ С„Р°Р№Р»РѕРІ, С‡С‚РѕР±С‹ Р±С‹СЃС‚СЂРѕ РїРѕР»СѓС‡РёС‚СЊ С‡РµСЂРЅРѕРІРѕР№
+    РёРЅРґРµРєСЃ С€Р°РіРѕРІ. Р’ Р±СѓРґСѓС‰РµРј СЃСЋРґР° РјРѕР¶РЅРѕ РґРѕР±Р°РІРёС‚СЊ РїРѕР»РЅРѕС†РµРЅРЅС‹Р№ СЂР°Р·Р±РѕСЂ AST Рё
+    СЂР°СЃС€РёСЂРёС‚СЊ РїРѕРґРґРµСЂР¶РєСѓ СЏР·С‹РєРѕРІ.
     """
 
     def __init__(
@@ -62,10 +62,18 @@ class StepExtractor:
             "**/*Steps.kt",
             "**/*Steps.groovy",
             "**/*Steps.py",
+            "**/*StepDefinitions.java",
+            "**/*StepDefinitions.kt",
+            "**/*StepDefinitions.groovy",
+            "**/*StepDefinitions.py",
+            "**/*StepDefinition.java",
+            "**/*StepDefinition.kt",
+            "**/*StepDefinition.groovy",
+            "**/*StepDefinition.py",
         ]
 
     def extract_steps(self) -> list[StepDefinition]:
-        """Проходит по исходникам и возвращает список найденных шагов."""
+        """РџСЂРѕС…РѕРґРёС‚ РїРѕ РёСЃС…РѕРґРЅРёРєР°Рј Рё РІРѕР·РІСЂР°С‰Р°РµС‚ СЃРїРёСЃРѕРє РЅР°Р№РґРµРЅРЅС‹С… С€Р°РіРѕРІ."""
 
         steps: list[StepDefinition] = []
         for relative_path in self.fs_repo.iter_source_files(self.patterns):
@@ -106,7 +114,7 @@ class StepExtractor:
 
     @staticmethod
     def _iter_annotations(lines: Iterable[str]) -> Iterable[ExtractedAnnotation]:
-        """Находит аннотации шагов по строкам файла и окружение класса/метода."""
+        """РќР°С…РѕРґРёС‚ Р°РЅРЅРѕС‚Р°С†РёРё С€Р°РіРѕРІ РїРѕ СЃС‚СЂРѕРєР°Рј С„Р°Р№Р»Р° Рё РѕРєСЂСѓР¶РµРЅРёРµ РєР»Р°СЃСЃР°/РјРµС‚РѕРґР°."""
 
         normalized_lines = list(lines)
         class_stack: list[tuple[str, int]] = []  # (class_name, depth_at_open)
@@ -153,17 +161,31 @@ class StepExtractor:
     def _find_method_context(
         lines: Sequence[str], start_index: int
     ) -> tuple[str | None, list[tuple[str | None, str | None]]]:
-        """Ищет объявление метода в нескольких следующих строках."""
+        """РС‰РµС‚ РѕР±СЉСЏРІР»РµРЅРёРµ РјРµС‚РѕРґР° РІ РЅРµСЃРєРѕР»СЊРєРёС… СЃР»РµРґСѓСЋС‰РёС… СЃС‚СЂРѕРєР°С…."""
 
         METHOD_RE = re.compile(
-            r"(?P<name>[A-Za-z_][\w]*)\s*\((?P<params>[^)]*)\)", re.UNICODE
+            r"(?:\bfun\s+)?(?P<name>[A-Za-z_][\w]*)\s*\((?P<params>[^)]*)\)",
+            re.UNICODE,
         )
         parameters: list[tuple[str | None, str | None]] = []
-        for line in lines[start_index - 1 : start_index + 6]:
+        signature = ""
+        started = False
+        for line in lines[start_index - 1 : start_index + 20]:
+            stripped = line.strip()
+            if not stripped:
+                continue
             if _ANNOTATION_RE.search(line):
                 continue
-            method_match = METHOD_RE.search(line)
+
+            if "(" in stripped:
+                started = True
+            if started:
+                signature = f"{signature} {stripped}".strip()
+
+            method_match = METHOD_RE.search(signature if started else stripped)
             if not method_match:
+                if started and "{" in stripped:
+                    break
                 continue
             method_name = method_match.group("name")
             params_block = method_match.group("params")
@@ -173,11 +195,11 @@ class StepExtractor:
 
     @staticmethod
     def _parse_method_parameters(params_block: str) -> list[tuple[str | None, str | None]]:
-        """Грубый разбор параметров метода Java/Kotlin."""
+        """Р“СЂСѓР±С‹Р№ СЂР°Р·Р±РѕСЂ РїР°СЂР°РјРµС‚СЂРѕРІ РјРµС‚РѕРґР° Java/Kotlin."""
 
         parameters: list[tuple[str | None, str | None]] = []
         for raw_param in filter(None, (part.strip() for part in params_block.split(","))):
-            if ":" in raw_param:  # Kotlin стиль
+            if ":" in raw_param:  # Kotlin СЃС‚РёР»СЊ
                 name_part, type_part = [segment.strip() for segment in raw_param.split(":", 1)]
                 name_tokens = name_part.split()
                 name = name_tokens[-1] if name_tokens else None
@@ -194,7 +216,7 @@ class StepExtractor:
 
     @staticmethod
     def _detect_pattern_type(pattern: str) -> StepPatternType:
-        """Определяет тип паттерна шага."""
+        """РћРїСЂРµРґРµР»СЏРµС‚ С‚РёРї РїР°С‚С‚РµСЂРЅР° С€Р°РіР°."""
 
         stripped = pattern.strip()
         if stripped.startswith("^") or re.search(r"\\.|\[|\]|\(\?|\$", pattern):
@@ -209,7 +231,7 @@ class StepExtractor:
         pattern_type: StepPatternType,
         method_parameters: list[tuple[str | None, str | None]] | None = None,
     ) -> list[StepParameter]:
-        """Извлекает параметры шага с именами, типами и плейсхолдерами."""
+        """РР·РІР»РµРєР°РµС‚ РїР°СЂР°РјРµС‚СЂС‹ С€Р°РіР° СЃ РёРјРµРЅР°РјРё, С‚РёРїР°РјРё Рё РїР»РµР№СЃС…РѕР»РґРµСЂР°РјРё."""
 
         method_parameters = method_parameters or []
         if pattern_type is StepPatternType.CUCUMBER_EXPRESSION:
@@ -233,7 +255,7 @@ class StepExtractor:
 
     @staticmethod
     def _parse_cucumber_placeholders(pattern: str) -> list[dict[str, str | None]]:
-        """Извлекает плейсхолдеры Cucumber Expression и их типы."""
+        """РР·РІР»РµРєР°РµС‚ РїР»РµР№СЃС…РѕР»РґРµСЂС‹ Cucumber Expression Рё РёС… С‚РёРїС‹."""
 
         type_map = {
             "int": "int",
@@ -267,12 +289,68 @@ class StepExtractor:
 
     @staticmethod
     def _parse_regex_groups(pattern: str) -> list[dict[str, str | None]]:
-        """Извлекает именованные и позиционные группы из регулярного выражения."""
+        """Extracts named and positional capturing groups from a regex pattern."""
 
         parameters: list[dict[str, str | None]] = []
-        group_pattern = re.compile(r"\((?!\?:)(?P<body>\?P<(?P<name>[^>]+)>[^)]*|[^)]*)\)")
-        for match in group_pattern.finditer(pattern):
-            full_group = match.group(0)
-            name = match.group("name")
-            parameters.append({"name": name, "placeholder": full_group, "type": None})
+        stack: list[dict[str, int | bool | str | None]] = []
+        escaped = False
+        in_char_class = False
+        i = 0
+        while i < len(pattern):
+            ch = pattern[i]
+            if escaped:
+                escaped = False
+                i += 1
+                continue
+
+            if ch == "\\":
+                escaped = True
+                i += 1
+                continue
+
+            if ch == "[" and not in_char_class:
+                in_char_class = True
+                i += 1
+                continue
+            if ch == "]" and in_char_class:
+                in_char_class = False
+                i += 1
+                continue
+            if in_char_class:
+                i += 1
+                continue
+
+            if ch == "(":
+                name: str | None = None
+                capturing = True
+                if i + 1 < len(pattern) and pattern[i + 1] == "?":
+                    suffix = pattern[i + 2 : i + 5]
+                    if suffix.startswith("P<"):
+                        name_start = i + 4
+                        name_end = pattern.find(">", name_start)
+                        if name_end > name_start:
+                            name = pattern[name_start:name_end]
+                            capturing = True
+                    else:
+                        capturing = False
+                stack.append({"start": i, "capturing": capturing, "name": name})
+                i += 1
+                continue
+
+            if ch == ")" and stack:
+                group = stack.pop()
+                if group.get("capturing"):
+                    start = int(group["start"])
+                    parameters.append(
+                        {
+                            "name": str(group.get("name")) if group.get("name") else None,
+                            "placeholder": pattern[start : i + 1],
+                            "type": None,
+                        }
+                    )
+                i += 1
+                continue
+
+            i += 1
         return parameters
+

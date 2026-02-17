@@ -167,3 +167,52 @@ def test_feature_generator_substitutes_unquoted_cucumber_strings() -> None:
     assert "Дано открыт сайт google.com" in rendered
     assert "Когда пользователь прокручивает страницу к элементу Поиск" in rendered
     assert "{string}" not in rendered
+
+
+def test_matcher_exposes_parameter_fill_meta_and_parameters() -> None:
+    definition = StepDefinition(
+        id="6",
+        keyword=StepKeyword.WHEN,
+        pattern="пользователь вводит в поле {string} текст {string}",
+        regex=cucumber_expression_to_regex("пользователь вводит в поле {string} текст {string}"),
+        code_ref="steps.input",
+        parameters=[],
+    )
+    test_step = TestStep(order=1, text="пользователь вводит в поле email текст qwerty")
+    matched = StepMatcher().match_steps([test_step], [definition])[0]
+
+    assert matched.status in {MatchStatus.EXACT, MatchStatus.FUZZY}
+    assert matched.parameter_fill_meta is not None
+    assert matched.parameter_fill_meta.get("status") == "full"
+    assert len(matched.matched_parameters) >= 2
+    assert matched.matched_parameters[0]["value"] == "email"
+    assert matched.matched_parameters[1]["value"] == "qwerty"
+
+
+def test_feature_generator_uses_source_text_fallback_without_placeholders() -> None:
+    definition = StepDefinition(
+        id="7",
+        keyword=StepKeyword.WHEN,
+        pattern="пользователь вводит в поле {string} текст {string}",
+        regex=cucumber_expression_to_regex("пользователь вводит в поле {string} текст {string}"),
+        code_ref="steps.input",
+        parameters=[],
+    )
+    test_step = TestStep(order=1, text="пользователь вводит в поле email значение qwerty")
+    matched = StepMatcher().match_steps([test_step], [definition])[0]
+    scenario = Scenario(
+        name="Ввод значения",
+        description="",
+        steps=[test_step],
+        expected_result=None,
+        tags=[],
+    )
+
+    feature = FeatureGenerator().build_feature(scenario, [matched], language="ru")
+    rendered = FeatureGenerator().render_feature(feature)
+
+    assert matched.status in {MatchStatus.EXACT, MatchStatus.FUZZY}
+    assert matched.parameter_fill_meta is not None
+    assert matched.parameter_fill_meta.get("status") == "fallback"
+    assert "Когда пользователь вводит в поле email значение qwerty" in rendered
+    assert "{string}" not in rendered

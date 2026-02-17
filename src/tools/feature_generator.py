@@ -100,6 +100,20 @@ class FeatureGenerator:
                 {"substitutionType": "generated"},
             )
 
+        if matched_step.resolved_step_text:
+            keyword = self._select_keyword(matched_step, language)
+            line = f"{keyword} {matched_step.resolved_step_text}".strip()
+            meta: dict[str, Any] = {"substitutionType": "resolved"}
+            if matched_step.parameter_fill_meta:
+                fill_meta = dict(matched_step.parameter_fill_meta)
+                meta["parameterFill"] = fill_meta
+                status = fill_meta.get("status")
+                if status:
+                    meta["parameterFillStatus"] = status
+            if matched_step.matched_parameters:
+                meta["matchedParameters"] = matched_step.matched_parameters
+            return line, meta
+
         if matched_step.status is MatchStatus.UNMATCHED or not matched_step.step_definition:
             reason = None
             if isinstance(matched_step.notes, dict):
@@ -172,4 +186,13 @@ class FeatureGenerator:
             substitution_type = "regex"
 
         rendered = f"{keyword} {filled_pattern}" if filled_pattern else keyword
-        return rendered, {"substitutionType": substitution_type}
+        meta = {"substitutionType": substitution_type}
+        if self._has_placeholders(filled_pattern):
+            meta["parameterFillStatus"] = "partial"
+        else:
+            meta["parameterFillStatus"] = "full"
+        return rendered, meta
+
+    @staticmethod
+    def _has_placeholders(text: str) -> bool:
+        return bool(re.search(r"\{[^}]+\}", text))

@@ -125,6 +125,15 @@ class PipelineStepDto(ApiBaseModel):
     )
 
 
+class StepDetailDto(ApiBaseModel):
+    """Р”РµС‚Р°Р»Рё РїРѕ РѕС‚РґРµР»СЊРЅРѕРјСѓ С€Р°РіСѓ РІ feature."""
+
+    original_step: str = Field(..., alias="originalStep")
+    generated_line: str = Field(..., alias="generatedLine")
+    status: str
+    meta: dict[str, Any] | None = None
+
+
 class ScanStepsRequest(ApiBaseModel):
     """Р—Р°РїСЂРѕСЃ РЅР° СЃРєР°РЅРёСЂРѕРІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РґР»СЏ РїРѕСЃС‚СЂРѕРµРЅРёСЏ РёРЅРґРµРєСЃР° С€Р°РіРѕРІ."""
 
@@ -233,6 +242,16 @@ class GenerateFeatureResponse(ApiBaseModel):
     pipeline: list[PipelineStepDto] = Field(
         default_factory=list,
         description="РџРѕСЃР»РµРґРѕРІР°С‚РµР»СЊРЅРѕСЃС‚СЊ СЌС‚Р°РїРѕРІ РїРѕСЃС‚СЂРѕРµРЅРёСЏ feature",
+    )
+    step_details: list[StepDetailDto] = Field(
+        default_factory=list,
+        alias="stepDetails",
+        description="Р”РµС‚Р°Р»Рё РіРµРЅРµСЂР°С†РёРё РїРѕ РєР°Р¶РґРѕРјСѓ С€Р°РіСѓ",
+    )
+    parameter_fill_summary: dict[str, int] = Field(
+        default_factory=dict,
+        alias="parameterFillSummary",
+        description="РЎРІРѕРґРєР° РєР°С‡РµСЃС‚РІР° Р·Р°РїРѕР»РЅРµРЅРёСЏ РїР°СЂР°РјРµС‚СЂРѕРІ",
     )
 
 
@@ -352,6 +371,10 @@ class JobFeatureResultDto(ApiBaseModel):
     steps_summary: StepsSummaryDto | None = Field(default=None, alias="stepsSummary")
     meta: dict[str, Any] | None = None
     pipeline: list[PipelineStepDto] = Field(default_factory=list)
+    step_details: list[StepDetailDto] = Field(default_factory=list, alias="stepDetails")
+    parameter_fill_summary: dict[str, int] = Field(
+        default_factory=dict, alias="parameterFillSummary"
+    )
     file_status: dict[str, Any] | None = Field(default=None, alias="fileStatus")
 
 
@@ -423,6 +446,7 @@ __all__ = [
     "JobEventDto",
     "JobCancelResponse",
     "PipelineStepDto",
+    "StepDetailDto",
     "ScanStepsRequest",
     "ScanStepsResponse",
     "StepImplementationDto",

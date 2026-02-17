@@ -55,6 +55,8 @@ data class JobFeatureResultDto(
     val stepsSummary: StepsSummaryDto? = null,
     val meta: Map<String, Any?>? = null,
     val pipeline: List<Map<String, Any?>> = emptyList(),
+    val stepDetails: List<Map<String, Any?>> = emptyList(),
+    val parameterFillSummary: Map<String, Int> = emptyMap(),
     val fileStatus: Map<String, Any?>? = null
 )
 

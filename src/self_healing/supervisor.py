@@ -405,6 +405,8 @@ class ExecutionSupervisor:
             "usedSteps": used_steps,
             "buildStage": feature_payload.get("buildStage"),
             "stepsSummary": feature_payload.get("stepsSummary"),
+            "stepDetails": feature_payload.get("stepDetails", []),
+            "parameterFillSummary": feature_payload.get("parameterFillSummary", {}),
             "meta": feature_payload.get("meta"),
             "pipeline": result.get("pipeline", []),
             "fileStatus": result.get("fileStatus"),

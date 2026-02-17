@@ -23,7 +23,7 @@ from tools.cucumber_expression import cucumber_expression_to_regex
 class StepIndexStore:
     """Хранение индекса шагов в файловой системе (формат JSON)."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, index_dir: str) -> None:
         self._index_dir = Path(index_dir).expanduser().resolve()

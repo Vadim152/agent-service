@@ -8,6 +8,7 @@ EmbeddingsStore будет отвечать за построение и пои�
 from __future__ import annotations
 
 import os
+import json
 import hashlib
 import math
 import re
@@ -19,6 +20,7 @@ from typing import Iterable, List
 os.environ.setdefault(
     "CHROMA_TELEMETRY_IMPL", "chromadb.telemetry.impl.noop.NoopTelemetry"
 )
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb
 
@@ -35,6 +37,28 @@ class EmbeddingsStore:
         self.persist_directory.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(self.persist_directory))
         self._embedding_function = _LocalEmbeddingFunction()
+        self._closed = False
+
+    def close(self) -> None:
+        """Releases underlying Chroma resources (important for Windows file locks)."""
+
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            system = getattr(self._client, "_system", None)
+            if system is not None and hasattr(system, "stop"):
+                system.stop()
+        except Exception:
+            pass
+        try:
+            if hasattr(self._client, "clear_system_cache"):
+                self._client.clear_system_cache()
+        except Exception:
+            pass
+
+    def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
+        self.close()
 
     def _project_collection_name(self, project_root: str) -> str:
         project_hash = hashlib.sha1(project_root.encode("utf-8")).hexdigest()
@@ -57,7 +81,10 @@ class EmbeddingsStore:
         if step.regex:
             parts.append(step.regex)
         if step.parameters:
-            parts.extend(param.name for param in step.parameters)
+            parts.extend(
+                f"{param.name}:{param.type or ''}:{param.placeholder or ''}"
+                for param in step.parameters
+            )
         if step.tags:
             parts.extend(step.tags)
         parts.append(step.code_ref)
@@ -90,9 +117,8 @@ class EmbeddingsStore:
             code_ref=metadata["code_ref"],
             pattern_type=pattern_type,
             parameters=[
-                StepParameter(name=name)
-                for name in (metadata.get("parameters") or "").split(",")
-                if name
+                StepParameter(**item)
+                for item in self._decode_parameter_details(metadata)
             ],
             tags=(metadata.get("tags") or "").split(",") if metadata.get("tags") else [],
             language=metadata.get("language") or None,
@@ -122,6 +148,17 @@ class EmbeddingsStore:
                 "code_ref": step.code_ref,
                 "pattern_type": step.pattern_type.value,
                 "parameters": ",".join(param.name for param in step.parameters),
+                "parameter_details": json.dumps(
+                    [
+                        {
+                            "name": param.name,
+                            "type": param.type,
+                            "placeholder": param.placeholder,
+                        }
+                        for param in step.parameters
+                    ],
+                    ensure_ascii=False,
+                ),
                 "tags": ",".join(step.tags),
                 "language": step.language or "",
                 "file": step.implementation.file if step.implementation else "",
@@ -138,6 +175,38 @@ class EmbeddingsStore:
         collection.upsert(ids=ids, documents=documents, metadatas=metadata)
 
         return None
+
+    @staticmethod
+    def _decode_parameter_details(metadata: dict) -> list[dict[str, str | None]]:
+        raw = metadata.get("parameter_details")
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                result = []
+                for item in parsed:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("name", "")).strip()
+                    if not name:
+                        continue
+                    result.append(
+                        {
+                            "name": name,
+                            "type": item.get("type"),
+                            "placeholder": item.get("placeholder"),
+                        }
+                    )
+                if result:
+                    return result
+
+        return [
+            {"name": name, "type": None, "placeholder": None}
+            for name in (metadata.get("parameters") or "").split(",")
+            if name
+        ]
 
     def search_similar(self, project_root: str, query: str, top_k: int = 5) -> List[StepDefinition]:
         """Возвращает наиболее похожие шаги по текстовому запросу."""

@@ -34,6 +34,14 @@ class RepoScannerAgent:
             "**/*Steps.kt",
             "**/*Steps.groovy",
             "**/*Steps.py",
+            "**/*StepDefinitions.java",
+            "**/*StepDefinitions.kt",
+            "**/*StepDefinitions.groovy",
+            "**/*StepDefinitions.py",
+            "**/*StepDefinition.java",
+            "**/*StepDefinition.kt",
+            "**/*StepDefinition.groovy",
+            "**/*StepDefinition.py",
         ]
 
     def scan_repository(self, project_root: str) -> dict[str, Any]:

@@ -36,8 +36,13 @@ def test_match_steps_collects_structured_notes_for_unmatched() -> None:
     assert notes["original_text"] == "Выполнить важное действие"
     assert notes["closest_pattern"] == "Открыт стартовый экран"
     assert "confidence" in notes
-    assert notes.get("final_score", 0.0) == notes["confidence_sources"]["sequence"]
-    assert set(notes.get("confidence_sources", {}).keys()) == {"sequence", "embedding", "llm"}
+    assert notes.get("final_score", 0.0) >= notes["confidence_sources"]["sequence"]
+    assert set(notes.get("confidence_sources", {}).keys()) == {
+        "sequence",
+        "embedding",
+        "parameter_fit",
+        "llm",
+    }
     assert "TODO" not in (matches[0].generated_gherkin_line or "")
 
 
@@ -63,5 +68,5 @@ def test_feature_generator_renders_placeholder_without_todo() -> None:
     rendered = generator.render_feature(feature)
 
     assert "TODO" not in rendered
-    assert f"{StepKeyword.WHEN.as_text()} <no_definition_found: {test_step.text}>" in rendered
+    assert f"{StepKeyword.WHEN.as_text('ru')} <no_definition_found: {test_step.text}>" in rendered
 

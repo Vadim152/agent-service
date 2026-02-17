@@ -116,6 +116,9 @@ class MatchedStep:
     step_definition: StepDefinition | None = None
     confidence: float | None = None
     generated_gherkin_line: str | None = None
+    resolved_step_text: str | None = None
+    matched_parameters: list[dict[str, Any]] = field(default_factory=list)
+    parameter_fill_meta: Dict[str, Any] | None = None
     notes: Dict[str, Any] | None = None
 
 

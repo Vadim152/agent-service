@@ -50,6 +50,7 @@ class EmbeddingsStoreTestCase(unittest.TestCase):
         ]
 
     def tearDown(self) -> None:
+        self.store.close()
         self.tmp_dir.cleanup()
 
     def test_index_and_search_returns_similar_steps(self) -> None:

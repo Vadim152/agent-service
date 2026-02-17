@@ -60,6 +60,9 @@ def _serialize_matched_step(matched: MatchedStep) -> dict[str, Any]:
         else None,
         "confidence": matched.confidence,
         "generated_gherkin_line": matched.generated_gherkin_line,
+        "resolved_step_text": matched.resolved_step_text,
+        "matched_parameters": matched.matched_parameters,
+        "parameter_fill_meta": matched.parameter_fill_meta,
         "notes": matched.notes,
     }
 
@@ -122,6 +125,9 @@ def _deserialize_matched_step(data: dict[str, Any]) -> MatchedStep:
         else None,
         confidence=data.get("confidence"),
         generated_gherkin_line=data.get("generated_gherkin_line"),
+        resolved_step_text=data.get("resolved_step_text"),
+        matched_parameters=list(data.get("matched_parameters", []) or []),
+        parameter_fill_meta=data.get("parameter_fill_meta"),
         notes=data.get("notes"),
     )
 

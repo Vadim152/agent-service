@@ -25,5 +25,7 @@ data class GenerateFeatureResponseDto(
     val featureText: String,
     val unmappedSteps: List<UnmappedStepDto> = emptyList(),
     val usedSteps: List<StepDefinitionDto> = emptyList(),
-    val meta: Map<String, Any?>? = emptyMap()
+    val meta: Map<String, Any?>? = emptyMap(),
+    val stepDetails: List<Map<String, Any?>> = emptyList(),
+    val parameterFillSummary: Map<String, Int> = emptyMap()
 )

@@ -62,3 +62,25 @@ def test_extracts_kotlin_cucumber_expression(tmp_path) -> None:
     assert step.parameters[0].name == "baseUrl"
     assert step.parameters[0].placeholder == "{string}"
     assert step.parameters[0].type == "string"
+
+
+def test_default_patterns_include_step_definitions_suffix(tmp_path) -> None:
+    source = """
+    package steps
+
+    class UiStepDefinitions {
+        @Then("появляется уведомление {string}")
+        fun toastShown(message: String) {
+        }
+    }
+    """
+
+    root = tmp_path
+    (root / "UiStepDefinitions.kt").write_text(source, encoding="utf-8")
+
+    extractor = StepExtractor(FsRepository(str(root)))
+    steps = extractor.extract_steps()
+
+    assert len(steps) == 1
+    assert steps[0].implementation.method_name == "toastShown"
+    assert steps[0].parameters[0].name == "message"
