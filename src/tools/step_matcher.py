@@ -14,6 +14,11 @@ from infrastructure.llm_client import LLMClient
 class StepMatcher:
     """Базовый матчер шагов с возможностью расширения через LLM и эмбеддинги."""
 
+    _LEADING_GHERKIN_KEYWORD_RE = re.compile(
+        r"^\s*(?P<keyword>Дано|Когда|Тогда|И|Но|Given|When|Then|And|But)\b\s*(?P<text>.+)$",
+        re.IGNORECASE,
+    )
+
     def __init__(
         self,
         llm_client: LLMClient | None = None,
@@ -33,9 +38,14 @@ class StepMatcher:
 
         matches: list[MatchedStep] = []
         for test_step in test_steps:
+            (
+                input_leading_keyword,
+                match_text,
+                input_normalized_for_match,
+            ) = self._split_leading_gherkin_keyword(test_step.text)
             best_def, score, confidence_sources, llm_reranked, exact_definition_match = (
                 self._find_best_match(
-                test_step.text,
+                match_text,
                 step_definitions,
                 project_root=project_root,
                 step_boosts=step_boosts,
@@ -50,6 +60,10 @@ class StepMatcher:
                 "final_score": score,
                 "exact_definition_match": exact_definition_match,
             }
+            if input_leading_keyword:
+                notes["inputLeadingKeyword"] = input_leading_keyword
+            if input_normalized_for_match:
+                notes["inputTextNormalizedForMatch"] = True
 
             if llm_reranked:
                 notes["llm_reranked"] = True
@@ -69,7 +83,11 @@ class StepMatcher:
                         resolved_step_text,
                         matched_parameters,
                         parameter_fill_meta,
-                    ) = self._resolve_step_text(best_def, test_step.text)
+                    ) = self._resolve_step_text(
+                        best_def,
+                        match_text,
+                        original_text=test_step.text,
+                    )
                     notes["parameter_fill"] = parameter_fill_meta
                     if self._is_strict_resolution_failed(best_def, parameter_fill_meta):
                         status = MatchStatus.UNMATCHED
@@ -226,7 +244,12 @@ class StepMatcher:
         if not definition:
             return ""
 
-        resolved, _, _ = self._resolve_step_text(definition, test_step.text)
+        _, match_text, _ = self._split_leading_gherkin_keyword(test_step.text)
+        resolved, _, _ = self._resolve_step_text(
+            definition,
+            match_text,
+            original_text=test_step.text,
+        )
         return resolved or definition.pattern
 
     def _combine_score(
@@ -317,7 +340,11 @@ class StepMatcher:
         return 0.0
 
     def _resolve_step_text(
-        self, definition: StepDefinition, test_text: str
+        self,
+        definition: StepDefinition,
+        test_text: str,
+        *,
+        original_text: str | None = None,
     ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
         pattern = definition.pattern
         placeholders = self._extract_placeholders(pattern)
@@ -325,12 +352,19 @@ class StepMatcher:
         best_partial: tuple[str, list[dict[str, Any]], dict[str, Any]] | None = None
 
         regex_attempt = self._resolve_with_regex(definition, test_text, placeholders)
+        if not regex_attempt and original_text and original_text.strip() != test_text.strip():
+            regex_attempt = self._resolve_with_regex(
+                definition,
+                original_text,
+                placeholders,
+                source="regex_original_text",
+            )
         if regex_attempt:
-            resolved, params, status = regex_attempt
+            resolved, params, status, source = regex_attempt
             meta = self._build_fill_meta(
                 status=status,
-                source="regex_strict",
-                source_chain=["regex_strict"],
+                source=source,
+                source_chain=[source],
                 placeholders=placeholders,
                 matched_parameters=params,
             )
@@ -403,7 +437,9 @@ class StepMatcher:
         definition: StepDefinition,
         test_text: str,
         placeholders: list[str],
-    ) -> tuple[str, list[dict[str, Any]], str] | None:
+        *,
+        source: str = "regex_strict",
+    ) -> tuple[str, list[dict[str, Any]], str, str] | None:
         regex = definition.regex
         if not regex:
             return None
@@ -417,19 +453,19 @@ class StepMatcher:
         groups = [self._clean_value(value) for value in match.groups()]
         if definition.pattern_type.value == "regularExpression":
             params = self._build_parameter_payload(
-                definition, placeholders, groups, source="regex_strict"
+                definition, placeholders, groups, source=source
             )
-            return test_text.strip(), params, "full"
+            return test_text.strip(), params, "full", source
 
         if not placeholders:
-            return definition.pattern, [], "full"
+            return definition.pattern, [], "full", source
 
         resolved = self._replace_placeholders(definition.pattern, groups)
         params = self._build_parameter_payload(
-            definition, placeholders, groups, source="regex_strict"
+            definition, placeholders, groups, source=source
         )
         status = "full" if not self._has_placeholders(resolved) else "partial"
-        return resolved, params, status
+        return resolved, params, status, source
 
     @staticmethod
     def _extract_placeholders(pattern: str) -> list[str]:
@@ -579,6 +615,19 @@ class StepMatcher:
         if union == 0:
             return 0.0
         return intersection / union
+
+    def _split_leading_gherkin_keyword(self, text: str) -> tuple[str | None, str, bool]:
+        source_text = (text or "").strip()
+        if not source_text:
+            return None, source_text, False
+        match = self._LEADING_GHERKIN_KEYWORD_RE.match(source_text)
+        if not match:
+            return None, source_text, False
+        keyword = self._clean_value(match.group("keyword"))
+        remainder = self._clean_value(match.group("text"))
+        if not remainder:
+            return None, source_text, False
+        return keyword, remainder, True
 
     def _is_strict_resolution_failed(
         self,

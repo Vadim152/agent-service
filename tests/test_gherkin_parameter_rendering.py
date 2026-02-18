@@ -6,7 +6,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT / "src"))
 
-from domain.enums import MatchStatus, StepKeyword
+from domain.enums import MatchStatus, StepKeyword, StepPatternType
 from domain.models import MatchedStep, Scenario, StepDefinition, TestStep
 from tools.cucumber_expression import cucumber_expression_to_regex
 from tools.feature_generator import FeatureGenerator
@@ -213,3 +213,59 @@ def test_matcher_marks_step_unmatched_when_no_strict_match() -> None:
     assert matched.status is MatchStatus.UNMATCHED
     assert (matched.notes or {}).get("reason") == "parameter_resolution_failed"
     assert f"<parameter_resolution_failed: {test_step.text}>" in rendered
+
+
+def test_matcher_regular_expression_handles_leading_and_keyword_ru() -> None:
+    definition = StepDefinition(
+        id="8",
+        keyword=StepKeyword.AND,
+        pattern="^(Включим|Отключим) заглушку sbermock с id = (.*) в проекте с id = (.*)$",
+        regex=r"^(Включим|Отключим) заглушку sbermock с id = (.*) в проекте с id = (.*)$",
+        code_ref="steps.mock",
+        pattern_type=StepPatternType.REGULAR_EXPRESSION,
+        parameters=[],
+    )
+    test_step = TestStep(
+        order=1,
+        text="И Включим заглушку sbermock с id = 812074 в проекте с id = 71563",
+    )
+
+    matched = StepMatcher().match_steps([test_step], [definition])[0]
+
+    assert matched.status in {MatchStatus.EXACT, MatchStatus.FUZZY}
+    assert matched.resolved_step_text == (
+        "Включим заглушку sbermock с id = 812074 в проекте с id = 71563"
+    )
+    assert matched.parameter_fill_meta is not None
+    assert matched.parameter_fill_meta.get("status") == "full"
+    assert (matched.notes or {}).get("inputLeadingKeyword") == "И"
+    assert (matched.notes or {}).get("inputTextNormalizedForMatch") is True
+
+
+def test_matcher_regular_expression_handles_leading_and_keyword_ru_for_sup() -> None:
+    definition = StepDefinition(
+        id="9",
+        keyword=StepKeyword.AND,
+        pattern="^поменяем значение СУП-а (.*) для ключа конфигурации (.*) на (.*)$",
+        regex=r"^поменяем значение СУП-а (.*) для ключа конфигурации (.*) на (.*)$",
+        code_ref="steps.mock",
+        pattern_type=StepPatternType.REGULAR_EXPRESSION,
+        parameters=[],
+    )
+    test_step = TestStep(
+        order=1,
+        text=(
+            "И поменяем значение СУП-а credit_cards_limit_inc_mb.oneclick.enabled "
+            "для ключа конфигурации CREDIT_CARDS_LIMIT_INC_MB_SBOL на true"
+        ),
+    )
+
+    matched = StepMatcher().match_steps([test_step], [definition])[0]
+
+    assert matched.status in {MatchStatus.EXACT, MatchStatus.FUZZY}
+    assert matched.resolved_step_text == (
+        "поменяем значение СУП-а credit_cards_limit_inc_mb.oneclick.enabled "
+        "для ключа конфигурации CREDIT_CARDS_LIMIT_INC_MB_SBOL на true"
+    )
+    assert matched.parameter_fill_meta is not None
+    assert matched.parameter_fill_meta.get("status") == "full"
