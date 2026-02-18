@@ -179,35 +179,12 @@ class Orchestrator:
     def _parse_testcase_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:
             scenario_dict = self.testcase_parser_agent.parse_testcase(state["testcase_text"])
-            normalization_report = state.get("normalization_report") or {}
-            precondition_text = ""
-            if isinstance(normalization_report, dict):
-                precondition_text = str(normalization_report.get("preconditionText") or "").strip()
-            if precondition_text:
-                scenario_dict["description"] = self._compose_jira_description(
-                    scenario_dict.get("description"),
-                    precondition_text,
-                )
             resolved_key = state.get("resolved_testcase_key")
             if resolved_key:
                 scenario_dict["tags"] = [f"TmsLink={str(resolved_key).strip()}"]
             return {"scenario": scenario_dict}
 
         return _node
-
-    @staticmethod
-    def _compose_jira_description(existing_description: Any, precondition_text: str) -> str:
-        header = "Предусловия:"
-        block = f"{header}\n{precondition_text}"
-        if existing_description is None:
-            return block
-
-        prefix = str(existing_description).strip()
-        if not prefix:
-            return block
-        if precondition_text in prefix:
-            return prefix
-        return f"{prefix}\n\n{block}"
 
     def _match_steps_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:

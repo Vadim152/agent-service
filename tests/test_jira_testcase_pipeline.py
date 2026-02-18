@@ -207,13 +207,14 @@ def test_orchestrator_resolves_jira_key_before_parse() -> None:
     assert jira_provider.last_key == "SCBC-T1"
     assert parser.received_text is not None
     assert "Jira sourced testcase" in parser.received_text
+    assert "Client has active card" not in parser.received_text
     assert result["pipeline"][0]["stage"] == "source_resolve"
     assert result["pipeline"][0]["status"] == "jira_stub_fixed"
     assert result["pipeline"][0]["details"]["jiraKey"] == "SCBC-T1"
     assert result["pipeline"][1]["stage"] == "normalization"
     assert result["pipeline"][1]["details"]["inputSteps"] == 1
     assert result["scenario"]["tags"] == ["TmsLink=SCBC-T1"]
-    assert result["scenario"]["description"] == "Предусловия:\nClient has active card"
+    assert result["scenario"]["description"] is None
 
 
 def test_orchestrator_adds_non_scbc_jira_key_to_scenario_tags() -> None:
