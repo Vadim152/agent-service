@@ -1,4 +1,4 @@
-package ru.sber.aitestplugin.actions
+﻿package ru.sber.aitestplugin.actions
 
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
@@ -37,35 +37,36 @@ import java.nio.file.Paths
 import javax.swing.JOptionPane
 
 /**
- * Действие, генерирующее .feature из выделенного текста тесткейса.
+ * Р”РµР№СЃС‚РІРёРµ, РіРµРЅРµСЂРёСЂСѓСЋС‰РµРµ .feature РёР· РІС‹РґРµР»РµРЅРЅРѕРіРѕ С‚РµРєСЃС‚Р° С‚РµСЃС‚РєРµР№СЃР°.
  */
 class GenerateFeatureFromSelectionAction : AnAction() {
-    private val backendClient = HttpBackendClient()
     private val unmappedHighlightKey = Key.create<Boolean>("ru.sber.aitestplugin.unmapped.step")
 
     override fun actionPerformed(e: AnActionEvent) {
         val editor = e.getData(CommonDataKeys.EDITOR)
         val project = e.project
         if (editor == null || project == null) {
-            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
+            JOptionPane.showMessageDialog(null, "Р’С‹РґРµР»РёС‚Рµ С‚РµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°")
             return
         }
         val selectionModel = editor.selectionModel
         val selectedText = selectionModel.selectedText?.trim() ?: run {
-            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
+            JOptionPane.showMessageDialog(null, "Р’С‹РґРµР»РёС‚Рµ С‚РµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°")
             return
         }
         if (selectedText.isBlank()) {
-            JOptionPane.showMessageDialog(null, "Выделите текст тесткейса")
+            JOptionPane.showMessageDialog(null, "Р’С‹РґРµР»РёС‚Рµ С‚РµРєСЃС‚ С‚РµСЃС‚РєРµР№СЃР°")
             return
         }
         val projectRoot = project.basePath?.trim().orEmpty()
         if (projectRoot.isBlank()) {
-            JOptionPane.showMessageDialog(null, "Не удалось определить корень проекта")
+            JOptionPane.showMessageDialog(null, "РќРµ СѓРґР°Р»РѕСЃСЊ РѕРїСЂРµРґРµР»РёС‚СЊ РєРѕСЂРµРЅСЊ РїСЂРѕРµРєС‚Р°")
             return
         }
 
-        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().settings)
+        val backendClient = HttpBackendClient(project)
+
+        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance(project).settings)
         val dialog = GenerateFeatureDialog(project, stateStorage.loadGenerateOptions())
         if (!dialog.showAndGet()) {
             return
@@ -74,7 +75,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         val dialogOptions = dialog.selectedOptions()
         stateStorage.saveGenerateOptions(dialogOptions)
 
-        val settings = AiTestPluginSettingsService.getInstance().settings
+        val settings = AiTestPluginSettingsService.getInstance(project).settings
         val authError = settings.zephyrAuthValidationError()
         if (authError != null) {
             JOptionPane.showMessageDialog(null, authError)
@@ -129,10 +130,16 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                 FileEditorManager.getInstance(project).openFile(file, true)
                 highlightUnmappedSteps(project, file, unmappedSteps)
                 updateToolWindowUnmapped(project, unmappedSteps)
+                val fileStatusCode = fileStatus?.get("status")?.toString().orEmpty()
+                val notificationType = if (fileStatusCode == "rejected_outside_project") {
+                    NotificationType.ERROR
+                } else {
+                    NotificationType.INFORMATION
+                }
                 notify(
                     project,
                     buildNotificationMessage(unmappedSteps, fileStatus),
-                    NotificationType.INFORMATION
+                    notificationType
                 )
             }
 
@@ -213,7 +220,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
 
     private fun notify(project: Project, message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("Агентум")
+            .getNotificationGroup("РђРіРµРЅС‚СѓРј")
             .createNotification(message, type)
             .notify(project)
     }
@@ -224,6 +231,10 @@ class GenerateFeatureFromSelectionAction : AnAction() {
     ): String {
         val base = "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}"
         val status = fileStatus?.get("status")?.toString()
+        if (status == "rejected_outside_project") {
+            val target = fileStatus["targetPath"]?.toString().orEmpty()
+            return "Feature generated, but saving outside current project is blocked: $target"
+        }
         return if (status.isNullOrBlank()) base else "$base (file: $status)"
     }
 
@@ -235,3 +246,6 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         panel?.showUnmappedSteps(unmappedSteps)
     }
 }
+
+
+

@@ -9,20 +9,20 @@ import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
+import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.toolwindow.AiToolWindowPanel
 import ru.sber.aitestplugin.ui.toolwindow.ToolWindowIds
-import ru.sber.aitestplugin.model.ScanStepsResponseDto
+import ru.sber.aitestplugin.util.StepScanRootsResolver
 
 /**
  * Действие для запуска полного сканирования шагов Cucumber в текущем проекте.
  */
 class ScanStepsAction : AnAction() {
-    private val backendClient = HttpBackendClient()
-    private val settings = AiTestPluginSettingsService.getInstance().settings
-
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
+        val settings = AiTestPluginSettingsService.getInstance(project).settings
+        val backendClient = HttpBackendClient(project)
         val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath
         if (projectRoot.isNullOrBlank()) {
             notify(project, "Project root is empty", NotificationType.WARNING)
@@ -30,13 +30,14 @@ class ScanStepsAction : AnAction() {
         }
 
         settings.scanProjectRoot = projectRoot
+        val additionalRoots = StepScanRootsResolver.resolveAdditionalRoots(project, projectRoot)
 
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Scanning Cucumber steps", true) {
             private var response: ScanStepsResponseDto? = null
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Calling backend..."
-                response = backendClient.scanSteps(projectRoot)
+                response = backendClient.scanSteps(projectRoot, additionalRoots)
             }
 
             override fun onSuccess() {

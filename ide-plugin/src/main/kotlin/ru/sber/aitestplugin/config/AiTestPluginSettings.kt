@@ -1,9 +1,8 @@
-package ru.sber.aitestplugin.config
+﻿package ru.sber.aitestplugin.config
 
-/**
- * Хранит настройки доступа к backend-сервису agent-service.
- * В дальнейшем будет интегрирован с PersistentStateComponent для хранения между сессиями IDE.
- */
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
+
 data class AiTestPluginSettings(
     var backendUrl: String = DEFAULT_BACKEND_URL,
     var requestTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
@@ -40,10 +39,12 @@ data class AiTestPluginSettings(
         const val DEFAULT_LANGUAGE: String = "auto"
         const val DEFAULT_ZEPHYR_JIRA_INSTANCE: String = "Sigma"
 
-        /**
-         * Возвращает текущие настройки, сохранённые в PersistentStateComponent.
-         */
-        fun current(): AiTestPluginSettings = AiTestPluginSettingsService.getInstance().settings
+        fun current(project: Project? = null): AiTestPluginSettings {
+            val resolvedProject = project
+                ?: ProjectManager.getInstance().openProjects.firstOrNull()
+                ?: ProjectManager.getInstance().defaultProject
+            return AiTestPluginSettingsService.getInstance(resolvedProject).settings
+        }
     }
 }
 
@@ -51,3 +52,4 @@ enum class ZephyrAuthType {
     TOKEN,
     LOGIN_PASSWORD
 }
+

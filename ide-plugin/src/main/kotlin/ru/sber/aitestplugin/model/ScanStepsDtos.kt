@@ -4,7 +4,8 @@ import java.time.Instant
 
 /** Запрос на сканирование шагов. */
 data class ScanStepsRequestDto(
-    val projectRoot: String
+    val projectRoot: String,
+    val additionalRoots: List<String> = emptyList()
 )
 
 /** Ответ на сканирование шагов. */

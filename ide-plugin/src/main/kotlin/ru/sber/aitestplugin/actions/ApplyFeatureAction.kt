@@ -22,8 +22,6 @@ import javax.swing.JOptionPane
  * Действие, отправляющее текущий feature-текст в backend для записи в файловую систему проекта.
  */
 class ApplyFeatureAction : AnAction() {
-    private val backendClient = HttpBackendClient()
-
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project
         val editor = e.getData(CommonDataKeys.EDITOR)
@@ -39,6 +37,7 @@ class ApplyFeatureAction : AnAction() {
             return
         }
 
+        val backendClient = HttpBackendClient(project)
         val projectRoot = project.basePath ?: ""
         val defaultTargetPath = e.getData(CommonDataKeys.VIRTUAL_FILE)?.path?.let { filePath ->
             val basePath = project.basePath?.let { Paths.get(it) }
@@ -54,7 +53,7 @@ class ApplyFeatureAction : AnAction() {
             }
         }
 
-        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance().settings)
+        val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance(project).settings)
         val dialogDefaults = stateStorage.loadApplyOptions(defaultTargetPath)
         val dialog = ApplyFeatureDialog(project, dialogDefaults)
         if (!dialog.showAndGet()) return
@@ -88,10 +87,12 @@ class ApplyFeatureAction : AnAction() {
                 val status = responseData.status.lowercase()
                 val message = when (status) {
                     "overwritten" -> "Feature overwritten at ${responseData.targetPath}"
+                    "rejected_outside_project" -> "Feature path is outside current project: ${responseData.targetPath}"
                     else -> "Feature created at ${responseData.targetPath}"
                 }
                 val fullMessage = listOfNotNull(message, responseData.message).joinToString(": ")
-                notify(project, fullMessage, NotificationType.INFORMATION)
+                val notificationType = if (status == "rejected_outside_project") NotificationType.ERROR else NotificationType.INFORMATION
+                notify(project, fullMessage, notificationType)
             }
 
             override fun onThrowable(error: Throwable) {

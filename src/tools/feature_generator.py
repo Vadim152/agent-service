@@ -1,4 +1,4 @@
-"""Генерация текстового .feature файла на основе доменных моделей."""
+"""Generation of textual .feature content from domain models."""
 from __future__ import annotations
 
 import re
@@ -6,19 +6,21 @@ from typing import Any
 
 from domain.enums import MatchStatus, StepKeyword
 from domain.models import FeatureFile, FeatureScenario, MatchedStep, Scenario, localize_gherkin_keyword
+from tools.testcase_step_normalizer import is_table_row, parse_normalization_section
 
 
 class FeatureGenerator:
-    """Собирает FeatureFile и финальный Gherkin-текст."""
+    """Builds FeatureFile and renders final Gherkin text."""
 
     def __init__(self) -> None:
         self.language: str | None = None
 
     def build_feature(
-        self, scenario: Scenario, matched_steps: list[MatchedStep], language: str | None = None
+        self,
+        scenario: Scenario,
+        matched_steps: list[MatchedStep],
+        language: str | None = None,
     ) -> FeatureFile:
-        """Создает структуру FeatureFile на основе сценария и сопоставленных шагов."""
-
         self.language = language or "ru"
         feature = FeatureFile(
             name=scenario.name or "Feature",
@@ -55,8 +57,6 @@ class FeatureGenerator:
         return feature
 
     def render_feature(self, feature: FeatureFile) -> str:
-        """Собирает текст Gherkin из модели FeatureFile."""
-
         lines: list[str] = []
         if feature.language:
             lines.append(f"# language: {feature.language}")
@@ -90,14 +90,24 @@ class FeatureGenerator:
         return "\n".join(lines).rstrip() + "\n"
 
     def _render_step(
-        self, matched_step: MatchedStep, language: str | None
+        self,
+        matched_step: MatchedStep,
+        language: str | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Преобразует MatchedStep в строку Gherkin и сопутствующие метаданные."""
+        if is_table_row(matched_step.test_step.text):
+            line = matched_step.test_step.text.strip()
+            return line, self._with_normalization_meta(
+                {"substitutionType": "table_row"},
+                matched_step,
+            )
 
         if matched_step.generated_gherkin_line:
             return (
                 self._localize_generated_line(matched_step.generated_gherkin_line, language),
-                {"substitutionType": "generated"},
+                self._with_normalization_meta(
+                    {"substitutionType": "generated"},
+                    matched_step,
+                ),
             )
 
         if matched_step.resolved_step_text:
@@ -112,27 +122,23 @@ class FeatureGenerator:
                     meta["parameterFillStatus"] = status
             if matched_step.matched_parameters:
                 meta["matchedParameters"] = matched_step.matched_parameters
-            return line, meta
+            return line, self._with_normalization_meta(meta, matched_step)
 
         if matched_step.status is MatchStatus.UNMATCHED or not matched_step.step_definition:
             reason = None
             if isinstance(matched_step.notes, dict):
                 reason = matched_step.notes.get("reason")
             marker = reason or "unmatched"
-            line = (
-                f"{StepKeyword.WHEN.as_text(language)} <{marker}: {matched_step.test_step.text}>"
-            )
+            line = f"{StepKeyword.WHEN.as_text(language)} <{marker}: {matched_step.test_step.text}>"
             meta: dict[str, Any] = {"substitutionType": "unmatched"}
             if reason:
                 meta["reason"] = reason
-            return line, meta
+            return line, self._with_normalization_meta(meta, matched_step)
 
         rendered, meta = self._build_gherkin_line(matched_step, language)
-        return rendered, meta
+        return rendered, self._with_normalization_meta(meta, matched_step)
 
     def _localize_generated_line(self, line: str, language: str | None) -> str:
-        """Локализует ключевое слово в сгенерированной строке шага."""
-
         match = re.match(r"^\s*(\S+)(\s+.*)?$", line)
         if not match:
             return line
@@ -147,18 +153,16 @@ class FeatureGenerator:
         return f"{normalized_keyword}{rest}"
 
     def _select_keyword(self, matched_step: MatchedStep, language: str | None) -> str:
-        """Выбирает ключевое слово для шага."""
-
         definition = matched_step.step_definition
         if definition and isinstance(definition.keyword, StepKeyword):
             return definition.keyword.as_text(language)
         return StepKeyword.WHEN.as_text(language)
 
     def _build_gherkin_line(
-        self, matched_step: MatchedStep, language: str | None
+        self,
+        matched_step: MatchedStep,
+        language: str | None,
     ) -> tuple[str, dict[str, Any]]:
-        """Формирует строку Gherkin для найденного определения с подстановкой параметров."""
-
         definition = matched_step.step_definition
         if not definition:
             return "", {"substitutionType": "unmatched"}
@@ -177,7 +181,6 @@ class FeatureGenerator:
         if match:
             groups = match.groups()
             placeholders = re.findall(r"\{[^}]+\}", pattern)
-
             if groups and placeholders:
                 for placeholder, value in zip(placeholders, groups):
                     filled_pattern = filled_pattern.replace(placeholder, value, 1)
@@ -187,12 +190,27 @@ class FeatureGenerator:
 
         rendered = f"{keyword} {filled_pattern}" if filled_pattern else keyword
         meta = {"substitutionType": substitution_type}
-        if self._has_placeholders(filled_pattern):
-            meta["parameterFillStatus"] = "partial"
-        else:
-            meta["parameterFillStatus"] = "full"
+        meta["parameterFillStatus"] = "partial" if self._has_placeholders(filled_pattern) else "full"
         return rendered, meta
 
     @staticmethod
     def _has_placeholders(text: str) -> bool:
         return bool(re.search(r"\{[^}]+\}", text))
+
+    @staticmethod
+    def _with_normalization_meta(
+        meta: dict[str, Any],
+        matched_step: MatchedStep,
+    ) -> dict[str, Any]:
+        section_meta = parse_normalization_section(matched_step.test_step.section)
+        if not section_meta:
+            return meta
+
+        enriched = dict(meta)
+        normalized_from = section_meta.get("normalizedFrom")
+        strategy = section_meta.get("normalizationStrategy")
+        if normalized_from:
+            enriched["normalizedFrom"] = normalized_from
+        if strategy:
+            enriched["normalizationStrategy"] = strategy
+        return enriched

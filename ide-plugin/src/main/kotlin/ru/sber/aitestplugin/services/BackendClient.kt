@@ -28,7 +28,7 @@ import ru.sber.aitestplugin.model.StepDefinitionDto
  * Методы предполагают выполнение в фоновых задачах, чтобы не блокировать UI.
  */
 interface BackendClient {
-    fun scanSteps(projectRoot: String): ScanStepsResponseDto
+    fun scanSteps(projectRoot: String, additionalRoots: List<String> = emptyList()): ScanStepsResponseDto
 
     fun listSteps(projectRoot: String): List<StepDefinitionDto>
 

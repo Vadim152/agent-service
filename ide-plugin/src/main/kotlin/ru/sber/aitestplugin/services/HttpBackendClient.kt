@@ -6,7 +6,10 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.project.ProjectManager
 import ru.sber.aitestplugin.config.AiTestPluginSettings
+import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.toZephyrAuthDto
 import ru.sber.aitestplugin.config.toZephyrAuthHeaders
 import ru.sber.aitestplugin.config.toJiraInstanceUrl
@@ -50,7 +53,13 @@ import java.util.concurrent.ConcurrentHashMap
  * Реализация BackendClient, использующая HTTP вызовы к агенту.
  */
 class HttpBackendClient(
-    private val settingsProvider: () -> AiTestPluginSettings = { AiTestPluginSettings.current() }
+    private val project: Project? = null,
+    private val settingsProvider: () -> AiTestPluginSettings = {
+        val resolvedProject = project
+            ?: ProjectManager.getInstance().openProjects.firstOrNull()
+            ?: ProjectManager.getInstance().defaultProject
+        AiTestPluginSettingsService.getInstance(resolvedProject).settings
+    }
 ) : BackendClient {
     private val terminalJobStatuses = setOf("succeeded", "failed", "needs_attention", "cancelled")
     private val terminalJobEvents = setOf("job.finished", "job.cancelled", "job.worker_failed")
@@ -63,8 +72,8 @@ class HttpBackendClient(
         .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
     private val clientsByTimeoutMs = ConcurrentHashMap<Int, OkHttpClient>()
 
-    override fun scanSteps(projectRoot: String): ScanStepsResponseDto {
-        val request = ScanStepsRequestDto(projectRoot)
+    override fun scanSteps(projectRoot: String, additionalRoots: List<String>): ScanStepsResponseDto {
+        val request = ScanStepsRequestDto(projectRoot = projectRoot, additionalRoots = additionalRoots)
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
         return post("/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
     }

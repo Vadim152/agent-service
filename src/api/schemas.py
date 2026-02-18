@@ -138,6 +138,11 @@ class ScanStepsRequest(ApiBaseModel):
     """Р—Р°РїСЂРѕСЃ РЅР° СЃРєР°РЅРёСЂРѕРІР°РЅРёРµ РїСЂРѕРµРєС‚Р° РґР»СЏ РїРѕСЃС‚СЂРѕРµРЅРёСЏ РёРЅРґРµРєСЃР° С€Р°РіРѕРІ."""
 
     project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
+    additional_roots: list[str] = Field(
+        default_factory=list,
+        alias="additionalRoots",
+        description="Дополнительные корни для сканирования шагов (каталоги или source jars)",
+    )
 
 
 class ScanStepsResponse(ApiBaseModel):

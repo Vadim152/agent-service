@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -15,7 +16,7 @@ from infrastructure.fs_repo import FsRepository
 from infrastructure.llm_client import LLMClient
 from infrastructure.project_learning_store import ProjectLearningStore
 from infrastructure.step_index_store import StepIndexStore
-from integrations.jira_testcase_normalizer import normalize_jira_testcase_to_text
+from integrations.jira_testcase_normalizer import normalize_jira_testcase
 from integrations.jira_testcase_provider import JiraTestcaseProvider, extract_jira_testcase_key
 from self_healing.capabilities import CapabilityRegistry
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class ScanState(TypedDict):
     project_root: str
+    additional_roots: list[str]
     result: dict[str, Any]
 
 
@@ -38,6 +40,7 @@ class FeatureGenerationState(TypedDict, total=False):
     language: str | None
     resolved_testcase_source: str | None
     resolved_testcase_key: str | None
+    normalization_report: dict[str, Any] | None
     scenario: dict[str, Any]
     match_result: dict[str, Any]
     feature: dict[str, Any]
@@ -129,6 +132,7 @@ class Orchestrator:
                 return {
                     "resolved_testcase_source": "raw_text",
                     "resolved_testcase_key": None,
+                    "normalization_report": None,
                 }
 
             try:
@@ -137,7 +141,10 @@ class Orchestrator:
                     auth=state.get("zephyr_auth"),
                     jira_instance=state.get("jira_instance"),
                 )
-                normalized = normalize_jira_testcase_to_text(payload)
+                normalized, normalization_report = normalize_jira_testcase(
+                    payload,
+                    llm_client=self.llm_client,
+                )
                 if not normalized.strip():
                     raise RuntimeError(f"normalized testcase is empty for {key}")
             except Exception as exc:
@@ -151,13 +158,20 @@ class Orchestrator:
                 "testcase_text": normalized,
                 "resolved_testcase_source": source,
                 "resolved_testcase_key": key,
+                "normalization_report": normalization_report,
             }
 
         return _node
 
     def _scan_repository_node(self) -> Callable[[ScanState], dict[str, Any]]:
         def _node(state: ScanState) -> dict[str, Any]:
-            result = self.repo_scanner_agent.scan_repository(state["project_root"])
+            try:
+                result = self.repo_scanner_agent.scan_repository(
+                    state["project_root"],
+                    additional_roots=state.get("additional_roots", []),
+                )
+            except TypeError:
+                result = self.repo_scanner_agent.scan_repository(state["project_root"])
             return {"result": result}
 
         return _node
@@ -223,6 +237,10 @@ class Orchestrator:
 
     def _assemble_pipeline_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:
+            normalization_details = self._compose_normalization_details(
+                state.get("normalization_report"),
+                state.get("scenario", {}).get("normalization"),
+            )
             pipeline = [
                 {
                     "stage": "source_resolve",
@@ -230,6 +248,11 @@ class Orchestrator:
                     "details": {
                         "jiraKey": state.get("resolved_testcase_key"),
                     },
+                },
+                {
+                    "stage": "normalization",
+                    "status": "ok",
+                    "details": normalization_details,
                 },
                 {
                     "stage": "parse",
@@ -268,6 +291,34 @@ class Orchestrator:
 
         return _node
 
+    @staticmethod
+    def _compose_normalization_details(
+        source_report: dict[str, Any] | None,
+        parser_report: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        source_report = source_report or {}
+        parser_report = parser_report or {}
+        input_steps = source_report.get("inputSteps")
+        if input_steps is None:
+            input_steps = parser_report.get("inputSteps", 0)
+        normalized_steps = parser_report.get("normalizedSteps")
+        if normalized_steps is None:
+            normalized_steps = source_report.get("normalizedSteps", 0)
+
+        split_count = int(source_report.get("splitCount", 0)) + int(
+            parser_report.get("splitCount", 0)
+        )
+        llm_fallback_used = bool(source_report.get("llmFallbackUsed")) or bool(
+            parser_report.get("llmFallbackUsed")
+        )
+        details = {
+            "inputSteps": input_steps,
+            "normalizedSteps": normalized_steps,
+            "splitCount": split_count,
+            "llmFallbackUsed": llm_fallback_used,
+        }
+        return details
+
     def _apply_feature_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:
             file_status: dict[str, Any] | None = None
@@ -289,9 +340,18 @@ class Orchestrator:
             return "apply_feature"
         return "skip_apply"
 
-    def scan_steps(self, project_root: str) -> dict[str, Any]:
+    def scan_steps(
+        self,
+        project_root: str,
+        additional_roots: list[str] | None = None,
+    ) -> dict[str, Any]:
         logger.info("[Orchestrator] Start steps scan: %s", project_root)
-        state = self._scan_graph.invoke({"project_root": project_root})
+        state = self._scan_graph.invoke(
+            {
+                "project_root": project_root,
+                "additional_roots": list(additional_roots or []),
+            }
+        )
         result = state["result"]
         logger.info("[Orchestrator] Steps scan done: %s", result)
         return result
@@ -397,7 +457,22 @@ class Orchestrator:
     ) -> dict[str, Any]:
         logger.info("[Orchestrator] Persist feature %s in %s", target_path, project_root)
         fs_repo = FsRepository(project_root)
-        normalized_path = target_path.lstrip("/")
+        project_root_path = Path(project_root).expanduser().resolve()
+        candidate_path = Path(target_path).expanduser()
+        resolved_path = (
+            candidate_path.resolve()
+            if candidate_path.is_absolute()
+            else (project_root_path / candidate_path).resolve()
+        )
+        try:
+            normalized_path = resolved_path.relative_to(project_root_path).as_posix()
+        except ValueError:
+            return {
+                "projectRoot": project_root,
+                "targetPath": target_path,
+                "status": "rejected_outside_project",
+                "message": "Target path is outside project root",
+            }
         exists = fs_repo.exists(normalized_path)
 
         if exists and not overwrite_existing:

@@ -7,7 +7,7 @@ import pytest
 import integrations.jira_testcase_provider as jira_provider_module
 from agents.orchestrator import Orchestrator
 from app.config import Settings
-from integrations.jira_testcase_normalizer import normalize_jira_testcase_to_text
+from integrations.jira_testcase_normalizer import normalize_jira_testcase, normalize_jira_testcase_to_text
 from integrations.jira_testcase_provider import JiraTestcaseProvider, extract_jira_testcase_key
 
 
@@ -30,6 +30,12 @@ class _ParserStub:
             "steps": [{"order": 1, "text": "step one"}],
             "expected_result": None,
             "tags": list(self.tags),
+            "normalization": {
+                "inputSteps": 1,
+                "normalizedSteps": 1,
+                "splitCount": 0,
+                "llmFallbackUsed": False,
+            },
         }
 
 
@@ -143,6 +149,29 @@ def test_normalize_jira_testcase_uses_key_as_name_for_special_stub() -> None:
     assert "SCBC-T1" in normalized
 
 
+def test_normalize_jira_testcase_splits_compound_gherkin_block() -> None:
+    payload = {
+        "name": "[Android] Split block testcase",
+        "testScript": {
+            "steps": [
+                {
+                    "index": 0,
+                    "description": "<pre>Дано подготовим среду И авторизуемся клиентом И запомним сессию</pre>",
+                }
+            ]
+        },
+    }
+
+    normalized, report = normalize_jira_testcase(payload)
+
+    assert "1. Дано подготовим среду" in normalized
+    assert "2. И авторизуемся клиентом" in normalized
+    assert "3. И запомним сессию" in normalized
+    assert report["inputSteps"] == 1
+    assert report["normalizedSteps"] == 3
+    assert report["splitCount"] == 2
+
+
 def test_orchestrator_resolves_jira_key_before_parse() -> None:
     payload = {
         "name": "[Android] Jira sourced testcase",
@@ -168,6 +197,8 @@ def test_orchestrator_resolves_jira_key_before_parse() -> None:
     assert result["pipeline"][0]["stage"] == "source_resolve"
     assert result["pipeline"][0]["status"] == "jira_stub_fixed"
     assert result["pipeline"][0]["details"]["jiraKey"] == "SCBC-T1"
+    assert result["pipeline"][1]["stage"] == "normalization"
+    assert result["pipeline"][1]["details"]["inputSteps"] == 1
     assert result["scenario"]["tags"] == ["SCBC-T1"]
 
 

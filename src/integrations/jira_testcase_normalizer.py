@@ -1,9 +1,12 @@
-﻿"""Normalize Jira/Zephyr testcase payload into plain scenario text."""
+"""Normalize Jira/Zephyr testcase payload into parser-friendly plain text."""
 from __future__ import annotations
 
 import html
 import re
 from typing import Any
+
+from infrastructure.llm_client import LLMClient
+from tools.testcase_step_normalizer import is_table_row, normalize_source_step_text_with_meta
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -44,13 +47,17 @@ def _sorted_steps(test_script: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted((step for step in raw_steps if isinstance(step, dict)), key=_sort_key)
 
 
-def normalize_jira_testcase_to_text(payload: dict[str, Any]) -> str:
-    """Builds parser-friendly testcase text from Jira response payload."""
+def normalize_jira_testcase(
+    payload: dict[str, Any],
+    *,
+    llm_client: LLMClient | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Build parser-friendly testcase text and normalization metadata from Jira payload."""
     if not isinstance(payload, dict):
         raise ValueError("Jira testcase payload must be a JSON object")
 
     payload_key = _clean_html_text(payload.get("key")).upper()
-    name = _clean_html_text(payload.get("name")) or payload_key or "Р‘РµР· РЅР°Р·РІР°РЅРёСЏ"
+    name = _clean_html_text(payload.get("name")) or payload_key or "Без названия"
     if payload_key == _SPECIAL_SCENARIO_NAME_KEY:
         name = _SPECIAL_SCENARIO_NAME_KEY
 
@@ -60,27 +67,66 @@ def normalize_jira_testcase_to_text(payload: dict[str, Any]) -> str:
         raise ValueError("Jira testcase payload is invalid: missing testScript object")
 
     steps = _sorted_steps(test_script)
-    lines: list[str] = [f"РЎС†РµРЅР°СЂРёР№: {name}"]
+
+    lines: list[str] = [f"Сценарий: {name}"]
     if precondition:
         lines.append("")
-        lines.append(f"РџСЂРµРґСѓСЃР»РѕРІРёСЏ: {precondition}")
+        lines.append(f"Предусловия: {precondition}")
 
     lines.append("")
-    for number, step in enumerate(steps, start=1):
-        description = _clean_html_text(step.get("description")) or f"РЁР°Рі {number}"
-        lines.append(f"{number}. {description}")
+    action_number = 1
+    normalized_actions = 0
+    llm_fallback_used = False
+    llm_fallback_successful = False
+
+    for step in steps:
+        description = _clean_html_text(step.get("description")) or f"Шаг {action_number}"
+        normalized_chunks, meta = normalize_source_step_text_with_meta(
+            description,
+            source="jira",
+            llm_client=llm_client,
+        )
+        llm_fallback_used = llm_fallback_used or bool(meta.get("llmFallbackUsed"))
+        llm_fallback_successful = llm_fallback_successful or bool(meta.get("llmFallbackSuccessful"))
+
+        for chunk in normalized_chunks:
+            if is_table_row(chunk):
+                lines.append(chunk)
+                normalized_actions += 1
+                continue
+            lines.append(f"{action_number}. {chunk}")
+            action_number += 1
+            normalized_actions += 1
 
         expected = _clean_html_text(step.get("expectedResult"))
         if expected:
-            lines.append(f"РћР¶РёРґР°РµРјС‹Р№ СЂРµР·СѓР»СЊС‚Р°С‚: {expected}")
+            lines.append(f"Ожидаемый результат: {expected}")
 
         test_data = _clean_html_text(step.get("testData"))
         if test_data:
-            lines.append(f"РўРµСЃС‚РѕРІС‹Рµ РґР°РЅРЅС‹Рµ: {test_data}")
+            lines.append(f"Тестовые данные: {test_data}")
 
         lines.append("")
 
-    return "\n".join(lines).strip()
+    text = "\n".join(lines).strip()
+    report = {
+        "inputSteps": len(steps),
+        "normalizedSteps": normalized_actions,
+        "splitCount": max(0, normalized_actions - len(steps)),
+        "llmFallbackUsed": llm_fallback_used,
+        "llmFallbackSuccessful": llm_fallback_successful,
+        "source": "jira",
+    }
+    return text, report
 
 
-__all__ = ["normalize_jira_testcase_to_text"]
+def normalize_jira_testcase_to_text(
+    payload: dict[str, Any],
+    *,
+    llm_client: LLMClient | None = None,
+) -> str:
+    text, _report = normalize_jira_testcase(payload, llm_client=llm_client)
+    return text
+
+
+__all__ = ["normalize_jira_testcase", "normalize_jira_testcase_to_text"]

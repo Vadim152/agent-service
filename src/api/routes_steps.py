@@ -170,6 +170,7 @@ async def scan_steps(
 
     parsed_model: ScanStepsRequest | None = None
     parsed_json: dict | None = None
+    additional_roots: list[str] = []
     if raw_body:
         try:
             parsed_json_candidate = json.loads(raw_body)
@@ -182,6 +183,12 @@ async def scan_steps(
                 parsed_model = ScanStepsRequest(**parsed_json_candidate)
             except Exception:
                 parsed_model = None
+            if parsed_model:
+                additional_roots = list(parsed_model.additional_roots or [])
+            else:
+                raw_additional = parsed_json_candidate.get("additionalRoots") or parsed_json_candidate.get("additional_roots")
+                if isinstance(raw_additional, list):
+                    additional_roots = [str(item) for item in raw_additional if str(item).strip()]
 
     project_root, extraction_details = await _extract_project_root(
         request, parsed_model, raw_body, parsed_json
@@ -237,7 +244,7 @@ async def scan_steps(
         extraction_details,
         _preview_body(raw_body),
     )
-    result = orchestrator.scan_steps(project_root)
+    result = orchestrator.scan_steps(project_root, additional_roots=additional_roots)
 
     sample_steps_payload = result.get("sampleSteps") or result.get("sample_steps")
     if sample_steps_payload:

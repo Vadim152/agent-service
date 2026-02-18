@@ -1,9 +1,4 @@
-"""Парсер текстового тесткейса в доменный сценарий.
-
-Логика построена на простых эвристиках без участия LLM. В будущем сюда можно
-добавить более интеллектуальный разбор с использованием LLM или шаблонов для
-конкретных форматов тест-кейсов.
-"""
+"""Heuristic parser that converts testcase text into a Scenario model."""
 from __future__ import annotations
 
 import json
@@ -19,17 +14,19 @@ logger = logging.getLogger(__name__)
 
 
 class TestCaseParser:
-    """Преобразует текст тесткейса в Scenario и последовательность TestStep."""
+    """Parses raw testcase text into Scenario and TestStep objects."""
 
     STEP_PATTERNS = (
         re.compile(r"^\s*\d+[.)]\s*(?P<text>.+)$"),
         re.compile(r"^\s*(Шаг|Step)\s*\d*[:\.-]?\s*(?P<text>.+)$", re.IGNORECASE),
+        re.compile(
+            r"^\s*(Дано|Когда|Тогда|И|Но|Given|When|Then|And|But)\b\s*(?P<text>.+)$",
+            re.IGNORECASE,
+        ),
         re.compile(r"^\s*[-*]\s*(?P<text>.+)$"),
     )
 
     def parse(self, raw_text: str) -> Scenario:
-        """Разбирает сырой текст тесткейса в доменную модель."""
-
         lines = [line.rstrip() for line in raw_text.splitlines() if line.strip()]
         name = self._extract_name(lines)
         expected_result = self._extract_expected_result(lines)
@@ -45,16 +42,13 @@ class TestCaseParser:
         )
 
     def parse_with_llm(self, raw_text: str, llm_client: LLMClient) -> Scenario:
-        """Использует LLM для структурирования тесткейса."""
-
         prompt = (
-            "Ты аналитик тестов. Извлеки из текста тесткейса структуру сценария. "
-            "Верни строго JSON без комментариев и пояснений со следующими полями: "
-            "name (строка), description (строка или null), preconditions (массив строк), "
-            "steps (массив строк), expected_result (строка или null), tags (массив строк).\n"
-            "Текст тесткейса:\n"
-            f"{raw_text}\n"
-            "Ответ должен быть только JSON."
+            "Extract structured test scenario from the input testcase text.\n"
+            "Return strict JSON with fields:\n"
+            "name (string), description (string|null), preconditions (string[]), "
+            "steps (string[]), expected_result (string|null), tags (string[]).\n"
+            "Return JSON only.\n"
+            f"Testcase text:\n{raw_text}\n"
         )
 
         llm_response = llm_client.generate(prompt)
@@ -76,8 +70,6 @@ class TestCaseParser:
         )
 
     def _extract_name(self, lines: list[str]) -> str | None:
-        """Пытается определить название сценария."""
-
         for line in lines:
             match = re.match(r"^\s*(Сценарий|Scenario)[:\s]+(.+)$", line, re.IGNORECASE)
             if match:
@@ -85,17 +77,17 @@ class TestCaseParser:
         return lines[0].strip() if lines else None
 
     def _extract_expected_result(self, lines: Iterable[str]) -> str | None:
-        """Ищет строку с ожидаемым результатом."""
-
         for line in lines:
-            match = re.search(r"(ожидаемый результат|expected result)[:\s-]+(.+)$", line, re.IGNORECASE)
+            match = re.search(
+                r"(ожидаемый результат|expected result)[:\s-]+(.+)$",
+                line,
+                re.IGNORECASE,
+            )
             if match:
                 return match.group(2).strip()
         return None
 
     def _extract_steps(self, lines: list[str]) -> list[TestStep]:
-        """Извлекает шаги сценария по набору паттернов."""
-
         steps: list[TestStep] = []
         order = 1
         for line in lines:
@@ -110,8 +102,6 @@ class TestCaseParser:
         return steps
 
     def _extract_step_text(self, line: str) -> str | None:
-        """Проверяет строку на соответствие шагу и возвращает текст шага."""
-
         for pattern in self.STEP_PATTERNS:
             match = pattern.match(line)
             if match:
@@ -119,30 +109,22 @@ class TestCaseParser:
         return None
 
     def _is_table_row(self, line: str) -> bool:
-        """Определяет, является ли строка табличной записью шага."""
-
         return bool(re.match(r"^\s*\|.+\|\s*$", line))
 
     def _normalize_table_row(self, line: str) -> str:
-        """Преобразует табличный шаг в удобочитаемую строку."""
-
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         return " | ".join(cells)
 
     def _extract_json(self, text: str) -> dict[str, Any]:
-        """Выделяет и парсит JSON-ответ LLM."""
-
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             match = re.search(r"\{.*\}", text, re.DOTALL)
             if match:
                 return json.loads(match.group(0))
-        raise ValueError("LLM не вернул валидный JSON для тесткейса")
+        raise ValueError("LLM did not return valid JSON for testcase parsing")
 
     def _to_steps(self, items: Iterable[Any], *, start_order: int = 1) -> list[TestStep]:
-        """Конвертирует элементы массива в TestStep с нумерацией."""
-
         steps: list[TestStep] = []
         order = start_order
         for item in items:
