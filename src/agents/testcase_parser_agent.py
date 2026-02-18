@@ -23,26 +23,25 @@ class TestcaseParserAgent:
     def parse_testcase(self, testcase_text: str) -> dict[str, Any]:
         logger.info("[TestcaseParserAgent] Parse testcase text (len=%s)", len(testcase_text))
         source = "heuristic"
-        scenario: Scenario | None = None
+        scenario = self.parser.parse(testcase_text)
 
-        if self.llm_client:
+        # Keep default parsing deterministic and avoid LLM paraphrasing.
+        if self.llm_client and not scenario.steps:
             try:
                 scenario = self.parser.parse_with_llm(testcase_text, self.llm_client)
                 source = "llm"
             except Exception:
                 logger.warning(
-                    "[TestcaseParserAgent] LLM parsing failed, fallback to heuristic parser",
+                    "[TestcaseParserAgent] LLM parsing failed, heuristic result is used",
                     exc_info=True,
                 )
-
-        if scenario is None:
-            scenario = self.parser.parse(testcase_text)
 
         normalized_steps, normalization_report = normalize_test_steps(
             scenario.steps,
             source=source,
-            llm_client=self.llm_client,
+            llm_client=None,
         )
+        normalization_report["llmParseUsed"] = source == "llm"
         scenario.steps = normalized_steps
 
         logger.debug(

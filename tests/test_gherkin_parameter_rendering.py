@@ -189,7 +189,7 @@ def test_matcher_exposes_parameter_fill_meta_and_parameters() -> None:
     assert matched.matched_parameters[1]["value"] == "qwerty"
 
 
-def test_feature_generator_uses_source_text_fallback_without_placeholders() -> None:
+def test_matcher_marks_step_unmatched_when_no_strict_match() -> None:
     definition = StepDefinition(
         id="7",
         keyword=StepKeyword.WHEN,
@@ -210,9 +210,6 @@ def test_feature_generator_uses_source_text_fallback_without_placeholders() -> N
 
     feature = FeatureGenerator().build_feature(scenario, [matched], language="ru")
     rendered = FeatureGenerator().render_feature(feature)
-
-    assert matched.status in {MatchStatus.EXACT, MatchStatus.FUZZY}
-    assert matched.parameter_fill_meta is not None
-    assert matched.parameter_fill_meta.get("status") == "fallback"
-    assert "Когда пользователь вводит в поле email значение qwerty" in rendered
-    assert "{string}" not in rendered
+    assert matched.status is MatchStatus.UNMATCHED
+    assert (matched.notes or {}).get("reason") == "parameter_resolution_failed"
+    assert f"<parameter_resolution_failed: {test_step.text}>" in rendered

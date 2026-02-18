@@ -50,3 +50,4 @@ def test_feature_generator_exposes_normalization_meta_in_step_details() -> None:
 
     assert meta["normalizedFrom"] == "Дано подготовим среду И пользователь авторизован"
     assert meta["normalizationStrategy"] == "rule"
+    assert meta["renderSource"] == "definition_pattern"

@@ -106,3 +106,39 @@ def test_llm_reranks_top_candidates() -> None:
     assert matches[0].status is MatchStatus.FUZZY
     assert matches[0].confidence and matches[0].confidence > 0.6
     assert llm_client.prompts
+
+
+def test_exact_text_match_skips_llm_rerank() -> None:
+    step_definitions = [
+        StepDefinition(
+            id="30",
+            keyword=StepKeyword.WHEN,
+            pattern="авторизуемся клиентом для тестирования",
+            regex=None,
+            code_ref="steps.auth.exact",
+            parameters=[],
+            tags=[],
+        ),
+        StepDefinition(
+            id="40",
+            keyword=StepKeyword.WHEN,
+            pattern="авторизоваться клиентом для тестирования",
+            regex=None,
+            code_ref="steps.auth.infinitive",
+            parameters=[],
+            tags=[],
+        ),
+    ]
+
+    llm_client = FakeLLMClient("C2")
+    matcher = StepMatcher(llm_client=llm_client)
+    matches = matcher.match_steps(
+        [TestStep(order=1, text="авторизуемся клиентом для тестирования")],
+        step_definitions,
+    )
+
+    assert matches[0].step_definition == step_definitions[0]
+    assert matches[0].status is MatchStatus.EXACT
+    assert llm_client.prompts == []
+    notes = matches[0].notes or {}
+    assert notes.get("exact_definition_match") is True

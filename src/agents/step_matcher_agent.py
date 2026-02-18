@@ -50,6 +50,15 @@ class StepMatcherAgent:
             step_boosts=step_boosts,
         )
         unmatched = [m.test_step.text for m in matched_steps if m.status == MatchStatus.UNMATCHED]
+        exact_definition_matches = 0
+        source_text_fallback_used = 0
+        for match in matched_steps:
+            notes = match.notes if isinstance(match.notes, dict) else {}
+            if match.status is not MatchStatus.UNMATCHED and bool(notes.get("exact_definition_match")):
+                exact_definition_matches += 1
+            fill_meta = match.parameter_fill_meta if isinstance(match.parameter_fill_meta, dict) else {}
+            if str(fill_meta.get("source") or "").casefold() == "source_text_fallback":
+                source_text_fallback_used += 1
         logger.info(
             "[StepMatcherAgent] Matching complete. Matched=%s, unmatched=%s",
             len(matched_steps) - len(unmatched),
@@ -60,6 +69,8 @@ class StepMatcherAgent:
             "unmatched": unmatched,
             "indexStatus": index_status,
             "needsScan": not step_definitions,
+            "exactDefinitionMatches": exact_definition_matches,
+            "sourceTextFallbackUsed": source_text_fallback_used,
         }
 
 

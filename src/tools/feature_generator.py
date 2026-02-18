@@ -97,7 +97,7 @@ class FeatureGenerator:
         if is_table_row(matched_step.test_step.text):
             line = matched_step.test_step.text.strip()
             return line, self._with_normalization_meta(
-                {"substitutionType": "table_row"},
+                {"substitutionType": "table_row", "renderSource": "table_row"},
                 matched_step,
             )
 
@@ -105,7 +105,7 @@ class FeatureGenerator:
             return (
                 self._localize_generated_line(matched_step.generated_gherkin_line, language),
                 self._with_normalization_meta(
-                    {"substitutionType": "generated"},
+                    {"substitutionType": "generated", "renderSource": "generated_line"},
                     matched_step,
                 ),
             )
@@ -113,13 +113,16 @@ class FeatureGenerator:
         if matched_step.resolved_step_text:
             keyword = self._select_keyword(matched_step, language)
             line = f"{keyword} {matched_step.resolved_step_text}".strip()
-            meta: dict[str, Any] = {"substitutionType": "resolved"}
+            meta: dict[str, Any] = {"substitutionType": "resolved", "renderSource": "definition_pattern"}
             if matched_step.parameter_fill_meta:
                 fill_meta = dict(matched_step.parameter_fill_meta)
                 meta["parameterFill"] = fill_meta
                 status = fill_meta.get("status")
                 if status:
                     meta["parameterFillStatus"] = status
+                source = str(fill_meta.get("source") or "").casefold()
+                if source == "regex_strict":
+                    meta["renderSource"] = "definition_regex"
             if matched_step.matched_parameters:
                 meta["matchedParameters"] = matched_step.matched_parameters
             return line, self._with_normalization_meta(meta, matched_step)
@@ -130,7 +133,7 @@ class FeatureGenerator:
                 reason = matched_step.notes.get("reason")
             marker = reason or "unmatched"
             line = f"{StepKeyword.WHEN.as_text(language)} <{marker}: {matched_step.test_step.text}>"
-            meta: dict[str, Any] = {"substitutionType": "unmatched"}
+            meta: dict[str, Any] = {"substitutionType": "unmatched", "renderSource": "unmatched"}
             if reason:
                 meta["reason"] = reason
             return line, self._with_normalization_meta(meta, matched_step)

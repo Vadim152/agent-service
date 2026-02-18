@@ -33,11 +33,13 @@ class StepMatcher:
 
         matches: list[MatchedStep] = []
         for test_step in test_steps:
-            best_def, score, confidence_sources, llm_reranked = self._find_best_match(
+            best_def, score, confidence_sources, llm_reranked, exact_definition_match = (
+                self._find_best_match(
                 test_step.text,
                 step_definitions,
                 project_root=project_root,
                 step_boosts=step_boosts,
+                )
             )
             status = self._derive_status(score)
             resolved_step_text: str | None = None
@@ -46,6 +48,7 @@ class StepMatcher:
             notes: dict[str, Any] = {
                 "confidence_sources": confidence_sources,
                 "final_score": score,
+                "exact_definition_match": exact_definition_match,
             }
 
             if llm_reranked:
@@ -68,6 +71,18 @@ class StepMatcher:
                         parameter_fill_meta,
                     ) = self._resolve_step_text(best_def, test_step.text)
                     notes["parameter_fill"] = parameter_fill_meta
+                    if self._is_strict_resolution_failed(best_def, parameter_fill_meta):
+                        status = MatchStatus.UNMATCHED
+                        notes.update(
+                            {
+                                "reason": "parameter_resolution_failed",
+                                "original_text": test_step.text,
+                                "closest_pattern": best_def.pattern,
+                                "confidence": f"{score:.2f}",
+                            }
+                        )
+                        resolved_step_text = None
+                        matched_parameters = []
 
             matches.append(
                 MatchedStep(
@@ -90,7 +105,7 @@ class StepMatcher:
         step_definitions: Iterable[StepDefinition],
         project_root: str | None = None,
         step_boosts: dict[str, float] | None = None,
-    ) -> tuple[StepDefinition | None, float, dict[str, float], bool]:
+    ) -> tuple[StepDefinition | None, float, dict[str, float], bool, bool]:
         """Находит наиболее похожее определение шага с учётом эмбеддингов и LLM."""
 
         normalized_test = self._normalize(test_text)
@@ -122,11 +137,13 @@ class StepMatcher:
                 "sequence": 0.0,
                 "embedding": 0.0,
                 "llm": 0.0,
-            }, False
+            }, False, False
 
         best_def: StepDefinition | None = None
         best_score = 0.0
+        best_rank = (-1.0, -1.0, -1.0, -1.0, -1.0)
         similarity_scores: dict[str, float] = {}
+        exact_definition_match = False
 
         for definition in candidates:
             candidate_text = self._normalize(definition.pattern)
@@ -134,18 +151,32 @@ class StepMatcher:
             similarity_scores[definition.id] = score
             parameter_fit = self._estimate_parameter_fit(definition, test_text)
             parameter_fit_scores[definition.id] = parameter_fit
+            embedding_score = embedding_scores.get(definition.id)
+            embedding_rank_score = embedding_score if embedding_score is not None else 0.0
+            learned_boost = step_boosts.get(definition.id, 0.0)
+            exact_match = 1.0 if candidate_text == normalized_test else 0.0
+            literal_overlap = self._literal_overlap_score(normalized_test, candidate_text)
             combined = self._combine_score(
                 score,
-                embedding_scores.get(definition.id),
-                boost=step_boosts.get(definition.id),
+                embedding_score,
+                boost=learned_boost,
                 parameter_fit=parameter_fit,
             )
-            if combined > best_score:
+            rank = (
+                exact_match,
+                literal_overlap,
+                combined,
+                score,
+                parameter_fit,
+            )
+            if rank > best_rank or (rank == best_rank and combined > best_score):
+                best_rank = rank
                 best_score = combined
                 best_def = definition
 
         llm_reranked = False
-        if self.llm_client and best_def:
+        exact_definition_match = best_rank[0] > 0.0
+        if self.llm_client and best_def and not exact_definition_match:
             best_def, best_score, llm_reranked = self._rerank_with_llm(
                 test_text,
                 candidates,
@@ -171,7 +202,7 @@ class StepMatcher:
         if abs(learned_boost) > 1e-9:
             confidence_sources["learned_boost"] = learned_boost
 
-        return best_def, best_score, confidence_sources, llm_reranked
+        return best_def, best_score, confidence_sources, llm_reranked, exact_definition_match
 
     @staticmethod
     def _normalize(text: str) -> str:
@@ -277,7 +308,7 @@ class StepMatcher:
         if not placeholders:
             return 1.0
 
-        _, _, meta = self._resolve_step_text(definition, test_text, allow_fallback=False)
+        _, _, meta = self._resolve_step_text(definition, test_text)
         status = str((meta or {}).get("status", "none")).casefold()
         if status == "full":
             return 1.0
@@ -286,7 +317,7 @@ class StepMatcher:
         return 0.0
 
     def _resolve_step_text(
-        self, definition: StepDefinition, test_text: str, *, allow_fallback: bool = True
+        self, definition: StepDefinition, test_text: str
     ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
         pattern = definition.pattern
         placeholders = self._extract_placeholders(pattern)
@@ -307,6 +338,15 @@ class StepMatcher:
                 return resolved, params, meta
             best_partial = (resolved, params, meta)
             sources.append("regex_strict")
+
+        if not placeholders and definition.pattern_type.value != "regularExpression":
+            return pattern, [], self._build_fill_meta(
+                status="full",
+                source="definition_pattern",
+                source_chain=["definition_pattern"],
+                placeholders=placeholders,
+                matched_parameters=[],
+            )
 
         if placeholders:
             values = self._extract_values_by_literal_alignment(pattern, test_text)
@@ -347,39 +387,16 @@ class StepMatcher:
                 best_partial = best_partial or (resolved, params, meta)
                 sources.append("quoted_values")
 
-        if not allow_fallback:
-            if best_partial:
-                return best_partial
-            return pattern, [], self._build_fill_meta(
-                status="none",
-                source="none",
-                source_chain=sources,
-                placeholders=placeholders,
-                matched_parameters=[],
-                reason="no_parameter_extraction",
-            )
-
         if best_partial:
-            _, _, partial_meta = best_partial
-            fallback_meta = self._build_fill_meta(
-                status="fallback",
-                source="source_text_fallback",
-                source_chain=list(partial_meta.get("sourceChain", [])) + ["source_text_fallback"],
-                placeholders=placeholders,
-                matched_parameters=[],
-                reason="partial_parameter_extraction_fallback",
-            )
-            return test_text.strip(), [], fallback_meta
-
-        fallback_meta = self._build_fill_meta(
-            status="fallback",
-            source="source_text_fallback",
-            source_chain=sources + ["source_text_fallback"],
+            return best_partial
+        return pattern, [], self._build_fill_meta(
+            status="none",
+            source="none",
+            source_chain=sources,
             placeholders=placeholders,
             matched_parameters=[],
             reason="no_parameter_extraction",
         )
-        return test_text.strip(), [], fallback_meta
 
     def _resolve_with_regex(
         self,
@@ -550,6 +567,30 @@ class StepMatcher:
                 continue
             break
         return result
+
+    @staticmethod
+    def _literal_overlap_score(left: str, right: str) -> float:
+        left_tokens = [token for token in left.split() if token]
+        right_tokens = [token for token in right.split() if token]
+        if not left_tokens or not right_tokens:
+            return 0.0
+        intersection = len(set(left_tokens) & set(right_tokens))
+        union = len(set(left_tokens) | set(right_tokens))
+        if union == 0:
+            return 0.0
+        return intersection / union
+
+    def _is_strict_resolution_failed(
+        self,
+        definition: StepDefinition,
+        parameter_fill_meta: dict[str, Any] | None,
+    ) -> bool:
+        has_placeholders = bool(self._extract_placeholders(definition.pattern))
+        is_regex_pattern = definition.pattern_type.value == "regularExpression"
+        if not has_placeholders and not is_regex_pattern:
+            return False
+        status = str((parameter_fill_meta or {}).get("status") or "").casefold()
+        return status != "full"
 
     @staticmethod
     def _clean_value(value: Any) -> str:

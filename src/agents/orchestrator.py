@@ -143,7 +143,7 @@ class Orchestrator:
                 )
                 normalized, normalization_report = normalize_jira_testcase(
                     payload,
-                    llm_client=self.llm_client,
+                    llm_client=None,
                 )
                 if not normalized.strip():
                     raise RuntimeError(f"normalized testcase is empty for {key}")
@@ -259,6 +259,11 @@ class Orchestrator:
                     "status": "ok",
                     "details": {
                         "source": state.get("scenario", {}).get("source"),
+                        "llmParseUsed": bool(
+                            state.get("scenario", {})
+                            .get("normalization", {})
+                            .get("llmParseUsed")
+                        ),
                         "steps": len(state.get("scenario", {}).get("steps", [])),
                     },
                 },
@@ -271,6 +276,12 @@ class Orchestrator:
                         "matched": len(state.get("match_result", {}).get("matched", [])),
                         "unmatched": len(state.get("match_result", {}).get("unmatched", [])),
                         "indexStatus": state.get("match_result", {}).get("indexStatus", "unknown"),
+                        "exactDefinitionMatches": int(
+                            state.get("match_result", {}).get("exactDefinitionMatches", 0)
+                        ),
+                        "sourceTextFallbackUsed": int(
+                            state.get("match_result", {}).get("sourceTextFallbackUsed", 0)
+                        ),
                     },
                 },
                 {
@@ -316,6 +327,7 @@ class Orchestrator:
             "normalizedSteps": normalized_steps,
             "splitCount": split_count,
             "llmFallbackUsed": llm_fallback_used,
+            "llmParseUsed": bool(parser_report.get("llmParseUsed")),
         }
         return details
 
