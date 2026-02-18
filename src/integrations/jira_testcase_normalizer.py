@@ -69,10 +69,6 @@ def normalize_jira_testcase(
     steps = _sorted_steps(test_script)
 
     lines: list[str] = [f"Сценарий: {name}"]
-    if precondition:
-        lines.append("")
-        lines.append(f"Предусловия: {precondition}")
-
     lines.append("")
     action_number = 1
     normalized_actions = 0
@@ -116,6 +112,7 @@ def normalize_jira_testcase(
         "llmFallbackUsed": llm_fallback_used,
         "llmFallbackSuccessful": llm_fallback_successful,
         "source": "jira",
+        "preconditionText": precondition,
     }
     return text, report
 

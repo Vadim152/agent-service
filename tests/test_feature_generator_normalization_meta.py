@@ -51,3 +51,32 @@ def test_feature_generator_exposes_normalization_meta_in_step_details() -> None:
     assert meta["normalizedFrom"] == "Дано подготовим среду И пользователь авторизован"
     assert meta["normalizationStrategy"] == "rule"
     assert meta["renderSource"] == "definition_pattern"
+
+def test_feature_generator_maps_tmslink_tag_to_feature_and_scenario_tags() -> None:
+    definition = StepDefinition(
+        id="1",
+        keyword=StepKeyword.GIVEN,
+        pattern="data is prepared",
+        regex=r"data is prepared",
+        code_ref="steps.setup",
+    )
+    test_step = TestStep(order=1, text="data is prepared")
+    matched = MatchedStep(
+        test_step=test_step,
+        status=MatchStatus.EXACT,
+        step_definition=definition,
+        resolved_step_text="data is prepared",
+    )
+    scenario = Scenario(
+        name="Jira scenario",
+        description=None,
+        steps=[test_step],
+        tags=["TmsLink=SCBC-T3280"],
+    )
+
+    rendered = FeatureGenerator().render_feature(
+        FeatureGenerator().build_feature(scenario, [matched], language="en")
+    )
+
+    assert "\n@SCBC-T3280\nFeature: Jira scenario\n" in rendered
+    assert "\n@TmsLink=SCBC-T3280\n  Scenario: Jira scenario\n" in rendered

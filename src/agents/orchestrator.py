@@ -179,41 +179,35 @@ class Orchestrator:
     def _parse_testcase_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:
             scenario_dict = self.testcase_parser_agent.parse_testcase(state["testcase_text"])
+            normalization_report = state.get("normalization_report") or {}
+            precondition_text = ""
+            if isinstance(normalization_report, dict):
+                precondition_text = str(normalization_report.get("preconditionText") or "").strip()
+            if precondition_text:
+                scenario_dict["description"] = self._compose_jira_description(
+                    scenario_dict.get("description"),
+                    precondition_text,
+                )
             resolved_key = state.get("resolved_testcase_key")
             if resolved_key:
-                scenario_dict["tags"] = self._merge_scenario_tags(
-                    scenario_dict.get("tags"),
-                    resolved_key,
-                )
+                scenario_dict["tags"] = [f"TmsLink={str(resolved_key).strip()}"]
             return {"scenario": scenario_dict}
 
         return _node
 
     @staticmethod
-    def _merge_scenario_tags(existing_tags: Any, testcase_key: str) -> list[str]:
-        tags: list[str] = []
-        if isinstance(existing_tags, list):
-            tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
-        elif isinstance(existing_tags, (tuple, set)):
-            tags = [str(tag).strip() for tag in existing_tags if str(tag).strip()]
-        elif existing_tags:
-            value = str(existing_tags).strip()
-            if value:
-                tags = [value]
+    def _compose_jira_description(existing_description: Any, precondition_text: str) -> str:
+        header = "Предусловия:"
+        block = f"{header}\n{precondition_text}"
+        if existing_description is None:
+            return block
 
-        key_value = str(testcase_key).strip()
-        if key_value:
-            tags.append(key_value)
-
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for tag in tags:
-            marker = tag.upper()
-            if marker in seen:
-                continue
-            seen.add(marker)
-            deduped.append(tag)
-        return deduped
+        prefix = str(existing_description).strip()
+        if not prefix:
+            return block
+        if precondition_text in prefix:
+            return prefix
+        return f"{prefix}\n\n{block}"
 
     def _match_steps_node(self) -> Callable[[FeatureGenerationState], dict[str, Any]]:
         def _node(state: FeatureGenerationState) -> dict[str, Any]:

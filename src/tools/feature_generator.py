@@ -22,11 +22,12 @@ class FeatureGenerator:
         language: str | None = None,
     ) -> FeatureFile:
         self.language = language or "ru"
+        feature_tags, scenario_tags = self._resolve_feature_and_scenario_tags(scenario.tags)
         feature = FeatureFile(
             name=scenario.name or "Feature",
             description=scenario.description or scenario.expected_result,
             language=self.language,
-            tags=scenario.tags,
+            tags=feature_tags,
             background_steps=[],
             scenarios=[],
         )
@@ -47,7 +48,7 @@ class FeatureGenerator:
 
         feature_scenario = FeatureScenario(
             name=scenario.name,
-            tags=scenario.tags,
+            tags=scenario_tags,
             steps=scenario_steps,
             steps_details=steps_details,
             is_outline=False,
@@ -55,6 +56,24 @@ class FeatureGenerator:
         )
         feature.add_scenario(feature_scenario)
         return feature
+
+    @staticmethod
+    def _resolve_feature_and_scenario_tags(tags: list[str]) -> tuple[list[str], list[str]]:
+        tms_prefix = "TmsLink="
+        tms_value = next(
+            (
+                str(tag).strip()
+                for tag in tags
+                if str(tag).strip().lower().startswith(tms_prefix.lower())
+                and str(tag).strip()[len(tms_prefix) :]
+            ),
+            None,
+        )
+        if not tms_value:
+            return list(tags), list(tags)
+
+        testcase_key = tms_value[len(tms_prefix) :]
+        return [testcase_key], [tms_value]
 
     def render_feature(self, feature: FeatureFile) -> str:
         lines: list[str] = []

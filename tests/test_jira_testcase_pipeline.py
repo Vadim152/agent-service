@@ -131,11 +131,24 @@ def test_normalize_jira_testcase_sorts_steps_and_strips_html() -> None:
     normalized = normalize_jira_testcase_to_text(payload)
 
     assert "[Android] Demo testcase" in normalized
-    assert "Toggle enabled" in normalized
+    assert "Toggle enabled" not in normalized
     assert "1. First action" in normalized
     assert "2. Second action" in normalized
     assert "3. Third action" in normalized
     assert "<strong>" not in normalized
+
+
+def test_normalize_jira_testcase_keeps_precondition_only_in_report() -> None:
+    payload = {
+        "name": "[Android] Demo testcase",
+        "precondition": "<strong>Toggle enabled</strong><br/>Client prepared",
+        "testScript": {"steps": [{"index": 0, "description": "Authorize"}]},
+    }
+
+    normalized, report = normalize_jira_testcase(payload)
+
+    assert "Toggle enabled" not in normalized
+    assert report["preconditionText"] == "Toggle enabled\nClient prepared"
 
 
 def test_normalize_jira_testcase_uses_key_as_name_for_special_stub() -> None:
@@ -199,7 +212,8 @@ def test_orchestrator_resolves_jira_key_before_parse() -> None:
     assert result["pipeline"][0]["details"]["jiraKey"] == "SCBC-T1"
     assert result["pipeline"][1]["stage"] == "normalization"
     assert result["pipeline"][1]["details"]["inputSteps"] == 1
-    assert result["scenario"]["tags"] == ["SCBC-T1"]
+    assert result["scenario"]["tags"] == ["TmsLink=SCBC-T1"]
+    assert result["scenario"]["description"] == "Предусловия:\nClient has active card"
 
 
 def test_orchestrator_adds_non_scbc_jira_key_to_scenario_tags() -> None:
@@ -218,10 +232,10 @@ def test_orchestrator_adds_non_scbc_jira_key_to_scenario_tags() -> None:
 
     assert jira_provider.last_key == "ABCD-42"
     assert result["pipeline"][0]["status"] == "jira_live"
-    assert result["scenario"]["tags"] == ["ABCD-42"]
+    assert result["scenario"]["tags"] == ["TmsLink=ABCD-42"]
 
 
-def test_orchestrator_merges_and_deduplicates_scenario_tags() -> None:
+def test_orchestrator_replaces_existing_scenario_tags_with_tmslink() -> None:
     payload = {
         "name": "[Android] Jira sourced testcase",
         "testScript": {"steps": [{"index": 0, "description": "Authorize"}]},
@@ -235,7 +249,7 @@ def test_orchestrator_merges_and_deduplicates_scenario_tags() -> None:
         testcase_text="create autotest for SCBC-T1",
     )
 
-    assert result["scenario"]["tags"] == ["smoke", "scbc-t1"]
+    assert result["scenario"]["tags"] == ["TmsLink=SCBC-T1"]
 
 
 def test_orchestrator_fails_fast_when_jira_fetch_fails() -> None:
