@@ -1,4 +1,4 @@
-"""Проверки сопоставления шагов с учетом эмбеддингов и LLM."""
+﻿"""Проверки сопоставления шагов с учетом эмбеддингов и LLM."""
 
 import sys
 from pathlib import Path
@@ -93,7 +93,7 @@ def test_llm_reranks_top_candidates() -> None:
     ]
 
     embeddings_store = FakeEmbeddingsStore([(step_definitions[0], 0.55), (step_definitions[1], 0.55)])
-    llm_client = FakeLLMClient("C2")
+    llm_client = FakeLLMClient('{"choice":"C2","confidence":0.91,"reason":"better semantic fit"}')
     matcher = StepMatcher(llm_client=llm_client, embeddings_store=embeddings_store)
 
     matches = matcher.match_steps(
@@ -106,6 +106,9 @@ def test_llm_reranks_top_candidates() -> None:
     assert matches[0].status is MatchStatus.FUZZY
     assert matches[0].confidence and matches[0].confidence > 0.6
     assert llm_client.prompts
+    notes = matches[0].notes or {}
+    assert notes.get("llm_reranked") is True
+    assert notes.get("llm_choice_confidence", 0.0) >= 0.9
 
 
 def test_exact_text_match_skips_llm_rerank() -> None:

@@ -146,6 +146,46 @@ class Settings(BaseSettings):
         default=0.2,
         description="Max random jitter added to each corporate proxy retry delay",
     )
+    match_retrieval_top_k: int = Field(
+        default=50,
+        description="Top-K candidates fetched from embeddings store for step matching",
+    )
+    match_candidate_pool: int = Field(
+        default=30,
+        description="Candidate pool size after prefiltering before deterministic ranking",
+    )
+    match_threshold_exact: float = Field(
+        default=0.8,
+        description="Threshold for exact step match status",
+    )
+    match_threshold_fuzzy: float = Field(
+        default=0.5,
+        description="Threshold for fuzzy step match status",
+    )
+    match_min_seq_for_exact: float = Field(
+        default=0.72,
+        description="Minimum sequence score required for exact status",
+    )
+    match_ambiguity_gap: float = Field(
+        default=0.08,
+        description="Top1-top2 score gap below which LLM rerank can be invoked",
+    )
+    match_llm_min_score: float = Field(
+        default=0.45,
+        description="Lower boundary of score gray-zone for LLM rerank",
+    )
+    match_llm_max_score: float = Field(
+        default=0.82,
+        description="Upper boundary of score gray-zone for LLM rerank",
+    )
+    match_llm_shortlist: int = Field(
+        default=5,
+        description="Shortlist size passed to LLM during ambiguity rerank",
+    )
+    match_llm_min_confidence: float = Field(
+        default=0.7,
+        description="Minimum LLM confidence required to accept reranked candidate",
+    )
 
     @model_validator(mode="after")
     def _validate_corporate_mode(self) -> "Settings":
@@ -162,6 +202,30 @@ class Settings(BaseSettings):
             raise ValueError("corp_retry_jitter_s must be >= 0")
         if self.corp_retry_max_delay_s < self.corp_retry_base_delay_s:
             raise ValueError("corp_retry_max_delay_s must be >= corp_retry_base_delay_s")
+        if self.match_retrieval_top_k < 1:
+            raise ValueError("match_retrieval_top_k must be >= 1")
+        if self.match_candidate_pool < 1:
+            raise ValueError("match_candidate_pool must be >= 1")
+        if self.match_threshold_fuzzy < 0 or self.match_threshold_fuzzy > 1:
+            raise ValueError("match_threshold_fuzzy must be in [0, 1]")
+        if self.match_threshold_exact < 0 or self.match_threshold_exact > 1:
+            raise ValueError("match_threshold_exact must be in [0, 1]")
+        if self.match_threshold_exact < self.match_threshold_fuzzy:
+            raise ValueError("match_threshold_exact must be >= match_threshold_fuzzy")
+        if self.match_min_seq_for_exact < 0 or self.match_min_seq_for_exact > 1:
+            raise ValueError("match_min_seq_for_exact must be in [0, 1]")
+        if self.match_ambiguity_gap < 0:
+            raise ValueError("match_ambiguity_gap must be >= 0")
+        if self.match_llm_min_score < 0 or self.match_llm_min_score > 1:
+            raise ValueError("match_llm_min_score must be in [0, 1]")
+        if self.match_llm_max_score < 0 or self.match_llm_max_score > 1:
+            raise ValueError("match_llm_max_score must be in [0, 1]")
+        if self.match_llm_max_score < self.match_llm_min_score:
+            raise ValueError("match_llm_max_score must be >= match_llm_min_score")
+        if self.match_llm_shortlist < 1:
+            raise ValueError("match_llm_shortlist must be >= 1")
+        if self.match_llm_min_confidence < 0 or self.match_llm_min_confidence > 1:
+            raise ValueError("match_llm_min_confidence must be in [0, 1]")
 
         if not self.corp_mode:
             return self

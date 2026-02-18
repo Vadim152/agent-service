@@ -25,6 +25,7 @@ from infrastructure.step_index_store import StepIndexStore
 from integrations.jira_testcase_provider import JiraTestcaseProvider
 from tools.cucumber_expression import cucumber_expression_to_regex
 from tools.feature_generator import FeatureGenerator
+from tools.step_matcher import StepMatcherConfig
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +211,18 @@ def create_orchestrator(settings: Settings | None = None):
         embeddings_store,
         agent_llm_client,
         project_learning_store=project_learning_store,
+        matcher_config=StepMatcherConfig(
+            retrieval_top_k=resolved_settings.match_retrieval_top_k,
+            candidate_pool=resolved_settings.match_candidate_pool,
+            threshold_exact=resolved_settings.match_threshold_exact,
+            threshold_fuzzy=resolved_settings.match_threshold_fuzzy,
+            min_seq_for_exact=resolved_settings.match_min_seq_for_exact,
+            ambiguity_gap=resolved_settings.match_ambiguity_gap,
+            llm_min_score=resolved_settings.match_llm_min_score,
+            llm_max_score=resolved_settings.match_llm_max_score,
+            llm_shortlist=resolved_settings.match_llm_shortlist,
+            llm_min_confidence=resolved_settings.match_llm_min_confidence,
+        ),
     )
     feature_generator = FeatureBuilderAgent(agent_llm_client)
     jira_testcase_provider = JiraTestcaseProvider(resolved_settings)

@@ -282,6 +282,12 @@ class Orchestrator:
                         "sourceTextFallbackUsed": int(
                             state.get("match_result", {}).get("sourceTextFallbackUsed", 0)
                         ),
+                        "llmRerankedCount": int(
+                            state.get("match_result", {}).get("llmRerankedCount", 0)
+                        ),
+                        "ambiguousCount": int(
+                            state.get("match_result", {}).get("ambiguousCount", 0)
+                        ),
                     },
                 },
                 {
@@ -368,9 +374,16 @@ class Orchestrator:
         logger.info("[Orchestrator] Steps scan done: %s", result)
         return result
 
-    def find_steps(self, project_root: str, query: str, *, top_k: int = 5) -> dict[str, Any]:
+    def find_steps(
+        self,
+        project_root: str,
+        query: str,
+        *,
+        top_k: int = 5,
+        debug: bool = False,
+    ) -> dict[str, Any]:
         candidates = self.embeddings_store.get_top_k(project_root, query, top_k=top_k)
-        return {
+        payload = {
             "projectRoot": project_root,
             "query": query,
             "items": [
@@ -384,6 +397,12 @@ class Orchestrator:
                 for item, score in candidates
             ],
         }
+        if debug:
+            payload["debug"] = {
+                "candidateCount": len(candidates),
+                "topK": top_k,
+            }
+        return payload
 
     def compose_autotest(
         self,

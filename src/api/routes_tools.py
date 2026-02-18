@@ -13,6 +13,7 @@ class FindStepsRequest(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
     query: str
     top_k: int = Field(default=5, alias="topK")
+    debug: bool = Field(default=False)
 
 
 class ComposeAutotestRequest(ApiBaseModel):
@@ -42,6 +43,7 @@ async def find_steps(payload: FindStepsRequest, request: Request) -> dict:
         project_root=payload.project_root,
         query=payload.query,
         top_k=max(1, min(payload.top_k, 50)),
+        debug=payload.debug,
     )
 
 

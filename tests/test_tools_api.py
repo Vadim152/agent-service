@@ -30,6 +30,20 @@ def test_find_steps_tool_endpoint() -> None:
     payload = response.json()
     assert payload["kind"] == "find_steps"
     assert payload["top_k"] == 3
+    assert payload["debug"] is False
+
+
+def test_find_steps_tool_endpoint_with_debug() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    response = client.post(
+        "/tools/find-steps",
+        json={"projectRoot": "/tmp/project", "query": "login", "topK": 3, "debug": True},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "find_steps"
+    assert payload["debug"] is True
 
 
 def test_compose_autotest_tool_endpoint() -> None:

@@ -1,8 +1,11 @@
-"""Сопоставление шагов тесткейса с известными cucumber-определениями."""
+﻿
+"""Step matching between testcase steps and indexed cucumber definitions."""
 from __future__ import annotations
 
 import difflib
+import json
 import re
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from domain.enums import MatchStatus, StepKeyword
@@ -11,8 +14,28 @@ from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.llm_client import LLMClient
 
 
+@dataclass(slots=True)
+class StepMatcherConfig:
+    retrieval_top_k: int = 50
+    candidate_pool: int = 30
+    threshold_exact: float = 0.8
+    threshold_fuzzy: float = 0.5
+    min_seq_for_exact: float = 0.72
+    ambiguity_gap: float = 0.08
+    llm_min_score: float = 0.45
+    llm_max_score: float = 0.82
+    llm_shortlist: int = 5
+    llm_min_confidence: float = 0.7
+    sequence_weight: float = 0.45
+    embedding_weight: float = 0.30
+    parameter_fit_weight: float = 0.20
+    literal_overlap_weight: float = 0.05
+    llm_confirm_weight: float = 0.15
+    ranking_version: str = "v2"
+
+
 class StepMatcher:
-    """Базовый матчер шагов с возможностью расширения через LLM и эмбеддинги."""
+    """Step matcher with deterministic ranking and ambiguity-gated LLM rerank."""
 
     _LEADING_GHERKIN_KEYWORD_RE = re.compile(
         r"^\s*(?P<keyword>Дано|Когда|Тогда|И|Но|Given|When|Then|And|But)\b\s*(?P<text>.+)$",
@@ -23,9 +46,11 @@ class StepMatcher:
         self,
         llm_client: LLMClient | None = None,
         embeddings_store: EmbeddingsStore | None = None,
+        config: StepMatcherConfig | None = None,
     ) -> None:
         self.llm_client = llm_client
         self.embeddings_store = embeddings_store
+        self.config = config or StepMatcherConfig()
 
     def match_steps(
         self,
@@ -34,7 +59,7 @@ class StepMatcher:
         project_root: str | None = None,
         step_boosts: dict[str, float] | None = None,
     ) -> list[MatchedStep]:
-        """Сопоставляет список шагов тесткейса с существующими cucumber-шагами."""
+        """Matches testcase steps to indexed definitions."""
 
         matches: list[MatchedStep] = []
         for test_step in test_steps:
@@ -43,15 +68,26 @@ class StepMatcher:
                 match_text,
                 input_normalized_for_match,
             ) = self._split_leading_gherkin_keyword(test_step.text)
-            best_def, score, confidence_sources, llm_reranked, exact_definition_match = (
-                self._find_best_match(
+            (
+                best_def,
+                score,
+                confidence_sources,
+                llm_reranked,
+                exact_definition_match,
+                ranking_meta,
+            ) = self._find_best_match(
                 match_text,
                 step_definitions,
                 project_root=project_root,
                 step_boosts=step_boosts,
-                )
+                input_leading_keyword=input_leading_keyword,
             )
-            status = self._derive_status(score)
+            status = self._derive_status(
+                score,
+                sequence_score=confidence_sources.get("sequence", 0.0),
+                parameter_fit=confidence_sources.get("parameter_fit", 0.0),
+                definition=best_def,
+            )
             resolved_step_text: str | None = None
             matched_parameters: list[dict[str, Any]] = []
             parameter_fill_meta: dict[str, Any] | None = None
@@ -59,6 +95,9 @@ class StepMatcher:
                 "confidence_sources": confidence_sources,
                 "final_score": score,
                 "exact_definition_match": exact_definition_match,
+                "ranking_version": self.config.ranking_version,
+                "candidate_pool_size": ranking_meta.get("candidate_pool_size", 0),
+                "ambiguity_gap": ranking_meta.get("ambiguity_gap"),
             }
             if input_leading_keyword:
                 notes["inputLeadingKeyword"] = input_leading_keyword
@@ -67,6 +106,10 @@ class StepMatcher:
 
             if llm_reranked:
                 notes["llm_reranked"] = True
+                if ranking_meta.get("llm_choice_confidence") is not None:
+                    notes["llm_choice_confidence"] = ranking_meta["llm_choice_confidence"]
+                if ranking_meta.get("llm_choice_reason"):
+                    notes["llm_choice_reason"] = ranking_meta["llm_choice_reason"]
 
             if status is MatchStatus.UNMATCHED:
                 notes.update(
@@ -123,68 +166,92 @@ class StepMatcher:
         step_definitions: Iterable[StepDefinition],
         project_root: str | None = None,
         step_boosts: dict[str, float] | None = None,
-    ) -> tuple[StepDefinition | None, float, dict[str, float], bool, bool]:
-        """Находит наиболее похожее определение шага с учётом эмбеддингов и LLM."""
+        input_leading_keyword: str | None = None,
+    ) -> tuple[StepDefinition | None, float, dict[str, float], bool, bool, dict[str, Any]]:
+        """Finds the best step definition with semantic + deterministic ranking."""
 
         normalized_test = self._normalize(test_text)
-        candidates = list(step_definitions)
+        all_candidates = list(step_definitions)
         embedding_scores: dict[str, float] = {}
         parameter_fit_scores: dict[str, float] = {}
+        literal_overlap_scores: dict[str, float] = {}
         step_boosts = step_boosts or {}
+        ranking_meta: dict[str, Any] = {
+            "candidate_pool_size": 0,
+            "ambiguity_gap": None,
+            "llm_choice_confidence": None,
+            "llm_choice_reason": None,
+        }
 
+        candidates = list(all_candidates)
         if self.embeddings_store and project_root:
             try:
                 if hasattr(self.embeddings_store, "get_top_k"):
                     embedded = self.embeddings_store.get_top_k(
-                        project_root, normalized_test, top_k=20
+                        project_root,
+                        normalized_test,
+                        top_k=max(1, self.config.retrieval_top_k),
                     )
                 else:
                     embedded = [
                         (definition, 0.0)
                         for definition in self.embeddings_store.search_similar(
-                            project_root, normalized_test, top_k=20
+                            project_root,
+                            normalized_test,
+                            top_k=max(1, self.config.retrieval_top_k),
                         )
                     ]
                 if embedded:
                     embedding_scores = {definition.id: score for definition, score in embedded}
+                    candidates = [definition for definition, _ in embedded]
             except Exception:
-                candidates = list(step_definitions)
+                candidates = list(all_candidates)
 
+        candidates = self._prefilter_candidates(candidates, input_leading_keyword)
+        ranking_meta["candidate_pool_size"] = len(candidates)
         if not candidates:
             return None, 0.0, {
                 "sequence": 0.0,
                 "embedding": 0.0,
+                "parameter_fit": 0.0,
                 "llm": 0.0,
-            }, False, False
+            }, False, False, ranking_meta
+        if len(candidates) > self.config.candidate_pool:
+            candidates = candidates[: self.config.candidate_pool]
+            ranking_meta["candidate_pool_size"] = len(candidates)
 
         best_def: StepDefinition | None = None
         best_score = 0.0
         best_rank = (-1.0, -1.0, -1.0, -1.0, -1.0)
         similarity_scores: dict[str, float] = {}
         exact_definition_match = False
+        ranking_rows: list[tuple[StepDefinition, float]] = []
 
         for definition in candidates:
             candidate_text = self._normalize(definition.pattern)
-            score = difflib.SequenceMatcher(None, normalized_test, candidate_text).ratio()
-            similarity_scores[definition.id] = score
+            sequence_score = difflib.SequenceMatcher(None, normalized_test, candidate_text).ratio()
+            similarity_scores[definition.id] = sequence_score
             parameter_fit = self._estimate_parameter_fit(definition, test_text)
             parameter_fit_scores[definition.id] = parameter_fit
-            embedding_score = embedding_scores.get(definition.id)
-            embedding_rank_score = embedding_score if embedding_score is not None else 0.0
-            learned_boost = step_boosts.get(definition.id, 0.0)
-            exact_match = 1.0 if candidate_text == normalized_test else 0.0
             literal_overlap = self._literal_overlap_score(normalized_test, candidate_text)
+            literal_overlap_scores[definition.id] = literal_overlap
+            embedding_score = embedding_scores.get(definition.id)
+            learned_boost = step_boosts.get(definition.id, 0.0)
+            boost_allowed = parameter_fit > 0.0
+            exact_match = 1.0 if candidate_text == normalized_test else 0.0
             combined = self._combine_score(
-                score,
+                sequence_score,
                 embedding_score,
-                boost=learned_boost,
+                boost=learned_boost if boost_allowed else None,
                 parameter_fit=parameter_fit,
+                literal_overlap=literal_overlap,
             )
+            ranking_rows.append((definition, combined))
             rank = (
                 exact_match,
                 literal_overlap,
                 combined,
-                score,
+                sequence_score,
                 parameter_fit,
             )
             if rank > best_rank or (rank == best_rank and combined > best_score):
@@ -192,22 +259,36 @@ class StepMatcher:
                 best_score = combined
                 best_def = definition
 
+        ranking_rows.sort(key=lambda item: item[1], reverse=True)
+        if len(ranking_rows) >= 2:
+            ranking_meta["ambiguity_gap"] = max(0.0, ranking_rows[0][1] - ranking_rows[1][1])
+        else:
+            ranking_meta["ambiguity_gap"] = 1.0
+
         llm_reranked = False
         exact_definition_match = best_rank[0] > 0.0
-        if self.llm_client and best_def and not exact_definition_match:
-            best_def, best_score, llm_reranked = self._rerank_with_llm(
-                test_text,
-                candidates,
-                similarity_scores,
-                embedding_scores,
-                parameter_fit_scores,
-                best_def,
-                best_score,
-            )
-
-        sequence_score = (
-            similarity_scores.get(best_def.id, 0.0) if best_def else 0.0
+        should_call_llm = (
+            self.llm_client is not None
+            and best_def is not None
+            and not exact_definition_match
+            and ranking_meta["ambiguity_gap"] is not None
+            and float(ranking_meta["ambiguity_gap"]) < self.config.ambiguity_gap
+            and self.config.llm_min_score <= best_score <= self.config.llm_max_score
         )
+        if should_call_llm:
+            best_def, best_score, llm_reranked, llm_meta = self._rerank_with_llm(
+                test_text=test_text,
+                ranked_candidates=ranking_rows,
+                similarity_scores=similarity_scores,
+                embedding_scores=embedding_scores,
+                parameter_fit_scores=parameter_fit_scores,
+                literal_overlap_scores=literal_overlap_scores,
+                current_best=best_def,
+                current_score=best_score,
+            )
+            ranking_meta.update(llm_meta)
+
+        sequence_score = similarity_scores.get(best_def.id, 0.0) if best_def else 0.0
         embedding_score = embedding_scores.get(best_def.id, 0.0) if best_def else 0.0
         learned_boost = step_boosts.get(best_def.id, 0.0) if best_def else 0.0
         parameter_fit = parameter_fit_scores.get(best_def.id, 0.0) if best_def else 0.0
@@ -220,27 +301,80 @@ class StepMatcher:
         if abs(learned_boost) > 1e-9:
             confidence_sources["learned_boost"] = learned_boost
 
-        return best_def, best_score, confidence_sources, llm_reranked, exact_definition_match
+        return best_def, best_score, confidence_sources, llm_reranked, exact_definition_match, ranking_meta
+
+    def _prefilter_candidates(
+        self,
+        candidates: list[StepDefinition],
+        input_leading_keyword: str | None,
+    ) -> list[StepDefinition]:
+        canonical = self._canonicalize_input_keyword(input_leading_keyword)
+        if canonical is None or canonical in {StepKeyword.AND, StepKeyword.BUT}:
+            return self._dedupe_candidates(candidates)
+        allowed = {canonical, StepKeyword.AND, StepKeyword.BUT}
+        filtered = [definition for definition in candidates if definition.keyword in allowed]
+        return self._dedupe_candidates(filtered or candidates)
+
+    @staticmethod
+    def _dedupe_candidates(candidates: list[StepDefinition]) -> list[StepDefinition]:
+        seen: set[tuple[str, str]] = set()
+        result: list[StepDefinition] = []
+        for definition in candidates:
+            marker = (definition.keyword.value, " ".join(definition.pattern.casefold().split()))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            result.append(definition)
+        return result
+
+    @staticmethod
+    def _canonicalize_input_keyword(keyword: str | None) -> StepKeyword | None:
+        if not keyword:
+            return None
+        normalized = keyword.strip().casefold()
+        mapping = {
+            "given": StepKeyword.GIVEN,
+            "дано": StepKeyword.GIVEN,
+            "when": StepKeyword.WHEN,
+            "когда": StepKeyword.WHEN,
+            "then": StepKeyword.THEN,
+            "тогда": StepKeyword.THEN,
+            "and": StepKeyword.AND,
+            "и": StepKeyword.AND,
+            "but": StepKeyword.BUT,
+            "но": StepKeyword.BUT,
+        }
+        return mapping.get(normalized)
 
     @staticmethod
     def _normalize(text: str) -> str:
-        """Нормализует текст для сравнения."""
-
         return " ".join(text.lower().strip().split())
 
-    @staticmethod
-    def _derive_status(score: float) -> MatchStatus:
-        """Определяет статус сопоставления на основе комбинированного скоринга."""
-
-        if score >= 0.8:
+    def _derive_status(
+        self,
+        score: float,
+        *,
+        sequence_score: float,
+        parameter_fit: float,
+        definition: StepDefinition | None,
+    ) -> MatchStatus:
+        if score >= self.config.threshold_exact:
+            if sequence_score < self.config.min_seq_for_exact:
+                return MatchStatus.FUZZY if score >= self.config.threshold_fuzzy else MatchStatus.UNMATCHED
+            if definition and self._requires_full_parameter_fit(definition) and parameter_fit < 1.0:
+                return MatchStatus.FUZZY if score >= self.config.threshold_fuzzy else MatchStatus.UNMATCHED
             return MatchStatus.EXACT
-        if score >= 0.5:
+        if score >= self.config.threshold_fuzzy:
             return MatchStatus.FUZZY
         return MatchStatus.UNMATCHED
 
-    def _build_gherkin_line(self, definition: StepDefinition, test_step: TestStep) -> str:
-        """Формирует шаблон шага с подстановкой параметров без ключевого слова."""
+    @staticmethod
+    def _requires_full_parameter_fit(definition: StepDefinition) -> bool:
+        has_placeholders = bool(re.search(r"\{[^}]+\}", definition.pattern))
+        is_regex_pattern = definition.pattern_type.value == "regularExpression"
+        return has_placeholders or is_regex_pattern
 
+    def _build_gherkin_line(self, definition: StepDefinition, test_step: TestStep) -> str:
         if not definition:
             return ""
 
@@ -259,16 +393,17 @@ class StepMatcher:
         llm_confirmed: bool = False,
         boost: float | None = None,
         parameter_fit: float | None = None,
+        literal_overlap: float | None = None,
     ) -> float:
-        """Объединяет метрики строкового сходства, эмбеддингов и LLM в итоговый confidence."""
-
-        weights: list[tuple[float, float]] = [(sequence_score, 0.6)]
+        weights: list[tuple[float, float]] = [(sequence_score, self.config.sequence_weight)]
         if embedding_score is not None:
-            weights.append((embedding_score, 0.25))
+            weights.append((embedding_score, self.config.embedding_weight))
         if parameter_fit is not None:
-            weights.append((parameter_fit, 0.15))
+            weights.append((parameter_fit, self.config.parameter_fit_weight))
+        if literal_overlap is not None:
+            weights.append((literal_overlap, self.config.literal_overlap_weight))
         if llm_confirmed:
-            weights.append((1.0, 0.15))
+            weights.append((1.0, self.config.llm_confirm_weight))
 
         total_weight = sum(weight for _, weight in weights)
         if total_weight == 0:
@@ -281,54 +416,41 @@ class StepMatcher:
 
     def _rerank_with_llm(
         self,
+        *,
         test_text: str,
-        candidates: list[StepDefinition],
+        ranked_candidates: list[tuple[StepDefinition, float]],
         similarity_scores: dict[str, float],
         embedding_scores: dict[str, float],
         parameter_fit_scores: dict[str, float],
+        literal_overlap_scores: dict[str, float],
         current_best: StepDefinition,
         current_score: float,
-    ) -> tuple[StepDefinition, float, bool]:
-        """Использует LLM для подтверждения/выбора лучшего кандидата."""
-
-        short_list = sorted(
-            candidates,
-            key=lambda c: self._combine_score(
-                similarity_scores.get(c.id, 0.0),
-                embedding_scores.get(c.id),
-                parameter_fit=parameter_fit_scores.get(c.id),
-            ),
-            reverse=True,
-        )[:3]
-
+    ) -> tuple[StepDefinition, float, bool, dict[str, Any]]:
+        short_list = [definition for definition, _ in ranked_candidates[: max(1, self.config.llm_shortlist)]]
         prompt = self._build_llm_prompt(test_text, short_list)
         response = self.llm_client.generate(prompt)
-        chosen = self._extract_llm_choice(response, short_list)
-        llm_reranked = bool(chosen)
+        chosen, confidence, reason = self._extract_llm_choice(response, short_list)
 
+        llm_meta = {
+            "llm_choice_confidence": confidence,
+            "llm_choice_reason": reason,
+        }
         if not chosen:
-            return current_best, current_score, False
-
-        if chosen.id == current_best.id:
-            boosted = self._combine_score(
-                similarity_scores.get(chosen.id, 0.0),
-                embedding_scores.get(chosen.id),
-                llm_confirmed=True,
-                parameter_fit=parameter_fit_scores.get(chosen.id),
-            )
-            return chosen, boosted, llm_reranked
+            return current_best, current_score, False, llm_meta
+        if confidence < self.config.llm_min_confidence:
+            return current_best, current_score, False, llm_meta
 
         combined = self._combine_score(
             similarity_scores.get(chosen.id, 0.0),
             embedding_scores.get(chosen.id),
             llm_confirmed=True,
             parameter_fit=parameter_fit_scores.get(chosen.id),
+            literal_overlap=literal_overlap_scores.get(chosen.id),
         )
-        return chosen, combined, llm_reranked
-
+        return chosen, combined, True, llm_meta
     def _estimate_parameter_fit(self, definition: StepDefinition, test_text: str) -> float:
         placeholders = self._extract_placeholders(definition.pattern)
-        if not placeholders:
+        if not placeholders and definition.pattern_type.value != "regularExpression":
             return 1.0
 
         _, _, meta = self._resolve_step_text(definition, test_text)
@@ -603,7 +725,6 @@ class StepMatcher:
                 continue
             break
         return result
-
     @staticmethod
     def _literal_overlap_score(left: str, right: str) -> float:
         left_tokens = [token for token in left.split() if token]
@@ -645,7 +766,7 @@ class StepMatcher:
     def _clean_value(value: Any) -> str:
         cleaned = "" if value is None else str(value).strip()
         if len(cleaned) >= 2:
-            wrappers = {('"', '"'), ("'", "'"), ("«", "»")}
+            wrappers = {("\"", "\""), ("'", "'"), ("«", "»")}
             for left, right in wrappers:
                 if cleaned.startswith(left) and cleaned.endswith(right):
                     cleaned = cleaned[1:-1].strip()
@@ -653,11 +774,9 @@ class StepMatcher:
 
     @staticmethod
     def _build_llm_prompt(test_text: str, candidates: list[StepDefinition]) -> str:
-        """Готовит промпт для выбора лучшего шага."""
-
         lines = [
             "Выбери лучший cucumber-шаг, который соответствует тестовому шагу.",
-            "Ответь только идентификатором кандидата (например, C1).",
+            'Ответь JSON-объектом: {"choice":"C1","confidence":0.0-1.0,"reason":"..."}',
             f"Тестовый шаг: {test_text}",
             "Кандидаты:",
         ]
@@ -670,20 +789,39 @@ class StepMatcher:
     @staticmethod
     def _extract_llm_choice(
         response: str | None, candidates: list[StepDefinition]
-    ) -> StepDefinition | None:
-        """Извлекает выбор LLM из ответа."""
-
+    ) -> tuple[StepDefinition | None, float, str | None]:
         if not response:
-            return None
+            return None, 0.0, None
 
         lookup = {f"C{idx}": candidate for idx, candidate in enumerate(candidates, start=1)}
+        confidence = 0.0
+        reason: str | None = None
+        stripped = response.strip()
+
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, dict):
+                raw_choice = str(parsed.get("choice", "")).strip().upper()
+                raw_confidence = parsed.get("confidence")
+                if raw_choice in lookup:
+                    try:
+                        confidence = float(raw_confidence)
+                    except (TypeError, ValueError):
+                        confidence = 0.0
+                    confidence = max(0.0, min(1.0, confidence))
+                    reason_raw = parsed.get("reason")
+                    reason = str(reason_raw).strip() if reason_raw else None
+                    return lookup[raw_choice], confidence, reason
+        except json.JSONDecodeError:
+            pass
+
         for token, candidate in lookup.items():
             if token in response:
-                return candidate
+                return candidate, 1.0, "legacy_token"
 
         lowered_response = response.casefold()
         for candidate in candidates:
             if candidate.pattern.casefold() in lowered_response:
-                return candidate
+                return candidate, 0.8, "pattern_match"
 
-        return None
+        return None, 0.0, None

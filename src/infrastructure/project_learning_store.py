@@ -12,6 +12,18 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _parse_iso8601(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _project_key(project_root: str) -> str:
     normalized = Path(project_root).expanduser().resolve().as_posix().lower()
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
@@ -71,12 +83,38 @@ class ProjectLearningStore:
         boosts = payload.get("stepBoosts", {})
         if not isinstance(boosts, dict):
             return {}
+        feedback = payload.get("feedback", [])
+        feedback_timestamps: dict[str, datetime] = {}
+        if isinstance(feedback, list):
+            for entry in feedback:
+                if not isinstance(entry, dict):
+                    continue
+                step_id = str(entry.get("stepId", "")).strip()
+                if not step_id:
+                    continue
+                created_at = _parse_iso8601(entry.get("createdAt"))
+                if created_at is None:
+                    continue
+                previous = feedback_timestamps.get(step_id)
+                if previous is None or created_at > previous:
+                    feedback_timestamps[step_id] = created_at
+
         result: dict[str, float] = {}
+        now = datetime.now(timezone.utc)
+        half_life_days = 60.0
         for key, value in boosts.items():
             try:
-                result[str(key)] = float(value)
+                step_id = str(key)
+                raw_boost = float(value)
             except (TypeError, ValueError):
                 continue
+            last_feedback_at = feedback_timestamps.get(step_id)
+            if last_feedback_at is None:
+                result[step_id] = raw_boost
+                continue
+            age_days = max(0.0, (now - last_feedback_at).total_seconds() / 86400.0)
+            decay_factor = 0.5 ** (age_days / half_life_days)
+            result[step_id] = round(raw_boost * decay_factor, 4)
         return result
 
     def record_feedback(
@@ -88,6 +126,7 @@ class ProjectLearningStore:
         note: str | None = None,
         preference_key: str | None = None,
         preference_value: Any = None,
+        scoring_version: str = "v2",
     ) -> dict[str, Any]:
         payload = self.load(project_root)
         boosts = payload.setdefault("stepBoosts", {})
@@ -103,6 +142,7 @@ class ProjectLearningStore:
                 "accepted": accepted,
                 "delta": delta,
                 "note": note,
+                "scoringVersion": scoring_version,
                 "createdAt": _utcnow(),
             }
         )
@@ -114,4 +154,3 @@ class ProjectLearningStore:
             prefs[preference_key] = preference_value
 
         return self.save(project_root, payload)
-
