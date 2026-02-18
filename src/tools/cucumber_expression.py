@@ -16,6 +16,7 @@ _TYPE_MAP: dict[str, str] = {
     "long": r"(\d+)",
     "bigdecimal": r"(\d+(?:\.\d+)?)",
 }
+_PLACEHOLDER_RE = re.compile(r"\{([^{}]*)\}")
 
 
 def cucumber_expression_to_regex(pattern: str) -> str:
@@ -23,11 +24,11 @@ def cucumber_expression_to_regex(pattern: str) -> str:
 
     parts: list[str] = []
     last_end = 0
-    for match in re.finditer(r"\{([^{}]+)\}", pattern):
+    for match in _PLACEHOLDER_RE.finditer(pattern):
         literal = pattern[last_end : match.start()]
         parts.append(re.escape(literal))
         placeholder = match.group(1).strip()
-        type_name = placeholder.split(":")[-1].strip().casefold()
+        type_name = placeholder.split(":")[-1].strip().casefold() or "string"
         parts.append(_TYPE_MAP.get(type_name, r"(.+?)"))
         last_end = match.end()
 

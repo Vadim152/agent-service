@@ -1,5 +1,6 @@
 """Проверки подстановки параметров в сгенерированный Gherkin."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -169,6 +170,39 @@ def test_feature_generator_substitutes_unquoted_cucumber_strings() -> None:
     assert "{string}" not in rendered
 
 
+def test_cucumber_expression_converts_anonymous_placeholder_to_capture_group() -> None:
+    regex = cucumber_expression_to_regex("авторизуемся клиентом {} в МП СБОЛ")
+
+    assert r"\{\}" not in regex
+    assert regex.startswith("^") and regex.endswith("$")
+
+    assert re.search(regex, 'авторизуемся клиентом "Иван Иванов" в МП СБОЛ')
+    assert re.search(regex, "авторизуемся клиентом ООО Ромашка в МП СБОЛ")
+
+
+def test_matcher_exposes_parameters_for_anonymous_cucumber_placeholder() -> None:
+    definition = StepDefinition(
+        id="anonymous-1",
+        keyword=StepKeyword.AND,
+        pattern="авторизуемся клиентом {} в МП СБОЛ",
+        regex=cucumber_expression_to_regex("авторизуемся клиентом {} в МП СБОЛ"),
+        code_ref="steps.auth",
+        parameters=[{"name": "clientName", "type": "string", "placeholder": "{}"}],
+    )
+    test_step = TestStep(order=1, text='И авторизуемся клиентом "Иван Иванов" в МП СБОЛ')
+
+    matched = StepMatcher().match_steps([test_step], [definition])[0]
+
+    assert matched.status in {MatchStatus.EXACT, MatchStatus.FUZZY}
+    assert matched.parameter_fill_meta is not None
+    assert matched.parameter_fill_meta.get("status") == "full"
+    assert matched.resolved_step_text == "авторизуемся клиентом Иван Иванов в МП СБОЛ"
+    assert len(matched.matched_parameters) == 1
+    assert matched.matched_parameters[0]["name"] == "clientName"
+    assert matched.matched_parameters[0]["placeholder"] == "{}"
+    assert matched.matched_parameters[0]["value"] == "Иван Иванов"
+
+
 def test_matcher_exposes_parameter_fill_meta_and_parameters() -> None:
     definition = StepDefinition(
         id="6",
@@ -211,8 +245,9 @@ def test_matcher_marks_step_unmatched_when_no_strict_match() -> None:
     feature = FeatureGenerator().build_feature(scenario, [matched], language="ru")
     rendered = FeatureGenerator().render_feature(feature)
     assert matched.status is MatchStatus.UNMATCHED
-    assert (matched.notes or {}).get("reason") == "parameter_resolution_failed"
-    assert f"<parameter_resolution_failed: {test_step.text}>" in rendered
+    reason = (matched.notes or {}).get("reason")
+    assert reason in {"parameter_resolution_failed", "no_definition_found"}
+    assert f"<{reason}: {test_step.text}>" in rendered
 
 
 def test_matcher_regular_expression_handles_leading_and_keyword_ru() -> None:

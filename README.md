@@ -182,7 +182,7 @@ To route chat completions through corporate proxy without storing full endpoint 
 
 ```powershell
 $env:AGENT_SERVICE_CORP_MODE='true'
-$env:AGENT_SERVICE_CORP_PROXY_HOST='https://ci09783180-ift-ai-hub-platform.apps.ift-terra000024-edm.ocp.delta.sbrf.ru'
+$env:AGENT_SERVICE_CORP_PROXY_HOST='https://proxy.ru'
 $env:AGENT_SERVICE_CORP_CERT_FILE='C:\\certs\\client.crt'
 $env:AGENT_SERVICE_CORP_KEY_FILE='C:\\certs\\client.key'
 ```

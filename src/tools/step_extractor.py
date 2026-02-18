@@ -271,10 +271,12 @@ class StepExtractor:
         }
 
         parameters: list[dict[str, str | None]] = []
-        for idx, match in enumerate(re.finditer(r"\{([^{}]+)\}", pattern), start=1):
+        for idx, match in enumerate(re.finditer(r"\{([^{}]*)\}", pattern), start=1):
             placeholder = match.group(0)
             content = match.group(1).strip()
-            normalized = content.casefold()
+            normalized = content.split(":")[-1].strip().casefold()
+            if not normalized:
+                normalized = "string"
             inferred_type = type_map.get(normalized)
             sanitized_name = re.sub(r"\W+", "_", content).strip("_") or None
             name = sanitized_name or (f"arg{idx}" if inferred_type else None)

@@ -37,6 +37,7 @@ class StepMatcherConfig:
 class StepMatcher:
     """Step matcher with deterministic ranking and ambiguity-gated LLM rerank."""
 
+    _CUCUMBER_PLACEHOLDER_RE = re.compile(r"\{[^{}]*\}")
     _LEADING_GHERKIN_KEYWORD_RE = re.compile(
         r"^\s*(?P<keyword>Дано|Когда|Тогда|И|Но|Given|When|Then|And|But)\b\s*(?P<text>.+)$",
         re.IGNORECASE,
@@ -370,7 +371,7 @@ class StepMatcher:
 
     @staticmethod
     def _requires_full_parameter_fit(definition: StepDefinition) -> bool:
-        has_placeholders = bool(re.search(r"\{[^}]+\}", definition.pattern))
+        has_placeholders = bool(StepMatcher._CUCUMBER_PLACEHOLDER_RE.search(definition.pattern))
         is_regex_pattern = definition.pattern_type.value == "regularExpression"
         return has_placeholders or is_regex_pattern
 
@@ -591,11 +592,11 @@ class StepMatcher:
 
     @staticmethod
     def _extract_placeholders(pattern: str) -> list[str]:
-        return re.findall(r"\{[^}]+\}", pattern)
+        return StepMatcher._CUCUMBER_PLACEHOLDER_RE.findall(pattern)
 
     @staticmethod
     def _has_placeholders(text: str) -> bool:
-        return bool(re.search(r"\{[^}]+\}", text))
+        return bool(StepMatcher._CUCUMBER_PLACEHOLDER_RE.search(text))
 
     def _replace_placeholders(self, pattern: str, values: list[str]) -> str:
         filled = pattern
@@ -664,7 +665,7 @@ class StepMatcher:
         if not placeholders:
             return []
 
-        literals = re.split(r"\{[^}]+\}", pattern)
+        literals = StepMatcher._CUCUMBER_PLACEHOLDER_RE.split(pattern)
         if len(literals) != len(placeholders) + 1:
             return []
 
