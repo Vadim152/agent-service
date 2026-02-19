@@ -1,38 +1,142 @@
-# Агентум (Sber IDE plugin skeleton)
+# Агентум (ide-plugin)
 
-Этот модуль описывает каркас плагина для Sber IDE/IntelliJ Platform, который обращается к backend-сервису `agent-service`.
+`ide-plugin` - IntelliJ Platform плагин, который работает с backend `agent-service`.
+Текущий фокус плагина:
+- Tool Window для чата с агентом;
+- работа с chat control-plane (`/chat/*`, SSE stream, approvals);
+- сканирование шагов Cucumber из UI настроек;
+- генерация/применение `.feature` через backend-клиент (jobs-first для генерации).
 
-Основные сценарии:
-- Сканирование шагов Cucumber через `/steps/scan-steps` и отображение в Tool Window.
-- Генерация `.feature` по выделенному тексту тесткейса через `/feature/generate-feature`.
-- Применение сгенерированного `.feature` через `/feature/apply-feature`.
+## Что реально зарегистрировано в IDE
 
-Структура пакетов:
-- `config` — настройки плагина и UI для конфигурации URL backend.
-- `services` — HTTP-клиент и доступ к backend.
-- `model` — DTO для сериализации/десериализации запросов и ответов.
-- `ui.toolwindow` — Tool Window "Агентум".
-- `actions` — действия для меню/toolbar/контекстного меню.
-- `util` — вспомогательные утилиты (поиск корня проекта, уведомления и т.п.).
+Согласно `src/main/resources/META-INF/plugin.xml`:
+- Tool Window `Агентум`;
+- Project Settings страница `Tools -> Агентум`;
+- notification group `Агентум`.
 
-Реализации — заглушки, отмеченные TODO, чтобы позже добавить реальный HTTP-клиент, фоновую работу и обработку ошибок.
+## Возможности Tool Window
 
-## Потоки взаимодействия
+`AiToolWindowPanel` реализует:
+- создание новой chat-сессии (`+`) и переиспользование существующей;
+- экран истории сессий и переключение между ними;
+- отправку сообщений в backend;
+- SSE-подписку на `/chat/sessions/{sessionId}/stream` с авто-reconnect;
+- отображение `pendingPermissions` и отправку решений (`approve_once`, `approve_always`, `reject`);
+- отображение прогресса по activity (`busy`, `retry`, `waiting_permission`, `idle`, `error`);
+- быстрые slash-шаблоны (`/autotest`, `/unmapped`, `/save`).
 
-### Сканирование шагов через Tool Window
-1. Пользователь открывает Tool Window "Агентум".
-2. Указывает/оставляет projectRoot и нажимает "Scan steps".
-3. Плагин вызывает `BackendClient.scanSteps` → `/steps/scan-steps`.
-4. Backend индексирует шаги и возвращает счётчик/примеры; UI обновляет таблицу и статус.
+Примечание:
+- кнопка отправки в состоянии генерации отправляет команду `abort` через `/chat/sessions/{sessionId}/commands`.
 
-### Генерация feature из выделенного тесткейса
-1. Пользователь выделяет текст тесткейса в редакторе и запускает action "Generate Feature from Test Case".
-2. Открывается диалог с targetPath/createFile/overwriteExisting. Последние выбранные значения сохраняются в настройках плагина и подставляются при следующем вызове.
-3. Плагин формирует `GenerateFeatureRequestDto` и вызывает `BackendClient.generateFeature` → `/feature/generate-feature`.
-4. Backend парсит, матчит шаги, формирует featureText и опционально сохраняет файл.
-5. Плагин открывает featureText в редакторе/показывает результат, unmapped steps отображаются позже (TODO).
+## Настройки плагина
 
-### Применение feature-файла
-1. Пользователь редактирует/просматривает feature-текст в редакторе.
-2. Action "Apply Feature" открывает диалог с targetPath/createFile/overwriteExisting (значения также запоминаются) и вызывает `/feature/apply-feature` через `BackendClient.applyFeature`.
-3. Backend создаёт/перезаписывает файл и возвращает статус (created/overwritten/skipped), который показывается в IDE.
+`AiTestPluginSettings` хранит:
+- `backendUrl` (по умолчанию `http://localhost:8000/api/v1`);
+- timeout'ы (`requestTimeoutMs`, `chatSendTimeoutMs`, `generateFeatureTimeoutMs`);
+- параметры Zephyr/Jira авторизации;
+- значения для scan/generate/apply сценариев.
+
+UI (`AiTestPluginSettingsConfigurable`) сейчас редактирует:
+- `scanProjectRoot`;
+- Zephyr auth mode (`TOKEN` или `LOGIN_PASSWORD`);
+- Jira instance (сейчас предустановлен `Sigma -> https://jira.sberbank.ru`);
+- список Jira-проектов и проверку доступа к проекту.
+
+Текущее ограничение:
+- в UI нет полей для `backendUrl` и timeout'ов, хотя в настройках они есть и используются клиентом.
+
+## Интеграция с backend
+
+`HttpBackendClient` обращается к endpoint'ам:
+- `POST /steps/scan-steps?projectRoot=...`
+- `GET /steps/?projectRoot=...`
+- `POST /feature/generate-feature`
+- `POST /jobs`
+- `GET /jobs/{jobId}`
+- `GET /jobs/{jobId}/result`
+- `POST /feature/apply-feature`
+- `POST /chat/sessions`
+- `GET /chat/sessions`
+- `POST /chat/sessions/{sessionId}/messages`
+- `GET /chat/sessions/{sessionId}/history`
+- `GET /chat/sessions/{sessionId}/status`
+- `GET /chat/sessions/{sessionId}/diff`
+- `POST /chat/sessions/{sessionId}/commands`
+- `POST /chat/sessions/{sessionId}/tool-decisions`
+- `GET /chat/sessions/{sessionId}/stream`
+- `GET /jobs/{jobId}/events` (SSE для ожидания terminal статуса job)
+
+## Потоки работы
+
+### 1) Чат в Tool Window
+
+1. Плагин создает/переиспользует сессию `POST /chat/sessions` (`source=ide-plugin`, `profile=quick`).
+2. Отправка сообщения: `POST /chat/sessions/{sessionId}/messages`.
+3. Обновление UI через SSE stream и периодический refresh (`history` + `status`).
+4. При запросе подтверждения пользователь выбирает действие, плагин вызывает `POST /chat/sessions/{sessionId}/tool-decisions`.
+
+### 2) Сканирование шагов
+
+1. В Settings пользователь задает `projectRoot` и нажимает "Сканировать шаги".
+2. Плагин вызывает `POST /steps/scan-steps`.
+3. Затем загружает/показывает индекс шагов в UI.
+
+### 3) Генерация feature (jobs-first)
+
+`GenerateFeatureFromSelectionAction` делает:
+1. `POST /jobs`.
+2. Ожидание terminal статуса (`/jobs/{id}/events`, fallback polling `/jobs/{id}`).
+3. `GET /jobs/{id}/result`.
+4. Открытие результата в редакторе и подсветка `unmapped` шагов.
+
+### 4) Применение feature
+
+`ApplyFeatureAction` отправляет `POST /feature/apply-feature` и показывает статус `created/overwritten/rejected_outside_project`.
+
+## Важные ограничения
+
+- В `plugin.xml` нет секции `<actions>`, поэтому action-классы из `actions/*` не зарегистрированы как пункты меню IDE на уровне descriptor.
+- Placeholder в input (`#`, `@`) присутствует, но специализированной обработки этих префиксов в панели сейчас нет; реализованы только slash-шаблоны.
+- В UI настроек доступен только Jira instance `Sigma`.
+
+## Сборка и запуск
+
+Требования:
+- JDK `17` (`kotlin.jvmToolchain(17)`)
+- IntelliJ target `2025.1` (`sinceBuild = 251`)
+
+Команды запускать из каталога `ide-plugin`.
+
+Сборка плагина:
+
+```powershell
+.\gradlew.bat buildPlugin
+```
+
+Запуск sandbox IDE:
+
+```powershell
+.\gradlew.bat runIde
+```
+
+Тесты:
+
+```powershell
+.\gradlew.bat test
+```
+
+## Структура кода
+
+- `config` - настройки плагина и UI конфигурации.
+- `services` - backend-клиент (`BackendClient`, `HttpBackendClient`).
+- `model` - DTO для API backend.
+- `ui.toolwindow` - основная панель чата, история, approvals, SSE.
+- `ui.dialogs` - диалоги параметров генерации/применения feature.
+- `actions` - action-классы для scan/generate/apply сценариев.
+- `util` - утилиты работы с проектом и scan roots.
+
+## Диагностика
+
+- Проверьте, что backend доступен по `backendUrl` (по умолчанию `http://localhost:8000/api/v1`).
+- Для проблем чата проверьте endpoint'ы `/chat/sessions/*` и SSE `/chat/sessions/{id}/stream`.
+- Для проблем генерации проверьте `/jobs/*` и наличие актуального индекса шагов (`/steps/scan-steps`).
