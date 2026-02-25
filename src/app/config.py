@@ -42,6 +42,42 @@ class Settings(BaseSettings):
         default=ROOT_DIR / ".agent" / "artifacts",
         description="Directory for job artifacts and incidents",
     )
+    state_backend: str = Field(
+        default="memory",
+        description="Control-plane state backend: memory|postgres",
+    )
+    execution_backend: str = Field(
+        default="local",
+        description="Execution dispatch backend: local|queue",
+    )
+    queue_backend: str = Field(
+        default="local",
+        description="Queue backend for execution dispatch: local|redis",
+    )
+    queue_name: str = Field(
+        default="agent-service:jobs",
+        description="Queue name/channel used by execution plane",
+    )
+    redis_url: str = Field(
+        default="redis://127.0.0.1:6379/0",
+        description="Redis connection URL for queue backend",
+    )
+    postgres_dsn: str | None = Field(
+        default=None,
+        description="Postgres DSN used when state_backend=postgres",
+    )
+    embedded_execution_worker: bool = Field(
+        default=False,
+        description="Run execution queue worker inside control-plane process",
+    )
+    tool_host_mode: str = Field(
+        default="local",
+        description="Tool host mode: local|remote",
+    )
+    tool_host_url: str | None = Field(
+        default=None,
+        description="Base URL of remote tool host service when tool_host_mode=remote",
+    )
     jira_source_mode: str = Field(
         default="stub",
         description="Source mode for Jira testcase retrieval: stub|live|disabled",
@@ -226,6 +262,23 @@ class Settings(BaseSettings):
             raise ValueError("match_llm_shortlist must be >= 1")
         if self.match_llm_min_confidence < 0 or self.match_llm_min_confidence > 1:
             raise ValueError("match_llm_min_confidence must be in [0, 1]")
+        if self.state_backend not in {"memory", "postgres"}:
+            raise ValueError("state_backend must be one of: memory, postgres")
+        if self.execution_backend not in {"local", "queue"}:
+            raise ValueError("execution_backend must be one of: local, queue")
+        if self.queue_backend not in {"local", "redis"}:
+            raise ValueError("queue_backend must be one of: local, redis")
+        if not self.queue_name.strip():
+            raise ValueError("queue_name must not be empty")
+        if self.state_backend == "postgres" and not (self.postgres_dsn or "").strip():
+            raise ValueError("postgres_dsn is required when state_backend=postgres")
+        if self.execution_backend == "queue" and self.queue_backend == "redis":
+            if not self.redis_url.strip():
+                raise ValueError("redis_url is required when queue_backend=redis")
+        if self.tool_host_mode not in {"local", "remote"}:
+            raise ValueError("tool_host_mode must be one of: local, remote")
+        if self.tool_host_mode == "remote" and not (self.tool_host_url or "").strip():
+            raise ValueError("tool_host_url is required when tool_host_mode=remote")
 
         if not self.corp_mode:
             return self

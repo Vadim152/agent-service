@@ -10,14 +10,19 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.bootstrap import (
+    create_artifact_store,
+    create_job_dispatch_components,
+    create_run_state_store,
+    create_tool_host_client,
+)
 from app.config import get_settings
 from app.logging_config import LOG_LEVEL, get_logger, init_logging
 from api import router as api_router
 from agents import create_orchestrator
 from chat.memory_store import ChatMemoryStore
 from chat.runtime import ChatAgentRuntime
-from infrastructure.artifact_store import ArtifactStore
-from infrastructure.run_state_store import RunStateStore
+from infrastructure.job_worker import JobQueueWorker
 from infrastructure.task_registry import TaskRegistry
 from self_healing.supervisor import ExecutionSupervisor
 
@@ -72,24 +77,43 @@ async def on_startup() -> None:
         app.state.orchestrator = orchestrator
         chat_memory_store = ChatMemoryStore(Path(settings.steps_index_dir).parent / "chat_memory")
         app.state.chat_memory_store = chat_memory_store
-        run_state_store = RunStateStore()
-        artifact_store = ArtifactStore(Path(settings.artifacts_dir))
+        run_state_store = create_run_state_store(settings)
+        artifact_store = create_artifact_store(settings)
         execution_supervisor = ExecutionSupervisor(
             orchestrator=orchestrator,
             run_state_store=run_state_store,
             artifact_store=artifact_store,
         )
+        dispatch_components = create_job_dispatch_components(settings)
+        tool_host_client = create_tool_host_client(settings)
         app.state.run_state_store = run_state_store
         app.state.artifact_store = artifact_store
         app.state.execution_supervisor = execution_supervisor
+        app.state.job_dispatcher = dispatch_components.dispatcher
+        app.state.job_queue = dispatch_components.queue
+        app.state.tool_host_client = tool_host_client
+        app.state.task_registry = TaskRegistry()
         app.state.chat_runtime = ChatAgentRuntime(
             memory_store=chat_memory_store,
             llm_client=getattr(orchestrator, "llm_client", None),
             orchestrator=orchestrator,
             run_state_store=run_state_store,
             execution_supervisor=execution_supervisor,
+            tool_host_client=tool_host_client,
         )
-        app.state.task_registry = TaskRegistry()
+        if dispatch_components.queue is not None and settings.embedded_execution_worker:
+            queue_worker = JobQueueWorker(
+                queue=dispatch_components.queue,
+                supervisor=execution_supervisor,
+                run_state_store=run_state_store,
+            )
+            app.state.job_queue_worker = queue_worker
+            app.state.task_registry.create_task(
+                queue_worker.run_forever(),
+                source="jobs.worker",
+                metadata={"mode": "embedded"},
+            )
+            logger.info("[Startup] Embedded execution worker started")
         logger.info("[Startup] Оркестратор и control-plane компоненты созданы")
     except Exception as exc:  # pragma: no cover - ранняя инициализация
         app.state.init_error = f"Ошибка создания оркестратора: {exc}"

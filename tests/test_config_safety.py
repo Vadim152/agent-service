@@ -85,3 +85,18 @@ def test_corp_retry_validation() -> None:
 
     with pytest.raises(ValueError, match="corp_retry_max_delay_s must be >= corp_retry_base_delay_s"):
         Settings(_env_file=None, corp_retry_base_delay_s=1.0, corp_retry_max_delay_s=0.5)
+
+
+def test_postgres_state_backend_requires_dsn() -> None:
+    with pytest.raises(ValueError, match="postgres_dsn"):
+        Settings(_env_file=None, state_backend="postgres", postgres_dsn=None)
+
+
+def test_remote_tool_host_requires_url() -> None:
+    with pytest.raises(ValueError, match="tool_host_url"):
+        Settings(_env_file=None, tool_host_mode="remote", tool_host_url=None)
+
+
+def test_queue_backend_validation() -> None:
+    with pytest.raises(ValueError, match="queue_backend"):
+        Settings(_env_file=None, queue_backend="bad")

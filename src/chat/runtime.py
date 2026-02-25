@@ -133,6 +133,7 @@ class ChatAgentRuntime:
         orchestrator: Any | None = None,
         run_state_store: Any | None = None,
         execution_supervisor: Any | None = None,
+        tool_host_client: Any | None = None,
     ) -> None:
         self.state_store = ChatStateStore(memory_store)
         self.memory_store = memory_store
@@ -142,6 +143,7 @@ class ChatAgentRuntime:
         self._orchestrator = orchestrator
         self._run_state_store = run_state_store
         self._execution_supervisor = execution_supervisor
+        self._tool_host_client = tool_host_client
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_guard = RLock()
         self._tool_registry = ChatToolRegistry()
@@ -194,14 +196,25 @@ class ChatAgentRuntime:
         feature_text: str,
         overwrite_existing: bool = False,
     ) -> dict[str, Any]:
-        if self._orchestrator is None:
+        if self._tool_host_client is not None:
+            try:
+                result = self._tool_host_client.save_generated_feature(
+                    project_root=project_root,
+                    target_path=target_path,
+                    feature_text=feature_text,
+                    overwrite_existing=bool(overwrite_existing),
+                )
+            except Exception as exc:
+                raise ChatRuntimeError(f"Tool host request failed: {exc}", status_code=503) from exc
+        elif self._orchestrator is None:
             raise ChatRuntimeError("Сохранение feature недоступно: orchestrator не настроен", status_code=503)
-        result = self._orchestrator.apply_feature(
-            project_root,
-            target_path,
-            feature_text,
-            overwrite_existing=bool(overwrite_existing),
-        )
+        else:
+            result = self._orchestrator.apply_feature(
+                project_root,
+                target_path,
+                feature_text,
+                overwrite_existing=bool(overwrite_existing),
+            )
         status = str(result.get("status", "created"))
         localized_status = {
             "created": "создан",

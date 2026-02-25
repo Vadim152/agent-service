@@ -51,6 +51,22 @@ def _schedule_job_execution(request: Request, *, job_id: str, supervisor, run_st
         )
 
     task_registry = getattr(request.app.state, "task_registry", None)
+    dispatcher = getattr(request.app.state, "job_dispatcher", None)
+    if dispatcher is not None:
+        try:
+            dispatcher.dispatch(
+                job_id=job_id,
+                source="jobs",
+                supervisor=supervisor,
+                run_state_store=run_state_store,
+                task_registry=task_registry,
+                on_error=_on_error,
+            )
+            return
+        except Exception as exc:
+            _on_error(exc)
+            return
+
     if task_registry is None:
         asyncio.create_task(_worker())
         return
