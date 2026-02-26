@@ -15,6 +15,149 @@
 
 Документация по плагину: `ide-plugin/README.md`.
 
+## Архитектура
+
+### Current (as-is)
+
+Ниже фактическая архитектура по текущей реализации в `src/app`, `src/api`, `src/chat`, `src/infrastructure`, `src/self_healing`.
+
+```mermaid
+flowchart LR
+  subgraph Clients[Clients]
+    IDE[IDE Plugin]
+    CLI[CLI/HTTP]
+  end
+
+  subgraph CP[Control Plane (agent-service)]
+    API[FastAPI API<br/>Jobs • Chat • Steps • Memory • Tools • Feature]
+    CHAT[Chat Runtime<br/>sessions • approvals • SSE]
+    DISP[Job Dispatcher<br/>local|queue]
+    STATE[(Run State Store<br/>memory|postgres)]
+  end
+
+  subgraph XP[Execution Plane]
+    Q[Queue (optional)<br/>local|redis]
+    W[Worker<br/>agent-service-worker]
+    SUP[ExecutionSupervisor]
+    ORCH[Orchestrator Runtime<br/>LangGraph]
+  end
+
+  subgraph TH[Tool Host]
+    THL[Local Tool Host<br/>in-process apply_feature]
+    THR[Remote Tool Host<br/>agent-service-tool-host]
+  end
+
+  subgraph Storage[Storage]
+    ART[(.agent/artifacts<br/>artifact files + incidents)]
+    CM[(.agent/chat_memory<br/>sessions/project memory)]
+    VDB[(.chroma<br/>Chroma vector store)]
+    PG[(Postgres optional)]
+    R[(Redis optional)]
+  end
+
+  IDE --> API
+  CLI --> API
+
+  API --> CHAT
+  API --> DISP
+  API --> STATE
+
+  DISP -->|local| SUP
+  DISP -->|queue| Q
+  Q --> W
+  W --> SUP
+  SUP --> ORCH
+
+  CHAT -->|autotest jobs| SUP
+  CHAT -->|save_generated_feature| THL
+  CHAT -->|save_generated_feature (remote mode)| THR
+
+  SUP --> ART
+  ORCH --> VDB
+  CHAT --> CM
+  STATE -. postgres mode .-> PG
+  Q -. redis backend .-> R
+```
+
+Ключевые моменты текущей реализации:
+
+- Внешний стриминг реализован через SSE (`/jobs/{job_id}/events`, `/chat/sessions/{session_id}/stream`), не через WebSocket.
+- Approvals/pending permissions встроены в `chat runtime`, отдельного `policy`-сервиса сейчас нет.
+- Execution backend переключается между `local` и `queue`; queue backend — `local` или `redis`.
+- Tool Host поддерживает `local` и `remote` режимы; remote-сервис сейчас минимальный (`/internal/tools/save-feature`).
+
+### Target (roadmap)
+
+Целевая схема (не все блоки уже реализованы):
+
+```mermaid
+flowchart LR
+  subgraph Clients[Клиенты]
+    IDE[IDE Plugin]
+    CLI[CLI/HTTP]
+  end
+
+  subgraph CP[Control Plane (один сервис)]
+    API[FastAPI API<br/>Runs • Sessions • SSE/WS]
+    Policy[Tooling & Policy<br/>registry • approvals • audit]
+    RunDB[(Postgres<br/>runs/attempts/events/sessions)]
+    ArtIdx[(Artifacts index<br/>in DB)]
+  end
+
+  subgraph XP[Execution Plane]
+    Q[Queue (опционально)<br/>Redis/RabbitMQ]
+    W[Worker Pool<br/>(Executors)]
+    Orch[Orchestrator Runtime<br/>(LangGraph)]
+    RT[Runtime Plugins<br/>testgen • ift • debug • browser • analytics]
+  end
+
+  subgraph Tools[Tool Host (коннекторы)]
+    Repo[Repo/Code access]
+    Logs[Logs query]
+    Art[Artifacts store]
+    Browser[Playwright runner]
+    Analytics[Analytics query]
+    Patch[Patch proposal/apply]
+  end
+
+  subgraph Storage[Хранилища]
+    OBJ[(S3/MinIO/FS<br/>artifacts, traces, screenshots)]
+    VDB[(Vector store - опционально)]
+    LOGS[(Log backend - опционально)]
+    WARE[(Analytics warehouse - опционально)]
+  end
+
+  IDE --> API
+  CLI --> API
+
+  API --> RunDB
+  API --> Policy
+
+  API --> Q
+  Q --> W
+  W --> Orch
+  Orch --> RT
+
+  Orch --> Tools
+  Tools --> OBJ
+  Tools --> VDB
+  Tools --> LOGS
+  Tools --> WARE
+
+  Patch --> Policy
+  Art --> ArtIdx
+```
+
+### Дельта между Current и Target
+
+- Реализовано: split-модель `Control Plane / Execution Plane / Tool Host`, `jobs-first`, SSE-стримы, Postgres backend для job state, Redis backend для queue, LangGraph runtime.
+- Частично: Tool Host есть, но пока с минимальным internal API; worker есть, но не пул исполнителей.
+- Пока отсутствует как выделенный слой: отдельный `Policy` сервис (`registry/approvals/audit`) и `Artifacts index` в БД.
+- Пока отсутствует как встроенный backend: RabbitMQ queue backend, WS endpoint-ы, S3/MinIO/log/warehouse интеграции.
+- Runtime plugins и расширенный tool-host слой (browser/analytics/log connectors) пока не выделены как самостоятельные модули платформенного уровня.
+
+См. также разделы ниже: `Режимы запуска`, `Split: CP + Worker + Tool Host`, `API Overview`.
+
 ## Структура репозитория
 
 - `src/` — backend-код (`app`, `api`, `agents`, `chat`, `memory`, `self_healing`, `infrastructure`).
