@@ -70,7 +70,7 @@ flowchart LR
 
   CHAT -->|autotest jobs| SUP
   CHAT -->|save_generated_feature| THL
-  CHAT -->|save_generated_feature (remote mode)| THR
+  CHAT -->|remote save feature| THR
 
   SUP --> ART
   ORCH --> VDB
