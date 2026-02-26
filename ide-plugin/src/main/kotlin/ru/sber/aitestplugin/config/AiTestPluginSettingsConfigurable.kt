@@ -1,4 +1,4 @@
-﻿package ru.sber.aitestplugin.config
+package ru.sber.aitestplugin.config
 
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationGroupManager
@@ -23,6 +23,7 @@ import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
+import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
 import ru.sber.aitestplugin.util.StepScanRootsResolver
 import java.awt.BorderLayout
 import java.awt.Font
@@ -43,7 +44,7 @@ import java.net.URL
 import java.util.Base64
 
 /**
- * РџР°РЅРµР»СЊ РЅР°СЃС‚СЂРѕРµРє РїР»Р°РіРёРЅР° (Settings/Preferences в†’ Tools в†’ "РђРіРµРЅС‚СѓРј").
+ * Панель настроек плагина (Settings/Preferences → Tools → "Агентум").
  */
 class AiTestPluginSettingsConfigurable(
     project: Project? = null,
@@ -54,34 +55,35 @@ class AiTestPluginSettingsConfigurable(
     private val backendClient: BackendClient = backendClient ?: HttpBackendClient(this.project)
 
     private val projectRootField = JBTextField()
-    private val scanButton = JButton("РЎРєР°РЅРёСЂРѕРІР°С‚СЊ С€Р°РіРё", AllIcons.Actions.Search).apply {
+    private val scanButton = JButton("Сканировать шаги", AllIcons.Actions.Search).apply {
         foreground = JBColor(0x0B5CAD, 0x78A6FF)
         background = JBColor(0xE8F1FF, 0x2C3F57)
         border = JBUI.Borders.empty(6, 12)
         isOpaque = true
     }
     private val stepsList = JBList<StepDefinitionDto>()
-    private val statusLabel = JLabel("РРЅРґРµРєСЃ РµС‰С‘ РЅРµ РїРѕСЃС‚СЂРѕРµРЅ", AllIcons.General.Information, JLabel.LEADING)
+    private val statusLabel = JLabel("Индекс ещё не построен", AllIcons.General.Information, JLabel.LEADING)
 
     private val rootPanel: JPanel = JPanel(BorderLayout(0, JBUI.scale(12)))
     private val zephyrJiraLabel = JLabel("Jira:")
     private val zephyrJiraInstanceCombo = JComboBox(jiraInstanceOptions.keys.toTypedArray())
-    private val zephyrTokenRadio = JRadioButton("Token", true)
-    private val zephyrLoginRadio = JRadioButton("Login/Password")
-    private val zephyrTokenLabel = JLabel("Token for Jira:")
+    private val zephyrTokenRadio = JRadioButton("Токен", true)
+    private val zephyrLoginRadio = JRadioButton("Логин/пароль")
+    private val zephyrTokenLabel = JLabel("Токен Jira:")
     private val zephyrTokenField = JBPasswordField()
-    private val zephyrLoginLabel = JLabel("Login:")
+    private val zephyrLoginLabel = JLabel("Логин:")
     private val zephyrLoginField = JBTextField()
-    private val zephyrPasswordLabel = JLabel("Password:")
+    private val zephyrPasswordLabel = JLabel("Пароль:")
     private val zephyrPasswordField = JBPasswordField()
-    private val addJiraProjectButton = JButton("Add Jira Project")
-    private val verifySettingsButton = JButton("Verify settings")
+    private val addJiraProjectButton = JButton("Добавить проект Jira")
+    private val verifySettingsButton = JButton("Проверить настройки")
+    private val memoryButton = JButton("Открыть управление памятью")
     private val jiraProjectsPanel = JPanel()
     private val jiraProjects: MutableList<String> = mutableListOf()
 
     constructor(project: Project) : this(project, HttpBackendClient(project))
 
-    override fun getDisplayName(): String = "РђРіРµРЅС‚СѓРј"
+    override fun getDisplayName(): String = "Агентум"
 
     override fun createComponent(): JComponent {
         if (rootPanel.componentCount == 0) {
@@ -144,7 +146,7 @@ class AiTestPluginSettingsConfigurable(
 
     private fun buildUi() {
         val topPanel = createCardPanel().apply {
-            add(sectionLabel("РЎРєР°РЅРёСЂРѕРІР°РЅРёРµ С€Р°РіРѕРІ"), BorderLayout.NORTH)
+            add(sectionLabel("Сканирование шагов"), BorderLayout.NORTH)
             add(buildScanControls(), BorderLayout.CENTER)
         }
 
@@ -153,11 +155,16 @@ class AiTestPluginSettingsConfigurable(
             add(buildZephyrControls(), BorderLayout.CENTER)
         }
 
-        stepsList.emptyText.text = "РЁР°РіРё РµС‰С‘ РЅРµ РЅР°Р№РґРµРЅС‹"
+        val memoryPanel = createCardPanel().apply {
+            add(sectionLabel("Память"), BorderLayout.NORTH)
+            add(buildMemoryControls(), BorderLayout.CENTER)
+        }
+
+        stepsList.emptyText.text = "Шаги ещё не найдены"
         configureStepRenderer(stepsList)
 
         val stepsPanel = createCardPanel().apply {
-            add(sectionLabel("РќР°Р№РґРµРЅРЅС‹Рµ С€Р°РіРё"), BorderLayout.NORTH)
+            add(sectionLabel("Найденные шаги"), BorderLayout.NORTH)
             add(JBScrollPane(stepsList), BorderLayout.CENTER)
         }
 
@@ -175,6 +182,9 @@ class AiTestPluginSettingsConfigurable(
             gbc.gridy++
             gbc.insets = JBUI.emptyInsets()
             add(zephyrPanel, gbc)
+            gbc.gridy++
+            gbc.insets = JBUI.insetsTop(12)
+            add(memoryPanel, gbc)
             gbc.gridy++
             gbc.weighty = 1.0
             gbc.fill = GridBagConstraints.BOTH
@@ -204,6 +214,7 @@ class AiTestPluginSettingsConfigurable(
         zephyrLoginRadio.addActionListener { updateZephyrAuthUi() }
         addJiraProjectButton.addActionListener { promptAddJiraProject() }
         verifySettingsButton.addActionListener { verifyJiraProjectAvailability() }
+        memoryButton.addActionListener { openMemoryManager() }
         updateZephyrAuthUi()
     }
 
@@ -211,19 +222,19 @@ class AiTestPluginSettingsConfigurable(
         if (projectRoot.isBlank()) return
 
         statusLabel.icon = AllIcons.General.BalloonInformation
-        statusLabel.text = "Р—Р°РіСЂСѓР·РєР° СЃРѕС…СЂР°РЅС‘РЅРЅС‹С… С€Р°РіРѕРІ..."
+        statusLabel.text = "Загрузка сохранённых шагов..."
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Р—Р°РіСЂСѓР·РєР° СЃРѕС…СЂР°РЅС‘РЅРЅС‹С… С€Р°РіРѕРІ", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Загрузка сохранённых шагов", true) {
             private var responseSteps = emptyList<StepDefinitionDto>()
             private var statusMessage: String = ""
 
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "РћР±СЂР°С‰РµРЅРёРµ Рє СЃРµСЂРІРёСЃСѓ..."
+                indicator.text = "Обращение к сервису..."
                 responseSteps = backendClient.listSteps(projectRoot)
                 statusMessage = if (responseSteps.isEmpty()) {
-                    "РЎРѕС…СЂР°РЅС‘РЅРЅС‹Рµ С€Р°РіРё РЅРµ РЅР°Р№РґРµРЅС‹"
+                    "Сохранённые шаги не найдены"
                 } else {
-                    "РќР°Р№РґРµРЅРѕ ${responseSteps.size} С€Р°РіРѕРІ вЂў Р—Р°РіСЂСѓР¶РµРЅРѕ РёР· РёРЅРґРµРєСЃР°"
+                    "Найдено ${responseSteps.size} шагов • Загружено из индекса"
                 }
             }
 
@@ -234,9 +245,9 @@ class AiTestPluginSettingsConfigurable(
             }
 
             override fun onThrowable(error: Throwable) {
-                val message = error.message ?: "РќРµРїСЂРµРґРІРёРґРµРЅРЅР°СЏ РѕС€РёР±РєР°"
+                val message = error.message ?: "Непредвиденная ошибка"
                 statusLabel.icon = AllIcons.General.Warning
-                statusLabel.text = "РќРµ СѓРґР°Р»РѕСЃСЊ Р·Р°РіСЂСѓР·РёС‚СЊ РёРЅРґРµРєСЃ: $message"
+                statusLabel.text = "Не удалось загрузить индекс: $message"
                 notify(message, NotificationType.WARNING)
             }
         })
@@ -254,7 +265,7 @@ class AiTestPluginSettingsConfigurable(
             anchor = GridBagConstraints.NORTHWEST
         }
 
-        panel.add(JLabel("РљРѕСЂРµРЅСЊ РїСЂРѕРµРєС‚Р°"), gbc)
+        panel.add(JLabel("Корень проекта"), gbc)
         gbc.gridx++
         gbc.weightx = 1.0
         panel.add(projectRootField, gbc)
@@ -266,7 +277,7 @@ class AiTestPluginSettingsConfigurable(
         gbc.gridx = 0
         gbc.gridy++
         gbc.gridwidth = 3
-        val hint = JLabel("РЈРєР°Р¶РёС‚Рµ РїСѓС‚СЊ, РєРѕС‚РѕСЂС‹Р№ Р±СѓРґРµС‚ РїРµСЂРµРґР°РЅ СЃРµСЂРІРёСЃСѓ СЃРєР°РЅРёСЂРѕРІР°РЅРёСЏ.").apply {
+        val hint = JLabel("Укажите путь, который будет передан сервису сканирования.").apply {
             font = font.deriveFont(Font.PLAIN, font.size2D - 1)
             foreground = JBColor.GRAY
         }
@@ -342,7 +353,7 @@ class AiTestPluginSettingsConfigurable(
         gbc.gridx = 0
         gbc.gridy++
         gbc.weightx = 0.0
-        panel.add(JLabel("Jira project:"), gbc)
+        panel.add(JLabel("Проект Jira:"), gbc)
         gbc.gridx++
         gbc.weightx = 1.0
         jiraProjectsPanel.layout = BoxLayout(jiraProjectsPanel, BoxLayout.Y_AXIS)
@@ -361,6 +372,51 @@ class AiTestPluginSettingsConfigurable(
         return panel
     }
 
+    private fun buildMemoryControls(): JPanel = JPanel(GridBagLayout()).apply {
+        background = JBColor.PanelBackground
+        val gbc = GridBagConstraints().apply {
+            gridx = 0
+            gridy = 0
+            weightx = 1.0
+            fill = GridBagConstraints.HORIZONTAL
+            anchor = GridBagConstraints.NORTHWEST
+            insets = JBUI.insetsBottom(6)
+        }
+
+        add(
+            JLabel("Управление правилами и шаблонами памяти проекта.").apply {
+                font = font.deriveFont(Font.PLAIN, font.size2D - 1)
+                foreground = JBColor.GRAY
+            },
+            gbc
+        )
+
+        gbc.gridy++
+        gbc.weightx = 0.0
+        add(memoryButton, gbc)
+    }
+
+    private fun resolveMemoryProjectRoot(): String {
+        return resolveMemoryProjectRootValue(
+            preferredRoot = projectRootField.text.trim(),
+            scanProjectRoot = settingsService.settings.scanProjectRoot,
+            projectBasePath = project.basePath
+        )
+    }
+
+    private fun openMemoryManager() {
+        val projectRoot = resolveMemoryProjectRoot()
+        if (projectRoot.isBlank()) {
+            Messages.showWarningDialog(
+                project,
+                "Не удалось определить корень проекта. Укажите путь в разделе сканирования.",
+                "Память"
+            )
+            return
+        }
+        MemoryManagerDialog(project, backendClient, projectRoot).show()
+    }
+
     private fun updateZephyrAuthUi() {
         val tokenSelected = zephyrTokenRadio.isSelected
         setZephyrFieldState(zephyrTokenLabel, zephyrTokenField, tokenSelected)
@@ -373,13 +429,13 @@ class AiTestPluginSettingsConfigurable(
     private fun promptAddJiraProject() {
         val projectKey = Messages.showInputDialog(
             rootPanel,
-            "Р’РІРµРґРёС‚Рµ РєР»СЋС‡ Jira РїСЂРѕРµРєС‚Р°",
-            "Р”РѕР±Р°РІРёС‚СЊ Jira РїСЂРѕРµРєС‚",
+            "Введите ключ Jira проекта",
+            "Добавить Jira проект",
             Messages.getQuestionIcon()
         )?.trim().orEmpty()
         if (projectKey.isBlank()) return
         if (jiraProjects.contains(projectKey)) {
-            notify("РџСЂРѕРµРєС‚ СѓР¶Рµ РґРѕР±Р°РІР»РµРЅ", NotificationType.WARNING)
+            notify("Проект уже добавлен", NotificationType.WARNING)
             return
         }
         jiraProjects.add(projectKey)
@@ -389,7 +445,7 @@ class AiTestPluginSettingsConfigurable(
     private fun refreshJiraProjects() {
         jiraProjectsPanel.removeAll()
         if (jiraProjects.isEmpty()) {
-            jiraProjectsPanel.add(JLabel("РЎРїРёСЃРѕРє РїСЂРѕРµРєС‚РѕРІ РїСѓСЃС‚").apply {
+            jiraProjectsPanel.add(JLabel("Список проектов пуст").apply {
                 font = font.deriveFont(Font.PLAIN, font.size2D - 1)
                 foreground = JBColor.GRAY
             })
@@ -409,7 +465,7 @@ class AiTestPluginSettingsConfigurable(
         val projectField = JBTextField(projectKey).apply {
             isEditable = false
         }
-        val deleteButton = JButton("Delete").apply {
+        val deleteButton = JButton("Удалить").apply {
             addActionListener {
                 jiraProjects.remove(projectKey)
                 refreshJiraProjects()
@@ -424,12 +480,12 @@ class AiTestPluginSettingsConfigurable(
         val jiraInstanceName = zephyrJiraInstanceCombo.selectedItem?.toString().orEmpty()
         val jiraBaseUrl = jiraInstanceOptions[jiraInstanceName]
         if (jiraBaseUrl.isNullOrBlank()) {
-            notify("РќРµ РІС‹Р±СЂР°РЅ Jira РёРЅСЃС‚Р°РЅСЃ", NotificationType.WARNING)
+            notify("Не выбран Jira инстанс", NotificationType.WARNING)
             return
         }
         val projectKey = jiraProjects.firstOrNull()?.trim().orEmpty()
         if (projectKey.isBlank()) {
-            notify("Р”РѕР±Р°РІСЊС‚Рµ Jira РїСЂРѕРµРєС‚ РґР»СЏ РїСЂРѕРІРµСЂРєРё", NotificationType.WARNING)
+            notify("Добавьте Jira проект для проверки", NotificationType.WARNING)
             return
         }
         val tokenSelected = zephyrTokenRadio.isSelected
@@ -437,19 +493,19 @@ class AiTestPluginSettingsConfigurable(
         val login = zephyrLoginField.text.trim()
         val password = String(zephyrPasswordField.password).trim()
         if (tokenSelected && token.isBlank()) {
-            notify("РЈРєР°Р¶РёС‚Рµ С‚РѕРєРµРЅ Jira", NotificationType.WARNING)
+            notify("Укажите токен Jira", NotificationType.WARNING)
             return
         }
         if (!tokenSelected && (login.isBlank() || password.isBlank())) {
-            notify("РЈРєР°Р¶РёС‚Рµ Р»РѕРіРёРЅ Рё РїР°СЂРѕР»СЊ Jira", NotificationType.WARNING)
+            notify("Укажите логин и пароль Jira", NotificationType.WARNING)
             return
         }
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "РџСЂРѕРІРµСЂРєР° Jira РїСЂРѕРµРєС‚Р°", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Проверка Jira проекта", true) {
             private var statusMessage: String = ""
 
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "РџСЂРѕРІРµСЂСЏРµРј РґРѕСЃС‚СѓРїРЅРѕСЃС‚СЊ РїСЂРѕРµРєС‚Р°..."
+                indicator.text = "Проверяем доступность проекта..."
                 val settings = settingsService.settings
                 val requestUrl = "${jiraBaseUrl.trimEnd('/')}/rest/api/2/project/${projectKey.trim()}/"
                 val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
@@ -469,12 +525,12 @@ class AiTestPluginSettingsConfigurable(
                     if (responseCode !in 200..299) {
                         val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
                         val message = errorBody.takeIf { it.isNotBlank() } ?: "HTTP $responseCode"
-                        throw IllegalStateException("Jira РѕС‚РІРµС‚РёР»Р° $responseCode: $message")
+                        throw IllegalStateException("Jira ответила $responseCode: $message")
                     }
                 } finally {
                     connection.disconnect()
                 }
-                statusMessage = "РџСЂРѕРµРєС‚ $projectKey РґРѕСЃС‚СѓРїРµРЅ"
+                statusMessage = "Проект $projectKey доступен"
             }
 
             override fun onSuccess() {
@@ -482,8 +538,8 @@ class AiTestPluginSettingsConfigurable(
             }
 
             override fun onThrowable(error: Throwable) {
-                val message = error.message ?: "РќРµРїСЂРµРґРІРёРґРµРЅРЅР°СЏ РѕС€РёР±РєР°"
-                notify("РџСЂРѕРІРµСЂРєР° РЅРµ СѓРґР°Р»Р°СЃСЊ: $message", NotificationType.ERROR)
+                val message = error.message ?: "Непредвиденная ошибка"
+                notify("Проверка не удалась: $message", NotificationType.ERROR)
             }
         })
     }
@@ -501,28 +557,28 @@ class AiTestPluginSettingsConfigurable(
             .ifEmpty { project.basePath.orEmpty() }
         if (projectRoot.isBlank()) {
             statusLabel.icon = AllIcons.General.Warning
-            statusLabel.text = "РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ РЅРµ СѓРєР°Р·Р°РЅ"
-            notify("РЈРєР°Р¶РёС‚Рµ РїСѓС‚СЊ Рє РєРѕСЂРЅСЋ РїСЂРѕРµРєС‚Р°", NotificationType.WARNING)
+            statusLabel.text = "Путь к проекту не указан"
+            notify("Укажите путь к корню проекта", NotificationType.WARNING)
             return
         }
         settingsService.settings.scanProjectRoot = projectRoot
 
         statusLabel.icon = AllIcons.General.BalloonInformation
-        statusLabel.text = "РРґС‘С‚ СЃРєР°РЅРёСЂРѕРІР°РЅРёРµ РїСЂРѕРµРєС‚Р°..."
+        statusLabel.text = "Идёт сканирование проекта..."
 
-        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "РЎРєР°РЅРёСЂРѕРІР°РЅРёРµ С€Р°РіРѕРІ Cucumber", true) {
+        ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Сканирование шагов Cucumber", true) {
             private var responseSteps = emptyList<StepDefinitionDto>()
             private var responseUnmapped = emptyList<UnmappedStepDto>()
             private var statusMessage: String = ""
 
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "РћР±СЂР°С‰РµРЅРёРµ Рє СЃРµСЂРІРёСЃСѓ..."
+                indicator.text = "Обращение к сервису..."
                 val additionalRoots = StepScanRootsResolver.resolveAdditionalRoots(project, projectRoot)
                 val response = backendClient.scanSteps(projectRoot, additionalRoots)
                 responseSteps = response.sampleSteps.orEmpty()
                 responseUnmapped = response.unmappedSteps
-                val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", РЅРµРѕС‚РѕР±СЂР°Р¶С‘РЅРЅС‹С…: ${responseUnmapped.size}"
-                statusMessage = "РќР°Р№РґРµРЅРѕ ${response.stepsCount} С€Р°РіРѕРІ$unmappedMessage вЂў РћР±РЅРѕРІР»РµРЅРѕ ${response.updatedAt}"
+                val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", неотображённых: ${responseUnmapped.size}"
+                statusMessage = "Найдено ${response.stepsCount} шагов$unmappedMessage • Обновлено ${response.updatedAt}"
             }
 
             override fun onSuccess() {
@@ -532,9 +588,9 @@ class AiTestPluginSettingsConfigurable(
             }
 
             override fun onThrowable(error: Throwable) {
-                val message = error.message ?: "РќРµРїСЂРµРґРІРёРґРµРЅРЅР°СЏ РѕС€РёР±РєР°"
+                val message = error.message ?: "Непредвиденная ошибка"
                 statusLabel.icon = AllIcons.General.Error
-                statusLabel.text = "РЎРєР°РЅРёСЂРѕРІР°РЅРёРµ РЅРµ СѓРґР°Р»РѕСЃСЊ: $message"
+                statusLabel.text = "Сканирование не удалось: $message"
                 notify(message, NotificationType.ERROR)
             }
         })
@@ -561,7 +617,7 @@ class AiTestPluginSettingsConfigurable(
                     append(" [$signature]", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
                 value.summary?.takeIf { it.isNotBlank() }?.let {
-                    append(" вЂ” $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+                    append(" — $it", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
             }
         }
@@ -569,7 +625,7 @@ class AiTestPluginSettingsConfigurable(
 
     private fun notify(message: String, type: NotificationType) {
         NotificationGroupManager.getInstance()
-            .getNotificationGroup("РђРіРµРЅС‚СѓРј")
+            .getNotificationGroup("Агентум")
             .createNotification(message, type)
             .notify(project)
     }
@@ -592,6 +648,16 @@ class AiTestPluginSettingsConfigurable(
             "Sigma" to "https://jira.sberbank.ru"
         )
     }
+}
+
+internal fun resolveMemoryProjectRootValue(
+    preferredRoot: String,
+    scanProjectRoot: String?,
+    projectBasePath: String?
+): String {
+    return preferredRoot.trim()
+        .ifEmpty { scanProjectRoot.orEmpty().trim() }
+        .ifEmpty { projectBasePath.orEmpty().trim() }
 }
 
 

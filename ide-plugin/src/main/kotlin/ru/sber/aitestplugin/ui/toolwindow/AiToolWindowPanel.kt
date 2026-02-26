@@ -38,7 +38,6 @@ import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.services.HttpBackendClient
-import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -86,18 +85,18 @@ class AiToolWindowPanel(
     private val slashTemplates = listOf(
         SlashTemplateItem(
             key = "autotest",
-            title = "Generate autotest",
-            text = "РЎРіРµРЅРµСЂРёСЂСѓР№ Р°РІС‚РѕС‚РµСЃС‚ РїРѕ С‚РµСЃС‚РєРµР№СЃСѓ РЅРёР¶Рµ Рё РїРѕРєР°Р¶Рё preview feature + pipeline."
+            title = "Сгенерировать автотест",
+            text = "Сгенерируй автотест по тесткейсу ниже и покажи preview feature + pipeline."
         ),
         SlashTemplateItem(
             key = "unmapped",
-            title = "Analyze unmapped",
-            text = "РџСЂРѕР°РЅР°Р»РёР·РёСЂСѓР№ unmapped С€Р°РіРё Рё РїСЂРµРґР»РѕР¶Рё РІР°СЂРёР°РЅС‚С‹ СЃРѕРїРѕСЃС‚Р°РІР»РµРЅРёСЏ."
+            title = "Проанализировать unmapped",
+            text = "Проанализируй unmapped шаги и предложи варианты сопоставления."
         ),
         SlashTemplateItem(
             key = "save",
-            title = "Generate and save",
-            text = "РЎРіРµРЅРµСЂРёСЂСѓР№ Р°РІС‚РѕС‚РµСЃС‚ Рё РїСЂРµРґР»РѕР¶Рё СЃРѕС…СЂР°РЅРёС‚СЊ РІ targetPath=src/test/resources/features/generated.feature."
+            title = "Сгенерировать и сохранить",
+            text = "Сгенерируй автотест и предложи сохранить в targetPath=src/test/resources/features/generated.feature."
         )
     )
     private val sseIndexPattern = Regex("\"index\"\\s*:\\s*(\\d+)")
@@ -208,14 +207,6 @@ class AiToolWindowPanel(
                 JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                     isOpaque = false
                     add(headerButton("+") { ensureSessionAsync(forceNew = true) })
-                    add(headerButton("Memory") {
-                        val projectRoot = settings.scanProjectRoot?.takeIf { it.isNotBlank() } ?: project.basePath.orEmpty()
-                        if (projectRoot.isBlank()) {
-                            appendSystemLine("Project root is empty. Set it in plugin settings first.")
-                        } else {
-                            MemoryManagerDialog(project, backendClient, projectRoot).show()
-                        }
-                    })
                     add(headerButton("РСЃС‚РѕСЂРёСЏ") {
                         showHistoryScreen()
                         loadSessionsHistoryAsync()
@@ -339,7 +330,7 @@ class AiToolWindowPanel(
         inputArea.caretColor = theme.primaryText
         inputArea.border = JBUI.Borders.empty(4, 6)
         inputArea.font = inputArea.font.deriveFont(14f)
-        inputArea.putClientProperty("JTextArea.placeholderText", "Type / for templates, # for prompts or @ to add context")
+        inputArea.putClientProperty("JTextArea.placeholderText", "Введите / для шаблонов, # для промптов или @ для контекста")
         inputArea.document.addDocumentListener(object : DocumentListener {
             override fun insertUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
             override fun removeUpdate(e: DocumentEvent?) = maybeShowSlashPopup()
@@ -996,7 +987,7 @@ class AiToolWindowPanel(
         }
 
         hideSlashPopup()
-        val step = object : BaseListPopupStep<String>("Templates", matches) {
+        val step = object : BaseListPopupStep<String>("Шаблоны", matches) {
             override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
                 if (selectedValue != null) {
                     val selectedKey = selectedValue.removePrefix("/").substringBefore(" ").trim()
@@ -1079,7 +1070,7 @@ class AiToolWindowPanel(
         timelineContainer.removeAll()
         if (timelineLines.isEmpty()) {
             timelineContainer.add(
-                JBLabel("Ask anything about your project").apply {
+                JBLabel("Задайте вопрос по проекту").apply {
                     foreground = theme.secondaryText
                     border = JBUI.Borders.empty(12, 10, 8, 10)
                 }
