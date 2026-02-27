@@ -88,6 +88,24 @@ data class StepTemplateListResponseDto(
     val items: List<StepTemplateDto> = emptyList()
 )
 
+data class GenerationResolvePreviewRequestDto(
+    val projectRoot: String,
+    val text: String,
+    val jiraKey: String? = null,
+    val language: String? = null,
+    val qualityPolicy: String? = null
+)
+
+data class GenerationResolvePreviewResponseDto(
+    val projectRoot: String,
+    val qualityPolicy: String? = null,
+    val language: String? = null,
+    val targetPath: String? = null,
+    val appliedRuleIds: List<String> = emptyList(),
+    val appliedTemplateIds: List<String> = emptyList(),
+    val templateSteps: List<String> = emptyList()
+)
+
 data class DeleteMemoryItemResponseDto(
     val deleted: Boolean = false,
     val ruleId: String? = null,

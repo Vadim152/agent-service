@@ -25,6 +25,8 @@ import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
 import ru.sber.aitestplugin.model.GenerationRuleDto
 import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
 import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
+import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
+import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.StepTemplateCreateRequestDto
@@ -82,4 +84,6 @@ interface BackendClient {
     fun updateStepTemplate(templateId: String, request: StepTemplatePatchRequestDto): StepTemplateDto
 
     fun deleteStepTemplate(templateId: String, projectRoot: String): DeleteMemoryItemResponseDto
+
+    fun resolveGenerationPreview(request: GenerationResolvePreviewRequestDto): GenerationResolvePreviewResponseDto
 }

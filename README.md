@@ -340,6 +340,54 @@ curl http://127.0.0.1:8000/health
   - тот же ключ + тот же payload -> возвращается существующий `jobId`
   - тот же ключ + другой payload -> `409`
 
+## Архитектура генерации автотестов из Jira и текстовых источников
+
+Сервис поддерживает единый вход для генерации автотестов через `testCaseText`. Источник текста может быть:
+
+- сырым текстом, который пользователь вставил из Jira, Zephyr, ТЗ, Confluence или чата;
+- Jira key внутри текста запроса, например `SCBC-T1`, когда сам тесткейс нужно сначала подтянуть из Jira/Zephyr.
+
+### Поток данных
+
+```mermaid
+flowchart LR
+  U["IDE / HTTP client"] --> J["POST /jobs или /tools/compose-autotest"]
+  J --> O["Orchestrator"]
+
+  O --> R{"В тексте найден Jira key?"}
+  R -- "нет" --> T["Берем исходный testCaseText как есть"]
+  R -- "да" --> P["JiraTestcaseProvider<br/>fetch_testcase()"]
+  P --> N["jira_testcase_normalizer<br/>normalize_jira_testcase()"]
+  N --> T
+
+  T --> M["MemoryService<br/>rules + templates"]
+  M --> PARSE["TestcaseParserAgent"]
+  PARSE --> MATCH["StepMatcherAgent"]
+  MATCH --> BUILD["FeatureBuilderAgent"]
+  BUILD --> Q["quality evaluation"]
+  Q --> A{"createFile = true?"}
+  A -- "нет" --> RES["feature preview / job result"]
+  A -- "да" --> SAVE["apply_feature / Tool Host"]
+  SAVE --> RES
+```
+
+### Что делает каждый слой
+
+- `src/agents/orchestrator.py` управляет полным pipeline генерации и решает, работать ли с сырым текстом или сначала резолвить Jira testcase.
+- `src/integrations/jira_testcase_provider.py` получает testcase payload из Jira/Zephyr в режимах `stub`, `live` или `disabled`.
+- `src/integrations/jira_testcase_normalizer.py` превращает Jira JSON в плоский parser-friendly текст: сценарий, шаги, expected result, test data.
+- `src/memory/service.py` накладывает project-specific правила генерации: `qualityPolicy`, `language`, `targetPath`, template steps.
+- `src/agents/testcase_parser_agent.py` разбирает нормализованный текст в структурированный `scenario`.
+- `src/agents/step_matcher_agent.py` сопоставляет шаги сценария с проиндексированными step definitions проекта.
+- `src/agents/feature_builder_agent.py` собирает итоговый `.feature` и метаданные по unmapped/used steps.
+
+### Важная деталь по Jira flow
+
+- Если в `testCaseText` найден Jira key, backend не пытается одновременно использовать и сырой текст, и Jira payload.
+- Сначала вызывается `fetch_testcase()`, затем результат нормализуется в обычный текстовый testcase.
+- Дальше pipeline такой же, как для любого другого текстового источника. Это важно: парсер, matcher, memory rules и quality checks работают поверх единого нормализованного представления.
+- В результат прокидываются `resolved_testcase_source`, `resolved_testcase_key` и `normalization_report`, чтобы клиент понимал, откуда был взят тесткейс и как он был преобразован.
+
 ## Ключевые env переменные
 
 ### Core

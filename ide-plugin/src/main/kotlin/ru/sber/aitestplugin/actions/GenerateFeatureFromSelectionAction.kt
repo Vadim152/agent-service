@@ -26,6 +26,7 @@ import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
 import ru.sber.aitestplugin.model.JobCreateRequestDto
+import ru.sber.aitestplugin.model.JobFeatureResultDto
 import ru.sber.aitestplugin.model.QualityReportDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
@@ -68,7 +69,13 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         val backendClient = HttpBackendClient(project)
 
         val stateStorage = FeatureDialogStateStorage(AiTestPluginSettingsService.getInstance(project).settings)
-        val dialog = GenerateFeatureDialog(project, stateStorage.loadGenerateOptions())
+        val dialog = GenerateFeatureDialog(
+            project = project,
+            defaults = stateStorage.loadGenerateOptions(),
+            backendClient = backendClient,
+            projectRoot = projectRoot,
+            testCaseText = selectedText
+        )
         if (!dialog.showAndGet()) {
             return
         }
@@ -94,6 +101,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             private var unmappedSteps: List<UnmappedStepDto> = emptyList()
             private var fileStatus: Map<String, Any?>? = null
             private var quality: QualityReportDto? = null
+            private var featureResult: JobFeatureResultDto? = null
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Creating job..."
@@ -104,7 +112,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                         targetPath = dialogOptions.targetPath,
                         profile = "quick",
                         createFile = options.createFile,
-                        overwriteExisting = options.overwriteExisting
+                        overwriteExisting = options.overwriteExisting,
+                        language = dialogOptions.language
                     )
                 )
 
@@ -117,6 +126,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                 indicator.text = "Fetching result..."
                 val result = backendClient.getJobResult(job.jobId)
                 val feature = result.feature ?: throw IllegalStateException("Job completed without feature result")
+                featureResult = feature
                 featureText = feature.featureText
                 if (featureText.isBlank()) {
                     throw IllegalStateException("Generated feature is empty")
@@ -143,7 +153,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                 }
                 notify(
                     project,
-                    buildNotificationMessage(unmappedSteps, fileStatus, quality),
+                    buildNotificationMessage(unmappedSteps, fileStatus, quality, result = featureResult),
                     notificationType
                 )
             }
@@ -233,7 +243,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
     private fun buildNotificationMessage(
         unmappedSteps: List<UnmappedStepDto>,
         fileStatus: Map<String, Any?>?,
-        quality: QualityReportDto?
+        quality: QualityReportDto?,
+        result: JobFeatureResultDto?
     ): String {
         val base = "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}"
         val status = fileStatus?.get("status")?.toString()
@@ -242,8 +253,9 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             return "Feature generated, but saving outside current project is blocked: $target"
         }
         val qualitySuffix = quality?.let { " (quality: ${it.score}, gate=${if (it.passed) "pass" else "fail"})" } ?: ""
+        val memorySuffix = result?.let(::buildMemorySummaryFromPipeline)?.let { " ($it)" } ?: ""
         val filePart = if (status.isNullOrBlank()) base else "$base (file: $status)"
-        return "$filePart$qualitySuffix"
+        return "$filePart$qualitySuffix$memorySuffix"
     }
 
     private fun updateToolWindowUnmapped(project: Project, unmappedSteps: List<UnmappedStepDto>) {
@@ -253,6 +265,22 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             ?.firstOrNull()
         panel?.showUnmappedSteps(unmappedSteps)
     }
+}
+
+internal fun buildMemorySummaryFromPipeline(result: JobFeatureResultDto): String? {
+    val stage = result.pipeline.firstOrNull { it["stage"]?.toString() == "memory_rules" } ?: return null
+    val details = stage["details"] as? Map<*, *> ?: return null
+    val appliedRules = (details["appliedRuleIds"] as? List<*>)?.size ?: 0
+    val appliedTemplates = (details["appliedTemplateIds"] as? List<*>)?.size ?: 0
+    val templateStepsAdded = when (val value = details["templateStepsAdded"]) {
+        is Number -> value.toInt()
+        is String -> value.toIntOrNull() ?: 0
+        else -> 0
+    }
+    if (appliedRules == 0 && appliedTemplates == 0 && templateStepsAdded == 0) {
+        return null
+    }
+    return "memory: rules=$appliedRules, templates=$appliedTemplates, injectedSteps=$templateStepsAdded"
 }
 
 

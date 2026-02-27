@@ -39,6 +39,8 @@ import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
 import ru.sber.aitestplugin.model.GenerationRuleDto
 import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
 import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
+import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
+import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
@@ -236,6 +238,10 @@ class HttpBackendClient(
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
         return delete("/memory/templates/$templateId?projectRoot=$encodedProjectRoot")
     }
+
+    override fun resolveGenerationPreview(
+        request: GenerationResolvePreviewRequestDto
+    ): GenerationResolvePreviewResponseDto = post("/memory/resolve-preview", request)
 
     private inline fun <reified T : Any> post(
         path: String,
