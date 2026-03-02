@@ -101,6 +101,30 @@ tasks {
     }
     test {
         useJUnitPlatform()
+        val sandboxRoot = layout.buildDirectory.dir("test-sandbox").get().asFile
+        val configRoot = sandboxRoot.resolve("config")
+        val systemRoot = sandboxRoot.resolve("system")
+        val pluginsRoot = sandboxRoot.resolve("plugins")
+        val logRoot = sandboxRoot.resolve("log")
+        val tmpRoot = sandboxRoot.resolve("tmp")
+
+        doFirst {
+            listOf(
+                configRoot,
+                systemRoot,
+                pluginsRoot,
+                logRoot,
+                tmpRoot,
+            ).forEach { it.mkdirs() }
+        }
+
+        // Keep IntelliJ test runs inside a local sandbox rather than the user's
+        // default IDEA config/system directories.
+        systemProperty("idea.config.path", configRoot.absolutePath)
+        systemProperty("idea.system.path", systemRoot.absolutePath)
+        systemProperty("idea.plugins.path", pluginsRoot.absolutePath)
+        systemProperty("idea.log.path", logRoot.absolutePath)
+        systemProperty("java.io.tmpdir", tmpRoot.absolutePath)
     }
     named("check") {
         dependsOn(checkEncodingHealth)

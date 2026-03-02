@@ -23,6 +23,7 @@ async def _run_worker() -> None:
     queue = create_job_queue(
         backend=settings.queue_backend,
         redis_url=settings.redis_url,
+        rabbitmq_url=settings.rabbitmq_url,
         queue_name=settings.queue_name,
     )
     orchestrator = create_orchestrator(settings)
@@ -37,8 +38,14 @@ async def _run_worker() -> None:
         queue=queue,
         supervisor=supervisor,
         run_state_store=run_state_store,
+        concurrency=settings.worker_concurrency,
     )
-    logger.info("[Worker] Started (queue_backend=%s, queue_name=%s)", settings.queue_backend, settings.queue_name)
+    logger.info(
+        "[Worker] Started (queue_backend=%s, queue_name=%s, concurrency=%s)",
+        settings.queue_backend,
+        settings.queue_name,
+        settings.worker_concurrency,
+    )
     await worker.run_forever()
 
 
@@ -48,4 +55,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

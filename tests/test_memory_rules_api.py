@@ -22,7 +22,7 @@ def test_rules_crud_and_preview(tmp_path) -> None:
     client = TestClient(app)
 
     created_template = client.post(
-        "/memory/templates",
+        "/platform/memory/templates",
         json={
             "projectRoot": "/tmp/project",
             "name": "auth template",
@@ -34,7 +34,7 @@ def test_rules_crud_and_preview(tmp_path) -> None:
     template_id = created_template.json()["id"]
 
     created_rule = client.post(
-        "/memory/rules",
+        "/platform/memory/rules",
         json={
             "projectRoot": "/tmp/project",
             "name": "auth rule",
@@ -45,12 +45,12 @@ def test_rules_crud_and_preview(tmp_path) -> None:
     assert created_rule.status_code == 200
     rule_id = created_rule.json()["id"]
 
-    listed = client.get("/memory/rules", params={"projectRoot": "/tmp/project"})
+    listed = client.get("/platform/memory/rules", params={"projectRoot": "/tmp/project"})
     assert listed.status_code == 200
     assert any(item["id"] == rule_id for item in listed.json()["items"])
 
     preview = client.post(
-        "/memory/resolve-preview",
+        "/platform/memory/resolve-preview",
         json={
             "projectRoot": "/tmp/project",
             "text": "need authorize in system",
@@ -69,7 +69,7 @@ def test_templates_delete(tmp_path) -> None:
     app = _build_app(tmp_path)
     client = TestClient(app)
     created = client.post(
-        "/memory/templates",
+        "/platform/memory/templates",
         json={
             "projectRoot": "/tmp/project",
             "name": "draft",
@@ -78,10 +78,10 @@ def test_templates_delete(tmp_path) -> None:
     )
     template_id = created.json()["id"]
 
-    deleted = client.delete(f"/memory/templates/{template_id}", params={"projectRoot": "/tmp/project"})
+    deleted = client.delete(f"/platform/memory/templates/{template_id}", params={"projectRoot": "/tmp/project"})
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True
 
-    listed = client.get("/memory/templates", params={"projectRoot": "/tmp/project"})
+    listed = client.get("/platform/memory/templates", params={"projectRoot": "/tmp/project"})
     assert listed.status_code == 200
     assert listed.json()["items"] == []

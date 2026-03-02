@@ -100,3 +100,28 @@ def test_remote_tool_host_requires_url() -> None:
 def test_queue_backend_validation() -> None:
     with pytest.raises(ValueError, match="queue_backend"):
         Settings(_env_file=None, queue_backend="bad")
+
+
+def test_rabbitmq_queue_backend_requires_url() -> None:
+    with pytest.raises(ValueError, match="rabbitmq_url"):
+        Settings(
+            _env_file=None,
+            execution_backend="queue",
+            queue_backend="rabbitmq",
+            rabbitmq_url="",
+        )
+
+
+def test_worker_concurrency_validation() -> None:
+    with pytest.raises(ValueError, match="worker_concurrency"):
+        Settings(_env_file=None, worker_concurrency=0)
+
+
+def test_artifact_storage_backend_validation() -> None:
+    with pytest.raises(ValueError, match="artifact_storage_backend"):
+        Settings(_env_file=None, artifact_storage_backend="bad")
+
+
+def test_s3_artifact_storage_requires_bucket() -> None:
+    with pytest.raises(ValueError, match="artifact_s3_bucket"):
+        Settings(_env_file=None, artifact_storage_backend="s3", artifact_s3_bucket=None)

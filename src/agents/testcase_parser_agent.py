@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 class TestcaseParserAgent:
     """Parse free-form testcase text into a serializable scenario payload."""
 
+    __test__ = False
+
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm_client = llm_client
         self.parser = TestCaseParser()

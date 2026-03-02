@@ -18,6 +18,7 @@ from chat.memory_store import ChatMemoryStore
 from chat.state_store import ChatStateStore
 from chat.tool_registry import ChatToolRegistry, ToolDescriptor
 from infrastructure.runtime_errors import ChatRuntimeError
+from intent import ChatIntentParser, SessionIntent
 
 _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-[A-Z]*\d+$")
 
@@ -116,26 +117,21 @@ class GraphChatEngine:
         return self._graph.invoke({"content": content, "context": context})
 
 
-class _AutotestIntent(TypedDict):
-    enabled: bool
-    target_path: str | None
-    overwrite_existing: bool
-    language: str | None
-
-
 class ChatAgentRuntime:
     def __init__(
         self,
         *,
         memory_store: ChatMemoryStore,
+        state_store: Any | None = None,
         llm_client: Any | None = None,
         context_window: int = 200_000,
         orchestrator: Any | None = None,
         run_state_store: Any | None = None,
         execution_supervisor: Any | None = None,
         tool_host_client: Any | None = None,
+        policy_service: Any | None = None,
     ) -> None:
-        self.state_store = ChatStateStore(memory_store)
+        self.state_store = state_store or ChatStateStore(memory_store)
         self.memory_store = memory_store
         llm_generate = getattr(llm_client, "generate", None)
         self._engine = GraphChatEngine(llm_generate if callable(llm_generate) else None)
@@ -144,10 +140,44 @@ class ChatAgentRuntime:
         self._run_state_store = run_state_store
         self._execution_supervisor = execution_supervisor
         self._tool_host_client = tool_host_client
+        self._policy_service = policy_service
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_guard = RLock()
+        self._intent_parser = ChatIntentParser()
         self._tool_registry = ChatToolRegistry()
         self._register_tools()
+
+    def bind_policy_service(self, policy_service: Any) -> None:
+        self._policy_service = policy_service
+
+    def describe_registered_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": descriptor.name,
+                "description": descriptor.description,
+                "riskLevel": descriptor.risk_level,
+                "requiresConfirmation": descriptor.requires_confirmation,
+                "idempotent": descriptor.idempotent,
+            }
+            for descriptor in self._tool_registry.list()
+        ]
+
+    def _record_policy_audit(
+        self,
+        *,
+        session_id: str,
+        event_type: str,
+        payload: dict[str, Any],
+        created_at: str | None = None,
+    ) -> None:
+        if self._policy_service is None:
+            return
+        self._policy_service.append_audit_event(
+            session_id=session_id,
+            event_type=event_type,
+            payload=payload,
+            created_at=created_at,
+        )
 
     def _register_tools(self) -> None:
         self._tool_registry.register(
@@ -195,6 +225,7 @@ class ChatAgentRuntime:
         target_path: str,
         feature_text: str,
         overwrite_existing: bool = False,
+        approval_id: str | None = None,
     ) -> dict[str, Any]:
         if self._tool_host_client is not None:
             try:
@@ -203,6 +234,7 @@ class ChatAgentRuntime:
                     target_path=target_path,
                     feature_text=feature_text,
                     overwrite_existing=bool(overwrite_existing),
+                    approval_id=approval_id,
                 )
             except Exception as exc:
                 raise ChatRuntimeError(f"Tool host request failed: {exc}", status_code=503) from exc
@@ -289,6 +321,9 @@ class ChatAgentRuntime:
             "language": self._extract_language(content),
         }
 
+    def parse_intent(self, content: str) -> SessionIntent:
+        return self._intent_parser.parse(content)
+
     @staticmethod
     def _default_target_path(feature_payload: dict[str, Any] | None = None) -> str:
         fallback = "src/test/resources/features/generated.feature"
@@ -315,17 +350,22 @@ class ChatAgentRuntime:
         run_id: str,
         project_root: str,
         content: str,
-        intent: _AutotestIntent,
+        intent: SessionIntent,
         session: dict[str, Any],
     ) -> tuple[dict[str, Any] | None, str | None]:
         if not self._run_state_store or not self._execution_supervisor:
-            raise ChatRuntimeError("Генерация автотеста недоступна: job control plane не настроен", status_code=503)
+            raise ChatRuntimeError("Генерация автотеста недоступна: run control plane не настроен", status_code=503)
 
-        job_id = str(uuid.uuid4())
+        autotest_run_id = str(uuid.uuid4())
         self.state_store.append_event(
             session_id,
             "autotest.intent_detected",
             {"sessionId": session_id, "runId": run_id},
+        )
+        self._record_policy_audit(
+            session_id=session_id,
+            event_type="autotest.intent_detected",
+            payload={"sessionId": session_id, "runId": run_id},
         )
         self.state_store.update_session(
             session_id,
@@ -335,22 +375,25 @@ class ChatAgentRuntime:
 
         self._run_state_store.put_job(
             {
-                "job_id": job_id,
+                "run_id": autotest_run_id,
                 "status": "queued",
+                "plugin": "testgen",
                 "cancel_requested": False,
                 "cancel_requested_at": None,
                 "project_root": project_root,
                 "test_case_text": content,
-                "target_path": intent.get("target_path"),
+                "target_path": intent.target_path,
                 "create_file": False,
-                "overwrite_existing": False,
-                "language": intent.get("language"),
+                "overwrite_existing": bool(intent.overwrite_existing),
+                "language": intent.language,
                 "quality_policy": None,
                 "quality_policy_explicit": False,
                 "zephyr_auth": session.get("zephyr_auth"),
                 "jira_instance": session.get("jira_instance"),
                 "profile": "quick",
                 "source": "chat-runtime",
+                "session_id": session_id,
+                "input": intent.normalized_input,
                 "started_at": _utcnow(),
                 "updated_at": _utcnow(),
                 "attempts": [],
@@ -358,31 +401,41 @@ class ChatAgentRuntime:
             }
         )
         self._run_state_store.append_event(
-            job_id,
-            "job.queued",
-            {"jobId": job_id, "source": "chat-runtime"},
+            autotest_run_id,
+            "run.queued",
+            {"runId": autotest_run_id, "source": "chat-runtime"},
         )
         self.state_store.append_event(
             session_id,
-            "autotest.job_created",
-            {"sessionId": session_id, "runId": run_id, "jobId": job_id},
+            "autotest.run_created",
+            {"sessionId": session_id, "runId": run_id, "autotestRunId": autotest_run_id},
+        )
+        self._record_policy_audit(
+            session_id=session_id,
+            event_type="autotest.run_created",
+            payload={"sessionId": session_id, "runId": run_id, "autotestRunId": autotest_run_id},
         )
         self.state_store.update_session(
             session_id,
             activity="busy",
-            current_action=f"Выполнение задачи автотеста {job_id[:8]}",
+            current_action=f"Выполнение задачи автотеста {autotest_run_id[:8]}",
         )
 
-        await self._execution_supervisor.execute_job(job_id)
-        job = self._run_state_store.get_job(job_id) or {}
-        status = str(job.get("status", "failed"))
+        await self._execution_supervisor.execute_run(autotest_run_id)
+        run_record = self._run_state_store.get_job(autotest_run_id) or {}
+        status = str(run_record.get("status", "failed"))
         self.state_store.append_event(
             session_id,
-            "autotest.job_progress",
-            {"sessionId": session_id, "runId": run_id, "jobId": job_id, "status": status},
+            "autotest.run_progress",
+            {"sessionId": session_id, "runId": run_id, "autotestRunId": autotest_run_id, "status": status},
         )
-        feature_payload = job.get("result")
-        incident_uri = job.get("incident_uri")
+        self._record_policy_audit(
+            session_id=session_id,
+            event_type="autotest.run_progress",
+            payload={"sessionId": session_id, "runId": run_id, "autotestRunId": autotest_run_id, "status": status},
+        )
+        feature_payload = run_record.get("result")
+        incident_uri = run_record.get("incident_uri")
         return feature_payload, incident_uri
 
     @staticmethod
@@ -533,7 +586,7 @@ class ChatAgentRuntime:
         lock = self._session_lock(session_id)
         async with lock:
             session = self._require_session(session_id)
-            intent = self._detect_autotest_intent(content)
+            intent = self.parse_intent(content)
             self.state_store.update_session(
                 session_id,
                 activity="busy",
@@ -556,7 +609,8 @@ class ChatAgentRuntime:
             assistant_text = ""
             output_text_for_tokens = ""
             can_run_autotest = (
-                bool(intent.get("enabled"))
+                intent.should_start_run()
+                and intent.plugin == "testgen"
                 and self._run_state_store is not None
                 and self._execution_supervisor is not None
             )
@@ -577,7 +631,7 @@ class ChatAgentRuntime:
 
                 if feature_payload:
                     assistant_text = self._format_autotest_preview(feature_payload)
-                    target_path = intent.get("target_path") or self._default_target_path(feature_payload)
+                    target_path = intent.target_path or self._default_target_path(feature_payload)
                     pending_tool = {
                         "toolName": "save_generated_feature",
                         "title": "Сохранить сгенерированный feature-файл",
@@ -586,7 +640,7 @@ class ChatAgentRuntime:
                             "project_root": str(session.get("project_root", "")),
                             "target_path": target_path,
                             "feature_text": str(feature_payload.get("featureText", "")),
-                            "overwrite_existing": bool(intent.get("overwrite_existing", False)),
+                            "overwrite_existing": bool(intent.overwrite_existing),
                         },
                         "risk": "high",
                     }
@@ -598,6 +652,11 @@ class ChatAgentRuntime:
                         session_id,
                         "autotest.result_ready",
                         {"sessionId": session_id, "runId": run_id},
+                    )
+                    self._record_policy_audit(
+                        session_id=session_id,
+                        event_type="autotest.result_ready",
+                        payload={"sessionId": session_id, "runId": run_id},
                     )
                 else:
                     incident_suffix = f" Инцидент: {incident_uri}" if incident_uri else ""
@@ -624,6 +683,10 @@ class ChatAgentRuntime:
                     kind=str(pending_tool.get("kind", "tool")),
                     message_id=message_id,
                 )
+                stored_pending = self.state_store.get_pending_tool_call(session_id, tool_call_id)
+                if stored_pending and self._policy_service is not None:
+                    stored_pending["session_id"] = session_id
+                    self._policy_service.record_approval_requested(stored_pending)
                 self.state_store.append_message(
                     session_id,
                     role="assistant",
@@ -724,7 +787,10 @@ class ChatAgentRuntime:
                 descriptor = self._tool_registry.get(tool_name)
             except KeyError as exc:
                 raise ChatRuntimeError(f"Инструмент не зарегистрирован: {tool_name}", status_code=422) from exc
-            result = descriptor.handler(**pending.get("args", {}))
+            tool_args = dict(pending.get("args", {}))
+            if tool_name == "save_generated_feature":
+                tool_args["approval_id"] = permission_id
+            result = descriptor.handler(**tool_args)
             self.state_store.pop_pending_tool_call(session_id, permission_id)
             self.state_store.append_event(
                 session_id,
@@ -812,6 +878,89 @@ class ChatAgentRuntime:
             "updatedAt": session.get("updated_at", _utcnow()),
         }
 
+    async def list_pending_approvals(self) -> list[dict[str, Any]]:
+        items = self.state_store.list_pending_tool_calls()
+        return [
+            {
+                "approvalId": item["tool_call_id"],
+                "sessionId": item["session_id"],
+                "toolName": item["tool_name"],
+                "title": item.get("title", item["tool_name"]),
+                "kind": item.get("kind", "tool"),
+                "riskLevel": item.get("risk_level", "read"),
+                "requiresConfirmation": bool(item.get("requires_confirmation", True)),
+                "metadata": item.get("args", {}),
+                "createdAt": item["created_at"],
+            }
+            for item in items
+        ]
+
+    async def get_pending_approval(self, approval_id: str) -> dict[str, Any] | None:
+        item = self.state_store.find_pending_tool_call(approval_id)
+        if not item:
+            return None
+        return {
+            "approvalId": item["tool_call_id"],
+            "sessionId": item["session_id"],
+            "toolName": item["tool_name"],
+            "title": item.get("title", item["tool_name"]),
+            "kind": item.get("kind", "tool"),
+            "riskLevel": item.get("risk_level", "read"),
+            "requiresConfirmation": bool(item.get("requires_confirmation", True)),
+            "metadata": item.get("args", {}),
+            "createdAt": item["created_at"],
+        }
+
+    async def process_policy_decision(self, *, approval_id: str, decision: str) -> dict[str, Any]:
+        item = self.state_store.find_pending_tool_call(approval_id)
+        if not item:
+            raise ChatRuntimeError(f"Permission not found: {approval_id}", status_code=404)
+        mapped_decision = "approve_once" if decision == "approve" else "reject"
+        synthetic_run_id = str(uuid.uuid4())
+        await self.process_tool_decision(
+            session_id=str(item["session_id"]),
+            run_id=synthetic_run_id,
+            permission_id=approval_id,
+            decision=mapped_decision,
+        )
+        return {
+            "approvalId": approval_id,
+            "sessionId": item["session_id"],
+            "runId": synthetic_run_id,
+            "decision": decision,
+            "accepted": True,
+        }
+
+    async def list_registered_tools(self) -> list[dict[str, Any]]:
+        return self.describe_registered_tools()
+
+    async def list_policy_audit(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if self._policy_service is not None:
+            return await self._policy_service.list_audit_events(limit=max(limit, 1))
+        rows = self.state_store.list_all_sessions(limit=max(limit, 1))
+        events: list[dict[str, Any]] = []
+        for session in rows:
+            session_id = str(session.get("session_id", ""))
+            for event in session.get("events", []):
+                event_type = str(event.get("event_type", ""))
+                if not (
+                    event_type.startswith("permission.")
+                    or event_type.startswith("autotest.")
+                    or event_type == "command.executed"
+                ):
+                    continue
+                events.append(
+                    {
+                        "sessionId": session_id,
+                        "eventType": event_type,
+                        "payload": event.get("payload", {}),
+                        "createdAt": event.get("created_at", _utcnow()),
+                        "index": int(event.get("index", 0)),
+                    }
+                )
+        events.sort(key=lambda item: str(item.get("createdAt", "")), reverse=True)
+        return events[: max(1, min(limit, 500))]
+
     async def execute_command(self, *, session_id: str, command: str) -> dict[str, Any]:
         session = self._require_session(session_id)
         if command == "abort":
@@ -835,6 +984,11 @@ class ChatAgentRuntime:
             session_id,
             "command.executed",
             {"sessionId": session_id, "command": command},
+        )
+        self._record_policy_audit(
+            session_id=session_id,
+            event_type="command.executed",
+            payload={"sessionId": session_id, "command": command},
         )
         updated = self._require_session(session_id)
         return {

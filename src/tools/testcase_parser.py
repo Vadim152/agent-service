@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 class TestCaseParser:
     """Parses raw testcase text into Scenario and TestStep objects."""
 
+    __test__ = False
+
     STEP_PATTERNS = (
         re.compile(r"^\s*\d+[.)]\s*(?P<text>.+)$"),
         re.compile(r"^\s*(Шаг|Step)\s*\d*[:\.-]?\s*(?P<text>.+)$", re.IGNORECASE),

@@ -29,11 +29,6 @@ import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
-import ru.sber.aitestplugin.model.JobCreateRequestDto
-import ru.sber.aitestplugin.model.JobCreateResponseDto
-import ru.sber.aitestplugin.model.JobEventResponseDto
-import ru.sber.aitestplugin.model.JobResultResponseDto
-import ru.sber.aitestplugin.model.JobStatusResponseDto
 import ru.sber.aitestplugin.model.DeleteMemoryItemResponseDto
 import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
 import ru.sber.aitestplugin.model.GenerationRuleDto
@@ -48,6 +43,11 @@ import ru.sber.aitestplugin.model.StepTemplateCreateRequestDto
 import ru.sber.aitestplugin.model.StepTemplateDto
 import ru.sber.aitestplugin.model.StepTemplateListResponseDto
 import ru.sber.aitestplugin.model.StepTemplatePatchRequestDto
+import ru.sber.aitestplugin.model.RunCreateRequestDto
+import ru.sber.aitestplugin.model.RunCreateResponseDto
+import ru.sber.aitestplugin.model.RunEventResponseDto
+import ru.sber.aitestplugin.model.RunResultResponseDto
+import ru.sber.aitestplugin.model.RunStatusResponseDto
 import java.net.URI
 import java.net.URLEncoder
 import com.fasterxml.jackson.databind.JsonNode
@@ -72,8 +72,8 @@ class HttpBackendClient(
         AiTestPluginSettingsService.getInstance(resolvedProject).settings
     }
 ) : BackendClient {
-    private val terminalJobStatuses = setOf("succeeded", "failed", "needs_attention", "cancelled")
-    private val terminalJobEvents = setOf("job.finished", "job.cancelled", "job.worker_failed")
+    private val terminalRunStatuses = setOf("succeeded", "failed", "needs_attention", "cancelled")
+    private val terminalRunEvents = setOf("run.finished", "run.cancelled", "run.worker_failed")
 
     private val logger = Logger.getInstance(HttpBackendClient::class.java)
 
@@ -86,12 +86,12 @@ class HttpBackendClient(
     override fun scanSteps(projectRoot: String, additionalRoots: List<String>): ScanStepsResponseDto {
         val request = ScanStepsRequestDto(projectRoot = projectRoot, additionalRoots = additionalRoots)
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return post("/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
+        return post("/platform/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
     }
 
     override fun listSteps(projectRoot: String): List<StepDefinitionDto> {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return get("/steps/?projectRoot=$encodedProjectRoot")
+        return get("/platform/steps/?projectRoot=$encodedProjectRoot")
     }
 
     override fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto {
@@ -112,31 +112,21 @@ class HttpBackendClient(
         }
 
         return post(
-            "/feature/generate-feature",
+            "/platform/feature/generate-feature",
             sanitizedRequest,
             timeoutMs = settings.generateFeatureTimeoutMs,
             headers = settings.toZephyrAuthHeaders()
         )
     }
 
-    override fun createJob(request: JobCreateRequestDto): JobCreateResponseDto =
-        createJob(request, idempotencyKey = UUID.randomUUID().toString())
+    override fun createRun(request: RunCreateRequestDto): RunCreateResponseDto =
+        createRun(request, idempotencyKey = UUID.randomUUID().toString())
 
-    fun createJob(request: JobCreateRequestDto, idempotencyKey: String?): JobCreateResponseDto =
+    fun createRun(request: RunCreateRequestDto, idempotencyKey: String?): RunCreateResponseDto =
         run {
-            val settings = settingsProvider()
-            val sanitizedRequest = request.copy(
-                projectRoot = request.projectRoot.trim(),
-                testCaseText = request.testCaseText.trim(),
-                zephyrAuth = request.zephyrAuth ?: settings.toZephyrAuthDto(),
-                jiraInstance = request.jiraInstance ?: settings.toJiraInstanceUrl()
-            )
-
+            val sanitizedRequest = request.copy(projectRoot = request.projectRoot.trim())
             if (sanitizedRequest.projectRoot.isBlank()) {
                 throw BackendException("Project root must not be empty")
-            }
-            if (sanitizedRequest.testCaseText.isBlank()) {
-                throw BackendException("Test case text must not be empty")
             }
 
             val headers = if (idempotencyKey.isNullOrBlank()) {
@@ -144,17 +134,17 @@ class HttpBackendClient(
             } else {
                 mapOf("Idempotency-Key" to idempotencyKey.trim())
             }
-            post("/jobs", sanitizedRequest, headers = headers)
+            post("/runs", sanitizedRequest, headers = headers)
         }
 
-    override fun getJob(jobId: String): JobStatusResponseDto =
-        get("/jobs/$jobId")
+    override fun getRun(runId: String): RunStatusResponseDto =
+        get("/runs/$runId")
 
-    override fun getJobResult(jobId: String): JobResultResponseDto =
-        get("/jobs/$jobId/result")
+    override fun getRunResult(runId: String): RunResultResponseDto =
+        get("/runs/$runId/result")
 
-    fun awaitTerminalJobStatus(jobId: String, timeoutMs: Int = 60_000): JobStatusResponseDto {
-        val sseStatus = tryAwaitTerminalStatusViaEvents(jobId, timeoutMs)
+    fun awaitTerminalRunStatus(runId: String, timeoutMs: Int = 60_000): RunStatusResponseDto {
+        val sseStatus = tryAwaitTerminalStatusViaEvents(runId, timeoutMs)
         if (sseStatus != null) {
             return sseStatus
         }
@@ -162,86 +152,89 @@ class HttpBackendClient(
         val pollIntervalMs = 500L
         val attempts = (timeoutMs / pollIntervalMs.toInt()).coerceAtLeast(1)
         repeat(attempts) {
-            val status = getJob(jobId)
-            if (status.status in terminalJobStatuses) {
+            val status = getRun(runId)
+            if (status.status in terminalRunStatuses) {
                 return status
             }
             Thread.sleep(pollIntervalMs)
         }
-        return getJob(jobId)
+        return getRun(runId)
     }
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
-        post("/feature/apply-feature", request)
+        post("/platform/feature/apply-feature", request)
 
     override fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto =
-        post("/chat/sessions", request)
+        post("/sessions", request)
 
     override fun listChatSessions(projectRoot: String, limit: Int): ChatSessionsListResponseDto {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
         val boundedLimit = limit.coerceIn(1, 200)
-        return get("/chat/sessions?projectRoot=$encodedProjectRoot&limit=$boundedLimit")
+        return get("/sessions?projectRoot=$encodedProjectRoot&limit=$boundedLimit")
     }
 
     override fun sendChatMessage(sessionId: String, request: ChatMessageRequestDto): ChatMessageAcceptedResponseDto {
         val settings = settingsProvider()
-        return post("/chat/sessions/$sessionId/messages", request, timeoutMs = settings.chatSendTimeoutMs)
+        return post("/sessions/$sessionId/messages", request, timeoutMs = settings.chatSendTimeoutMs)
     }
 
     override fun getChatHistory(sessionId: String): ChatHistoryResponseDto =
-        get("/chat/sessions/$sessionId/history")
+        get("/sessions/$sessionId/history")
 
     override fun getChatStatus(sessionId: String): ChatSessionStatusResponseDto =
-        get("/chat/sessions/$sessionId/status")
+        get("/sessions/$sessionId/status")
 
     override fun getChatDiff(sessionId: String): ChatSessionDiffResponseDto =
-        get("/chat/sessions/$sessionId/diff")
+        get("/sessions/$sessionId/diff")
 
     override fun executeChatCommand(
         sessionId: String,
         request: ChatCommandRequestDto
-    ): ChatCommandResponseDto = post("/chat/sessions/$sessionId/commands", request)
+    ): ChatCommandResponseDto = post("/sessions/$sessionId/commands", request)
 
     override fun submitChatToolDecision(
         sessionId: String,
         request: ChatToolDecisionRequestDto
-    ): ChatToolDecisionResponseDto = post("/chat/sessions/$sessionId/tool-decisions", request)
+    ): ChatToolDecisionResponseDto = post(
+        "/policy/approvals/${request.permissionId}/decision",
+        mapOf("decision" to if (request.decision.lowercase() == "reject") "deny" else "approve")
+    )
 
     override fun listGenerationRules(projectRoot: String): GenerationRuleListResponseDto {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return get("/memory/rules?projectRoot=$encodedProjectRoot")
+        return get("/platform/memory/rules?projectRoot=$encodedProjectRoot")
     }
 
     override fun createGenerationRule(request: GenerationRuleCreateRequestDto): GenerationRuleDto =
-        post("/memory/rules", request)
+        post("/platform/memory/rules", request)
 
     override fun updateGenerationRule(ruleId: String, request: GenerationRulePatchRequestDto): GenerationRuleDto =
-        patch("/memory/rules/$ruleId", request)
+        patch("/platform/memory/rules/$ruleId", request)
 
     override fun deleteGenerationRule(ruleId: String, projectRoot: String): DeleteMemoryItemResponseDto {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return delete("/memory/rules/$ruleId?projectRoot=$encodedProjectRoot")
+        return delete("/platform/memory/rules/$ruleId?projectRoot=$encodedProjectRoot")
     }
 
     override fun listStepTemplates(projectRoot: String): StepTemplateListResponseDto {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return get("/memory/templates?projectRoot=$encodedProjectRoot")
+        return get("/platform/memory/templates?projectRoot=$encodedProjectRoot")
     }
 
     override fun createStepTemplate(request: StepTemplateCreateRequestDto): StepTemplateDto =
-        post("/memory/templates", request)
+        post("/platform/memory/templates", request)
 
     override fun updateStepTemplate(templateId: String, request: StepTemplatePatchRequestDto): StepTemplateDto =
-        patch("/memory/templates/$templateId", request)
+        patch("/platform/memory/templates/$templateId", request)
 
     override fun deleteStepTemplate(templateId: String, projectRoot: String): DeleteMemoryItemResponseDto {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return delete("/memory/templates/$templateId?projectRoot=$encodedProjectRoot")
+        return delete("/platform/memory/templates/$templateId?projectRoot=$encodedProjectRoot")
     }
 
     override fun resolveGenerationPreview(
         request: GenerationResolvePreviewRequestDto
-    ): GenerationResolvePreviewResponseDto = post("/memory/resolve-preview", request)
+    ): GenerationResolvePreviewResponseDto = post("/platform/memory/resolve-preview", request)
 
     private inline fun <reified T : Any> post(
         path: String,
@@ -464,10 +457,10 @@ class HttpBackendClient(
         }
     }
 
-    private fun tryAwaitTerminalStatusViaEvents(jobId: String, timeoutMs: Int): JobStatusResponseDto? {
+    private fun tryAwaitTerminalStatusViaEvents(runId: String, timeoutMs: Int): RunStatusResponseDto? {
         val settings = settingsProvider()
-        val encodedJobId = URLEncoder.encode(jobId, StandardCharsets.UTF_8)
-        val url = "${settings.backendUrl.trimEnd('/')}/jobs/$encodedJobId/events?fromIndex=0"
+        val encodedRunId = URLEncoder.encode(runId, StandardCharsets.UTF_8)
+        val url = "${settings.backendUrl.trimEnd('/')}/runs/$encodedRunId/events?fromIndex=0"
         val client = getHttpClient(timeoutMs)
         val request = Request.Builder()
             .url(URI.create(url).toURL())
@@ -479,13 +472,13 @@ class HttpBackendClient(
         val response = try {
             client.newCall(request).execute()
         } catch (ex: Exception) {
-            logger.info("SSE stream unavailable for $jobId, fallback to polling: ${ex.message}")
+            logger.info("SSE stream unavailable for $runId, fallback to polling: ${ex.message}")
             return null
         }
 
         response.use { httpResponse ->
             if (!httpResponse.isSuccessful) {
-                logger.info("SSE stream responded ${httpResponse.code} for $jobId, fallback to polling")
+                logger.info("SSE stream responded ${httpResponse.code} for $runId, fallback to polling")
                 return null
             }
 
@@ -504,15 +497,15 @@ class HttpBackendClient(
                     if (currentData.isNotEmpty()) {
                         val rawData = currentData.toString().trim()
                         val eventType = currentEventType ?: ""
-                        if (eventType in terminalJobEvents) {
+                        if (eventType in terminalRunEvents) {
                             try {
-                                val event = mapper.readValue<JobEventResponseDto>(rawData)
+                                val event = mapper.readValue<RunEventResponseDto>(rawData)
                                 val status = event.payload["status"]?.toString()?.trim()?.lowercase()
-                                if (!status.isNullOrEmpty() && status in terminalJobStatuses) {
-                                    return getJob(jobId)
+                                if (!status.isNullOrEmpty() && status in terminalRunStatuses) {
+                                    return getRun(runId)
                                 }
                             } catch (_: Exception) {
-                                return getJob(jobId)
+                                return getRun(runId)
                             }
                         }
                     }

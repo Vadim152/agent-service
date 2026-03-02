@@ -744,7 +744,7 @@ class AiToolWindowPanel(
 
         ApplicationManager.getApplication().executeOnPooledThread {
             val base = settings.backendUrl.trimEnd('/')
-            val request = Request.Builder().url("$base/chat/sessions/$activeSession/stream?fromIndex=$streamFromIndex").get().build()
+            val request = Request.Builder().url("$base/sessions/$activeSession/stream?fromIndex=$streamFromIndex").get().build()
             val call = streamClient.newCall(request)
             streamCall = call
             try {

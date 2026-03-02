@@ -339,34 +339,11 @@ class RemediationActionDto(ApiBaseModel):
 
 
 class IncidentReportDto(ApiBaseModel):
-    job_id: str = Field(..., alias="jobId")
     run_id: str = Field(..., alias="runId")
     attempt_id: str = Field(..., alias="attemptId")
     source: str
     summary: str
     hypotheses: list[str] = Field(default_factory=list)
-
-
-class JobCreateRequest(ApiBaseModel):
-    project_root: str = Field(..., alias="projectRoot")
-    test_case_text: str = Field(..., alias="testCaseText")
-    target_path: str | None = Field(default=None, alias="targetPath")
-    zephyr_auth: ZephyrAuth | None = Field(default=None, alias="zephyrAuth")
-    jira_instance: str | None = Field(default=None, alias="jiraInstance")
-    profile: str = Field(default="quick")
-    create_file: bool = Field(default=False, alias="createFile")
-    overwrite_existing: bool = Field(default=False, alias="overwriteExisting")
-    language: str | None = None
-    quality_policy: Literal["strict", "balanced", "lenient"] = Field(
-        default="strict",
-        alias="qualityPolicy",
-    )
-    source: str = Field(default="api")
-
-
-class JobCreateResponse(ApiBaseModel):
-    job_id: str = Field(..., alias="jobId")
-    status: str
 
 
 class RunAttemptDto(ApiBaseModel):
@@ -379,37 +356,7 @@ class RunAttemptDto(ApiBaseModel):
     artifacts: dict[str, str] = Field(default_factory=dict)
 
 
-class JobStatusResponse(ApiBaseModel):
-    job_id: str = Field(..., alias="jobId")
-    run_id: str | None = Field(default=None, alias="runId")
-    status: str
-    source: str | None = None
-    incident_uri: str | None = Field(default=None, alias="incidentUri")
-    started_at: datetime | None = Field(default=None, alias="startedAt")
-    finished_at: datetime | None = Field(default=None, alias="finishedAt")
-
-
-class JobEventDto(ApiBaseModel):
-    event_type: str = Field(..., alias="eventType")
-    payload: dict[str, Any]
-    created_at: datetime = Field(..., alias="createdAt")
-    index: int
-
-
-class JobCancelResponse(ApiBaseModel):
-    job_id: str = Field(..., alias="jobId")
-    status: str
-    cancel_requested: bool = Field(default=False, alias="cancelRequested")
-    effective_status: str | None = Field(default=None, alias="effectiveStatus")
-
-
-class JobAttemptsResponse(ApiBaseModel):
-    job_id: str = Field(..., alias="jobId")
-    run_id: str | None = Field(default=None, alias="runId")
-    attempts: list[RunAttemptDto] = Field(default_factory=list)
-
-
-class JobFeatureResultDto(ApiBaseModel):
+class FeatureResultDto(ApiBaseModel):
     feature_text: str = Field(default="", alias="featureText")
     unmapped_steps: list[UnmappedStepDto] = Field(default_factory=list, alias="unmappedSteps")
     unmapped: list[str] = Field(default_factory=list)
@@ -424,18 +371,6 @@ class JobFeatureResultDto(ApiBaseModel):
     )
     file_status: dict[str, Any] | None = Field(default=None, alias="fileStatus")
     quality: QualityReportDto | None = Field(default=None)
-
-
-class JobResultResponse(ApiBaseModel):
-    job_id: str = Field(..., alias="jobId")
-    run_id: str | None = Field(default=None, alias="runId")
-    status: str
-    source: str | None = None
-    incident_uri: str | None = Field(default=None, alias="incidentUri")
-    started_at: datetime | None = Field(default=None, alias="startedAt")
-    finished_at: datetime | None = Field(default=None, alias="finishedAt")
-    feature: JobFeatureResultDto | None = None
-    attempts: list[RunAttemptDto] = Field(default_factory=list)
 
 
 class LlmTestRequest(ApiBaseModel):
@@ -610,17 +545,10 @@ __all__ = [
     "GenerateFeatureRequest",
     "GenerateFeatureResponse",
     "FailureClassificationDto",
+    "FeatureResultDto",
     "RemediationActionDto",
     "IncidentReportDto",
-    "JobCreateRequest",
-    "JobCreateResponse",
-    "JobFeatureResultDto",
-    "JobResultResponse",
     "RunAttemptDto",
-    "JobAttemptsResponse",
-    "JobStatusResponse",
-    "JobEventDto",
-    "JobCancelResponse",
     "PipelineStepDto",
     "QualityFailureDto",
     "QualityMetricsDto",

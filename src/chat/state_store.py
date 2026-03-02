@@ -149,6 +149,13 @@ class ChatStateStore:
             bounded = max(1, min(limit, 200))
             return rows[:bounded]
 
+    def list_all_sessions(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = [deepcopy(value) for value in self._sessions.values()]
+            rows.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
+            bounded = max(1, min(limit, 500))
+            return rows[:bounded]
+
     def update_session(self, session_id: str, **changes: Any) -> dict[str, Any] | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -276,6 +283,35 @@ class ChatStateStore:
             for item in pending:
                 if item.get("tool_call_id") == tool_call_id:
                     return deepcopy(item)
+            return None
+
+    def list_pending_tool_calls(self, *, session_id: str | None = None) -> list[dict[str, Any]]:
+        with self._lock:
+            items: list[dict[str, Any]] = []
+            sessions = (
+                [(session_id, self._sessions.get(session_id))]
+                if session_id is not None
+                else list(self._sessions.items())
+            )
+            for current_session_id, session in sessions:
+                if not current_session_id or not session:
+                    continue
+                for item in session.get("pending_tool_calls", []):
+                    payload = deepcopy(item)
+                    payload["session_id"] = current_session_id
+                    items.append(payload)
+            items.sort(key=lambda value: str(value.get("created_at", "")))
+            return items
+
+    def find_pending_tool_call(self, tool_call_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            for session_id, session in self._sessions.items():
+                for item in session.get("pending_tool_calls", []):
+                    if item.get("tool_call_id") != tool_call_id:
+                        continue
+                    payload = deepcopy(item)
+                    payload["session_id"] = session_id
+                    return payload
             return None
 
     def history(self, session_id: str, *, limit: int = 200) -> dict[str, Any] | None:

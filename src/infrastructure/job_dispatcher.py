@@ -1,4 +1,4 @@
-"""Dispatch job execution either locally or through a queue."""
+"""Dispatch run execution either locally or through a queue."""
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +24,7 @@ class JobExecutionDispatcher:
     def dispatch(
         self,
         *,
-        job_id: str,
+        run_id: str,
         source: str,
         supervisor: Any,
         run_state_store: Any,
@@ -35,12 +35,12 @@ class JobExecutionDispatcher:
 
 
 class LocalJobExecutionDispatcher(JobExecutionDispatcher):
-    """Runs supervisor in the current process as a detached task."""
+    """Runs the supervisor in the current process as a detached task."""
 
     def dispatch(
         self,
         *,
-        job_id: str,
+        run_id: str,
         source: str,
         supervisor: Any,
         run_state_store: Any,
@@ -50,7 +50,8 @@ class LocalJobExecutionDispatcher(JobExecutionDispatcher):
         _ = run_state_store
 
         async def _worker() -> None:
-            await supervisor.execute_job(job_id)
+            execute = getattr(supervisor, "execute_run", None) or supervisor.execute_job
+            await execute(run_id)
 
         if task_registry is None:
             task = asyncio.create_task(_worker())
@@ -60,13 +61,13 @@ class LocalJobExecutionDispatcher(JobExecutionDispatcher):
         task_registry.create_task(
             _worker(),
             source=source,
-            metadata={"jobId": job_id},
+            metadata={"runId": run_id},
             on_error=on_error,
         )
 
 
 class QueueJobExecutionDispatcher(JobExecutionDispatcher):
-    """Enqueues jobs for external execution workers."""
+    """Enqueues runs for external execution workers."""
 
     def __init__(self, *, queue: JobQueue) -> None:
         self._queue = queue
@@ -74,7 +75,7 @@ class QueueJobExecutionDispatcher(JobExecutionDispatcher):
     def dispatch(
         self,
         *,
-        job_id: str,
+        run_id: str,
         source: str,
         supervisor: Any,
         run_state_store: Any,
@@ -83,14 +84,14 @@ class QueueJobExecutionDispatcher(JobExecutionDispatcher):
     ) -> None:
         _ = (supervisor, task_registry)
         try:
-            self._queue.enqueue(JobEnvelope(job_id=job_id, source=source, enqueued_at=_utcnow()))
+            self._queue.enqueue(JobEnvelope(run_id=run_id, source=source, enqueued_at=_utcnow()))
             run_state_store.append_event(
-                job_id,
-                "job.dispatched",
-                {"jobId": job_id, "backend": "queue", "source": source},
+                run_id,
+                "run.dispatched",
+                {"runId": run_id, "backend": "queue", "source": source},
             )
         except Exception as exc:
-            logger.warning("Queue dispatch failed (job_id=%s): %s", job_id, exc)
+            logger.warning("Queue dispatch failed (run_id=%s): %s", run_id, exc)
             if on_error:
                 on_error(exc)
             else:
@@ -113,4 +114,3 @@ def _handle_task_failure(task: asyncio.Task[Any], on_error: ErrorHandler) -> Non
         return
     if exc:
         on_error(exc)
-

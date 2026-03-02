@@ -42,6 +42,46 @@ class Settings(BaseSettings):
         default=ROOT_DIR / ".agent" / "artifacts",
         description="Directory for job artifacts and incidents",
     )
+    artifact_storage_backend: str = Field(
+        default="local",
+        description="Artifact object storage backend: local|s3",
+    )
+    artifact_s3_bucket: str | None = Field(
+        default=None,
+        description="S3-compatible bucket used when artifact_storage_backend=s3",
+    )
+    artifact_s3_endpoint_url: str | None = Field(
+        default=None,
+        description="S3-compatible endpoint URL used for MinIO or custom object storage",
+    )
+    artifact_s3_region: str = Field(
+        default="us-east-1",
+        description="Region used for S3-compatible artifact storage",
+    )
+    artifact_s3_access_key_id: str | None = Field(
+        default=None,
+        description="Access key id for S3-compatible artifact storage",
+    )
+    artifact_s3_secret_access_key: str | None = Field(
+        default=None,
+        description="Secret access key for S3-compatible artifact storage",
+    )
+    artifact_s3_session_token: str | None = Field(
+        default=None,
+        description="Optional session token for S3-compatible artifact storage",
+    )
+    artifact_s3_key_prefix: str = Field(
+        default="agent-service-artifacts",
+        description="Object key prefix used for uploaded artifacts",
+    )
+    artifact_s3_presign_expiry_s: int = Field(
+        default=3600,
+        description="Presigned URL lifetime for resolved artifact access",
+    )
+    artifact_s3_addressing_style: str = Field(
+        default="path",
+        description="S3 addressing style: path|virtual",
+    )
     state_backend: str = Field(
         default="memory",
         description="Control-plane state backend: memory|postgres",
@@ -52,7 +92,7 @@ class Settings(BaseSettings):
     )
     queue_backend: str = Field(
         default="local",
-        description="Queue backend for execution dispatch: local|redis",
+        description="Queue backend for execution dispatch: local|redis|rabbitmq",
     )
     queue_name: str = Field(
         default="agent-service:jobs",
@@ -62,6 +102,10 @@ class Settings(BaseSettings):
         default="redis://127.0.0.1:6379/0",
         description="Redis connection URL for queue backend",
     )
+    rabbitmq_url: str = Field(
+        default="amqp://guest:guest@127.0.0.1:5672/%2f",
+        description="RabbitMQ AMQP URL for queue backend",
+    )
     postgres_dsn: str | None = Field(
         default=None,
         description="Postgres DSN used when state_backend=postgres",
@@ -69,6 +113,10 @@ class Settings(BaseSettings):
     embedded_execution_worker: bool = Field(
         default=False,
         description="Run execution queue worker inside control-plane process",
+    )
+    worker_concurrency: int = Field(
+        default=1,
+        description="Number of concurrent queue consumers per worker process",
     )
     tool_host_mode: str = Field(
         default="local",
@@ -266,15 +314,27 @@ class Settings(BaseSettings):
             raise ValueError("state_backend must be one of: memory, postgres")
         if self.execution_backend not in {"local", "queue"}:
             raise ValueError("execution_backend must be one of: local, queue")
-        if self.queue_backend not in {"local", "redis"}:
-            raise ValueError("queue_backend must be one of: local, redis")
+        if self.queue_backend not in {"local", "redis", "rabbitmq"}:
+            raise ValueError("queue_backend must be one of: local, redis, rabbitmq")
         if not self.queue_name.strip():
             raise ValueError("queue_name must not be empty")
+        if self.worker_concurrency < 1:
+            raise ValueError("worker_concurrency must be >= 1")
         if self.state_backend == "postgres" and not (self.postgres_dsn or "").strip():
             raise ValueError("postgres_dsn is required when state_backend=postgres")
-        if self.execution_backend == "queue" and self.queue_backend == "redis":
-            if not self.redis_url.strip():
+        if self.artifact_storage_backend not in {"local", "s3"}:
+            raise ValueError("artifact_storage_backend must be one of: local, s3")
+        if self.artifact_s3_presign_expiry_s < 1:
+            raise ValueError("artifact_s3_presign_expiry_s must be >= 1")
+        if self.artifact_s3_addressing_style not in {"path", "virtual"}:
+            raise ValueError("artifact_s3_addressing_style must be one of: path, virtual")
+        if self.artifact_storage_backend == "s3" and not (self.artifact_s3_bucket or "").strip():
+            raise ValueError("artifact_s3_bucket is required when artifact_storage_backend=s3")
+        if self.execution_backend == "queue":
+            if self.queue_backend == "redis" and not self.redis_url.strip():
                 raise ValueError("redis_url is required when queue_backend=redis")
+            if self.queue_backend == "rabbitmq" and not self.rabbitmq_url.strip():
+                raise ValueError("rabbitmq_url is required when queue_backend=rabbitmq")
         if self.tool_host_mode not in {"local", "remote"}:
             raise ValueError("tool_host_mode must be one of: local, remote")
         if self.tool_host_mode == "remote" and not (self.tool_host_url or "").strip():
@@ -297,7 +357,7 @@ class Settings(BaseSettings):
 
         payload = self.model_dump()
         for field_name in self._secret_fields:
-            if payload.get(field_name):
+            if field_name in payload and getattr(self, field_name, None) is not None:
                 payload[field_name] = "***"
         return payload
 

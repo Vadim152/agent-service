@@ -19,7 +19,7 @@ from api.schemas import (
 )
 from memory.service import MemoryService
 
-router = APIRouter(prefix="/memory", tags=["memory"])
+router = APIRouter(prefix="/platform/memory", tags=["platform-memory"])
 
 
 def _get_learning_store(request: Request) -> MemoryService:

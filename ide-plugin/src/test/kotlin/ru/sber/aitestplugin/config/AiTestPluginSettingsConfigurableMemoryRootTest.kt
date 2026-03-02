@@ -1,7 +1,7 @@
 package ru.sber.aitestplugin.config
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
+import org.junit.Assert.assertEquals
+import org.junit.Test
 
 class AiTestPluginSettingsConfigurableMemoryRootTest {
 

@@ -12,9 +12,9 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _new_job(job_id: str) -> dict[str, object]:
+def _new_job(run_id: str) -> dict[str, object]:
     return {
-        "job_id": job_id,
+        "run_id": run_id,
         "status": "queued",
         "started_at": _utcnow(),
         "updated_at": _utcnow(),
@@ -23,45 +23,46 @@ def _new_job(job_id: str) -> dict[str, object]:
     }
 
 
-def test_queue_dispatcher_enqueues_job_and_appends_event() -> None:
+def test_queue_dispatcher_enqueues_run_and_appends_event() -> None:
     queue = LocalJobQueue()
     dispatcher = QueueJobExecutionDispatcher(queue=queue)
     store = RunStateStore()
     store.put_job(_new_job("j1"))
 
     dispatcher.dispatch(
-        job_id="j1",
-        source="jobs",
+        run_id="j1",
+        source="runs",
         supervisor=None,
         run_state_store=store,
         task_registry=None,
         on_error=None,
     )
 
-    envelope = queue.dequeue(timeout_s=0.01)
-    assert envelope is not None
-    assert envelope.job_id == "j1"
+    lease = queue.receive(timeout_s=0.01)
+    assert lease is not None
+    assert lease.envelope.run_id == "j1"
+    lease.ack()
     events, _ = store.list_events("j1", since_index=0)
     assert events
-    assert events[-1]["event_type"] == "job.dispatched"
+    assert events[-1]["event_type"] == "run.dispatched"
 
 
 def test_local_dispatcher_executes_supervisor_in_background() -> None:
     dispatcher = LocalJobExecutionDispatcher()
     store = RunStateStore()
     store.put_job(_new_job("j2"))
-    call = {"job_id": None}
+    call = {"run_id": None}
     done = asyncio.Event()
 
     class _Supervisor:
-        async def execute_job(self, job_id: str) -> None:
-            call["job_id"] = job_id
+        async def execute_run(self, run_id: str) -> None:
+            call["run_id"] = run_id
             done.set()
 
     async def _run() -> None:
         dispatcher.dispatch(
-            job_id="j2",
-            source="jobs",
+            run_id="j2",
+            source="runs",
             supervisor=_Supervisor(),
             run_state_store=store,
             task_registry=None,
@@ -70,5 +71,4 @@ def test_local_dispatcher_executes_supervisor_in_background() -> None:
         await asyncio.wait_for(done.wait(), timeout=1.0)
 
     asyncio.run(_run())
-    assert call["job_id"] == "j2"
-
+    assert call["run_id"] == "j2"

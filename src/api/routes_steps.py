@@ -22,7 +22,7 @@ from api.schemas import (
 )
 from domain.models import StepDefinition
 
-router = APIRouter(prefix="/steps", tags=["steps"])
+router = APIRouter(prefix="/platform/steps", tags=["platform-steps"])
 logger = logging.getLogger(__name__)
 settings = get_settings()
 

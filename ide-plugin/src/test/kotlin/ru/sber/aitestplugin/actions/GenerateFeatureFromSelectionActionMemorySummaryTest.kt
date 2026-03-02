@@ -1,15 +1,15 @@
 package ru.sber.aitestplugin.actions
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertNull
-import ru.sber.aitestplugin.model.JobFeatureResultDto
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+import ru.sber.aitestplugin.model.FeatureResultDto
 
 class GenerateFeatureFromSelectionActionMemorySummaryTest {
 
     @Test
     fun `returns null when memory stage has no effect`() {
-        val result = JobFeatureResultDto(
+        val result = FeatureResultDto(
             pipeline = listOf(
                 mapOf(
                     "stage" to "memory_rules",
@@ -27,7 +27,7 @@ class GenerateFeatureFromSelectionActionMemorySummaryTest {
 
     @Test
     fun `summarizes applied memory pipeline stage`() {
-        val result = JobFeatureResultDto(
+        val result = FeatureResultDto(
             pipeline = listOf(
                 mapOf(
                     "stage" to "memory_rules",

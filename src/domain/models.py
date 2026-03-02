@@ -93,6 +93,7 @@ class TestStep:
     order: int
     text: str
     section: str | None = None
+    __test__ = False
 
 
 @dataclass
@@ -193,8 +194,7 @@ class FeatureFile:
 
 @dataclass
 class CorrelationFields:
-    job_id: str
-    run_id: str | None = None
+    run_id: str
     attempt_id: str | None = None
     source: str | None = None
 

@@ -25,9 +25,9 @@ import com.intellij.ui.JBColor
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
-import ru.sber.aitestplugin.model.JobCreateRequestDto
-import ru.sber.aitestplugin.model.JobFeatureResultDto
+import ru.sber.aitestplugin.model.FeatureResultDto
 import ru.sber.aitestplugin.model.QualityReportDto
+import ru.sber.aitestplugin.model.RunCreateRequestDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
@@ -101,31 +101,35 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             private var unmappedSteps: List<UnmappedStepDto> = emptyList()
             private var fileStatus: Map<String, Any?>? = null
             private var quality: QualityReportDto? = null
-            private var featureResult: JobFeatureResultDto? = null
+            private var featureResult: FeatureResultDto? = null
 
             override fun run(indicator: ProgressIndicator) {
-                indicator.text = "Creating job..."
-                val job = backendClient.createJob(
-                    JobCreateRequestDto(
+                indicator.text = "Creating run..."
+                val run = backendClient.createRun(
+                    RunCreateRequestDto(
                         projectRoot = projectRoot,
-                        testCaseText = selectedText,
-                        targetPath = dialogOptions.targetPath,
+                        plugin = "testgen",
+                        input = mapOf(
+                            "testCaseText" to selectedText,
+                            "targetPath" to dialogOptions.targetPath,
+                            "createFile" to options.createFile,
+                            "overwriteExisting" to options.overwriteExisting,
+                            "language" to dialogOptions.language
+                        ),
                         profile = "quick",
-                        createFile = options.createFile,
-                        overwriteExisting = options.overwriteExisting,
-                        language = dialogOptions.language
+                        source = "ide-plugin"
                     )
                 )
 
-                indicator.text = "Waiting for job..."
-                val finalStatus = backendClient.awaitTerminalJobStatus(job.jobId, timeoutMs = 60_000).status
+                indicator.text = "Waiting for run..."
+                val finalStatus = backendClient.awaitTerminalRunStatus(run.runId, timeoutMs = 60_000).status
                 if (finalStatus == "cancelled") {
-                    throw IllegalStateException("Job was cancelled")
+                    throw IllegalStateException("Run was cancelled")
                 }
 
                 indicator.text = "Fetching result..."
-                val result = backendClient.getJobResult(job.jobId)
-                val feature = result.feature ?: throw IllegalStateException("Job completed without feature result")
+                val result = backendClient.getRunResult(run.runId)
+                val feature = result.output ?: throw IllegalStateException("Run completed without feature result")
                 featureResult = feature
                 featureText = feature.featureText
                 if (featureText.isBlank()) {
@@ -244,7 +248,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
         unmappedSteps: List<UnmappedStepDto>,
         fileStatus: Map<String, Any?>?,
         quality: QualityReportDto?,
-        result: JobFeatureResultDto?
+        result: FeatureResultDto?
     ): String {
         val base = "Feature generated${if (unmappedSteps.isNotEmpty()) ": ${unmappedSteps.size} unmapped steps" else ""}"
         val status = fileStatus?.get("status")?.toString()
@@ -267,7 +271,7 @@ class GenerateFeatureFromSelectionAction : AnAction() {
     }
 }
 
-internal fun buildMemorySummaryFromPipeline(result: JobFeatureResultDto): String? {
+internal fun buildMemorySummaryFromPipeline(result: FeatureResultDto): String? {
     val stage = result.pipeline.firstOrNull { it["stage"]?.toString() == "memory_rules" } ?: return null
     val details = stage["details"] as? Map<*, *> ?: return null
     val appliedRules = (details["appliedRuleIds"] as? List<*>)?.size ?: 0

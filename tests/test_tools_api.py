@@ -23,7 +23,7 @@ def test_find_steps_tool_endpoint() -> None:
     app = _build_app()
     client = TestClient(app)
     response = client.post(
-        "/tools/find-steps",
+        "/platform/tools/find-steps",
         json={"projectRoot": "/tmp/project", "query": "login", "topK": 3},
     )
     assert response.status_code == 200
@@ -37,7 +37,7 @@ def test_find_steps_tool_endpoint_with_debug() -> None:
     app = _build_app()
     client = TestClient(app)
     response = client.post(
-        "/tools/find-steps",
+        "/platform/tools/find-steps",
         json={"projectRoot": "/tmp/project", "query": "login", "topK": 3, "debug": True},
     )
     assert response.status_code == 200
@@ -50,7 +50,7 @@ def test_compose_autotest_tool_endpoint() -> None:
     app = _build_app()
     client = TestClient(app)
     response = client.post(
-        "/tools/compose-autotest",
+        "/platform/tools/compose-autotest",
         json={"projectRoot": "/tmp/project", "testCaseText": "Given login"},
     )
     assert response.status_code == 200
@@ -64,7 +64,7 @@ def test_compose_autotest_tool_endpoint_accepts_quality_policy() -> None:
     app = _build_app()
     client = TestClient(app)
     response = client.post(
-        "/tools/compose-autotest",
+        "/platform/tools/compose-autotest",
         json={
             "projectRoot": "/tmp/project",
             "testCaseText": "Given login",

@@ -17,40 +17,58 @@ def _utcnow() -> str:
 
 
 class JobQueueWorker:
-    """Consumes jobs from queue and executes them through ExecutionSupervisor."""
+    """Consumes runs from queue and executes them through ExecutionSupervisor."""
 
-    def __init__(self, *, queue: JobQueue, supervisor: Any, run_state_store: Any) -> None:
+    def __init__(self, *, queue: JobQueue, supervisor: Any, run_state_store: Any, concurrency: int = 1) -> None:
         self._queue = queue
         self._supervisor = supervisor
         self._run_state_store = run_state_store
+        self._concurrency = max(1, int(concurrency))
 
     async def run_forever(self, *, poll_timeout_s: float = 1.0, sleep_when_idle_s: float = 0.1) -> None:
+        consumers = [
+            asyncio.create_task(
+                self._consume_loop(poll_timeout_s=poll_timeout_s, sleep_when_idle_s=sleep_when_idle_s)
+            )
+            for _ in range(self._concurrency)
+        ]
+        try:
+            await asyncio.gather(*consumers)
+        finally:
+            for task in consumers:
+                task.cancel()
+
+    async def _consume_loop(self, *, poll_timeout_s: float, sleep_when_idle_s: float) -> None:
         while True:
-            envelope = await asyncio.to_thread(self._queue.dequeue, poll_timeout_s)
-            if envelope is None:
+            lease = await asyncio.to_thread(self._queue.receive, poll_timeout_s)
+            if lease is None:
                 await asyncio.sleep(max(0.0, sleep_when_idle_s))
                 continue
-            job_id = envelope.job_id
-            if not job_id:
+            envelope = lease.envelope
+            run_id = envelope.run_id
+            if not run_id:
+                lease.reject(requeue=False)
                 continue
             try:
                 self._run_state_store.append_event(
-                    job_id,
-                    "job.worker_claimed",
-                    {"jobId": job_id, "source": envelope.source},
+                    run_id,
+                    "run.worker_claimed",
+                    {"runId": run_id, "source": envelope.source},
                 )
-                await self._supervisor.execute_job(job_id)
+                execute = getattr(self._supervisor, "execute_run", None) or self._supervisor.execute_job
+                await execute(run_id)
+                lease.ack()
             except Exception as exc:
-                logger.warning("Execution worker failed (job_id=%s): %s", job_id, exc)
+                logger.warning("Execution worker failed (run_id=%s): %s", run_id, exc)
                 self._run_state_store.patch_job(
-                    job_id,
+                    run_id,
                     status="needs_attention",
                     finished_at=_utcnow(),
                     incident_uri=None,
                 )
                 self._run_state_store.append_event(
-                    job_id,
-                    "job.worker_failed",
-                    {"jobId": job_id, "status": "needs_attention", "message": str(exc)},
+                    run_id,
+                    "run.worker_failed",
+                    {"runId": run_id, "status": "needs_attention", "message": str(exc)},
                 )
-
+                lease.reject(requeue=False)

@@ -28,7 +28,7 @@ from api.schemas import (
 from domain.enums import MatchStatus
 from domain.models import MatchedStep
 
-router = APIRouter(prefix="/feature", tags=["feature-generation"])
+router = APIRouter(prefix="/platform/feature", tags=["platform-feature"])
 logger = logging.getLogger(__name__)
 settings = get_settings()
 

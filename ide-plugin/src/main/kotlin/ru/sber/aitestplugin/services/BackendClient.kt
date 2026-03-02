@@ -16,10 +16,6 @@ import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
-import ru.sber.aitestplugin.model.JobCreateRequestDto
-import ru.sber.aitestplugin.model.JobCreateResponseDto
-import ru.sber.aitestplugin.model.JobResultResponseDto
-import ru.sber.aitestplugin.model.JobStatusResponseDto
 import ru.sber.aitestplugin.model.DeleteMemoryItemResponseDto
 import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
 import ru.sber.aitestplugin.model.GenerationRuleDto
@@ -33,6 +29,10 @@ import ru.sber.aitestplugin.model.StepTemplateCreateRequestDto
 import ru.sber.aitestplugin.model.StepTemplateDto
 import ru.sber.aitestplugin.model.StepTemplateListResponseDto
 import ru.sber.aitestplugin.model.StepTemplatePatchRequestDto
+import ru.sber.aitestplugin.model.RunCreateRequestDto
+import ru.sber.aitestplugin.model.RunCreateResponseDto
+import ru.sber.aitestplugin.model.RunResultResponseDto
+import ru.sber.aitestplugin.model.RunStatusResponseDto
 
 /**
  * Абстракция клиента, обращающегося к backend-сервису agent-service.
@@ -45,11 +45,11 @@ interface BackendClient {
 
     fun generateFeature(request: GenerateFeatureRequestDto): GenerateFeatureResponseDto
 
-    fun createJob(request: JobCreateRequestDto): JobCreateResponseDto
+    fun createRun(request: RunCreateRequestDto): RunCreateResponseDto
 
-    fun getJob(jobId: String): JobStatusResponseDto
+    fun getRun(runId: String): RunStatusResponseDto
 
-    fun getJobResult(jobId: String): JobResultResponseDto
+    fun getRunResult(runId: String): RunResultResponseDto
 
     fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto
 

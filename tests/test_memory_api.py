@@ -17,7 +17,7 @@ def test_memory_feedback_updates_step_boost(tmp_path) -> None:
     client = TestClient(app)
 
     response = client.post(
-        "/memory/feedback",
+        "/platform/memory/feedback",
         json={
             "projectRoot": "/tmp/project",
             "stepId": "step-1",
@@ -31,4 +31,3 @@ def test_memory_feedback_updates_step_boost(tmp_path) -> None:
     assert payload["projectRoot"] == "/tmp/project"
     assert payload["stepBoosts"]["step-1"] > 0.0
     assert payload["feedbackCount"] == 1
-

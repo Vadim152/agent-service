@@ -10,10 +10,12 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from api.routes_chat import router as chat_router
+from api.routes_policy import router as policy_router
+from api.routes_sessions import router as sessions_router
 from chat.memory_store import ChatMemoryStore
 from chat.runtime import ChatAgentRuntime
 from infrastructure.run_state_store import RunStateStore
+from policy import InMemoryPolicyStore, PolicyService
 
 
 def _utcnow() -> str:
@@ -29,12 +31,33 @@ def _wait_until(assertion, timeout_s: float = 4.0) -> None:
     raise AssertionError("Condition was not met before timeout")
 
 
+def _bind_policy(chat_runtime: ChatAgentRuntime) -> PolicyService:
+    policy_service = PolicyService(
+        state_store=chat_runtime.state_store,
+        store=InMemoryPolicyStore(),
+    )
+    chat_runtime.bind_policy_service(policy_service)
+    policy_service.bind_decision_executor(
+        lambda session_id, run_id, approval_id, decision: chat_runtime.process_tool_decision(
+            session_id=session_id,
+            run_id=run_id,
+            permission_id=approval_id,
+            decision=decision,
+        )
+    )
+    policy_service.sync_tools(chat_runtime.describe_registered_tools())
+    return policy_service
+
+
 def _build_app() -> FastAPI:
     app = FastAPI()
     base = Path(tempfile.mkdtemp(prefix="chat-memory-"))
     memory_store = ChatMemoryStore(base)
-    app.state.chat_runtime = ChatAgentRuntime(memory_store=memory_store)
-    app.include_router(chat_router)
+    chat_runtime = ChatAgentRuntime(memory_store=memory_store)
+    app.state.chat_runtime = chat_runtime
+    app.state.policy_service = _bind_policy(chat_runtime)
+    app.include_router(sessions_router)
+    app.include_router(policy_router)
     return app
 
 
@@ -60,12 +83,12 @@ class _SupervisorStub:
     def __init__(self, store: RunStateStore) -> None:
         self.store = store
 
-    async def execute_job(self, job_id: str) -> None:
-        job = self.store.get_job(job_id) or {}
-        testcase_text = str(job.get("test_case_text", "")).upper()
+    async def execute_run(self, run_id: str) -> None:
+        run_record = self.store.get_job(run_id) or {}
+        testcase_text = str(run_record.get("test_case_text", "")).upper()
         jira_key = "SCBC-T1" if "SCBC-T1" in testcase_text else None
         self.store.patch_job(
-            job_id,
+            run_id,
             status="succeeded",
             finished_at=_utcnow(),
             result={
@@ -89,54 +112,52 @@ class _SupervisorNoResultStub:
     def __init__(self, store: RunStateStore) -> None:
         self.store = store
 
-    async def execute_job(self, job_id: str) -> None:
+    async def execute_run(self, run_id: str) -> None:
         self.store.patch_job(
-            job_id,
+            run_id,
             status="needs_attention",
             finished_at=_utcnow(),
-            incident_uri="artifacts://incident.json",
+            incident_uri="artifact://incident-json",
             result=None,
         )
 
 
-def _build_autotest_app() -> FastAPI:
+def _build_autotest_app(supervisor_cls=_SupervisorStub) -> FastAPI:
     app = FastAPI()
     base = Path(tempfile.mkdtemp(prefix="chat-memory-autotest-"))
     memory_store = ChatMemoryStore(base)
     run_state_store = RunStateStore()
-    app.state.chat_runtime = ChatAgentRuntime(
+    chat_runtime = ChatAgentRuntime(
         memory_store=memory_store,
         orchestrator=_OrchestratorStub(),
         run_state_store=run_state_store,
-        execution_supervisor=_SupervisorStub(run_state_store),
+        execution_supervisor=supervisor_cls(run_state_store),
     )
+    app.state.chat_runtime = chat_runtime
+    app.state.policy_service = _bind_policy(chat_runtime)
     app.state.run_state_store = run_state_store
-    app.include_router(chat_router)
+    app.include_router(sessions_router)
+    app.include_router(policy_router)
     return app
 
 
-def _build_autotest_no_result_app() -> FastAPI:
-    app = FastAPI()
-    base = Path(tempfile.mkdtemp(prefix="chat-memory-autotest-no-result-"))
-    memory_store = ChatMemoryStore(base)
-    run_state_store = RunStateStore()
-    app.state.chat_runtime = ChatAgentRuntime(
-        memory_store=memory_store,
-        orchestrator=_OrchestratorStub(),
-        run_state_store=run_state_store,
-        execution_supervisor=_SupervisorNoResultStub(run_state_store),
+def _approve_pending_permission(client: TestClient, session_id: str) -> dict[str, object]:
+    _wait_until(lambda: len(client.get(f"/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
+    permission = client.get(f"/sessions/{session_id}/history").json()["pendingPermissions"][0]
+    response = client.post(
+        f"/policy/approvals/{permission['permissionId']}/decision",
+        json={"decision": "approve"},
     )
-    app.state.run_state_store = run_state_store
-    app.include_router(chat_router)
-    return app
+    assert response.status_code == 200
+    _wait_until(lambda: len(client.get(f"/sessions/{session_id}/history").json()["pendingPermissions"]) == 0)
+    return permission
 
 
 def test_chat_session_create_and_reuse() -> None:
-    app = _build_app()
-    client = TestClient(app)
+    client = TestClient(_build_app())
 
     first = client.post(
-        "/chat/sessions",
+        "/sessions",
         json={"projectRoot": "/tmp/project", "source": "test-suite", "profile": "quick"},
     )
     assert first.status_code == 200
@@ -144,7 +165,7 @@ def test_chat_session_create_and_reuse() -> None:
     assert first_payload["reused"] is False
 
     second = client.post(
-        "/chat/sessions",
+        "/sessions",
         json={"projectRoot": "/tmp/project", "source": "test-suite", "profile": "quick"},
     )
     assert second.status_code == 200
@@ -154,14 +175,13 @@ def test_chat_session_create_and_reuse() -> None:
 
 
 def test_list_chat_sessions_for_project() -> None:
-    app = _build_app()
-    client = TestClient(app)
+    client = TestClient(_build_app())
 
-    assert client.post("/chat/sessions", json={"projectRoot": "/tmp/project-a", "reuseExisting": False}).status_code == 200
-    assert client.post("/chat/sessions", json={"projectRoot": "/tmp/project-a", "reuseExisting": False}).status_code == 200
-    assert client.post("/chat/sessions", json={"projectRoot": "/tmp/project-b", "reuseExisting": False}).status_code == 200
+    assert client.post("/sessions", json={"projectRoot": "/tmp/project-a", "reuseExisting": False}).status_code == 200
+    assert client.post("/sessions", json={"projectRoot": "/tmp/project-a", "reuseExisting": False}).status_code == 200
+    assert client.post("/sessions", json={"projectRoot": "/tmp/project-b", "reuseExisting": False}).status_code == 200
 
-    listed = client.get("/chat/sessions", params={"projectRoot": "/tmp/project-a", "limit": 10})
+    listed = client.get("/sessions", params={"projectRoot": "/tmp/project-a", "limit": 10})
     assert listed.status_code == 200
     payload = listed.json()
     assert payload["total"] == 2
@@ -170,23 +190,20 @@ def test_list_chat_sessions_for_project() -> None:
 
 
 def test_send_message_and_read_history() -> None:
-    app = _build_app()
-    client = TestClient(app)
-
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    client = TestClient(_build_app())
+    session = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()
     session_id = session["sessionId"]
 
-    send = client.post(f"/chat/sessions/{session_id}/messages", json={"content": "hello"})
+    send = client.post(f"/sessions/{session_id}/messages", json={"content": "hello"})
     assert send.status_code == 200
 
     def _assistant_replied() -> bool:
-        history = client.get(f"/chat/sessions/{session_id}/history").json()
+        history = client.get(f"/sessions/{session_id}/history").json()
         assistant = [msg for msg in history["messages"] if msg["role"] == "assistant"]
         return len(assistant) > 0
 
     _wait_until(_assistant_replied)
-
-    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    history = client.get(f"/sessions/{session_id}/history").json()
     assert len(history["pendingPermissions"]) == 0
     assert any(msg["role"] == "assistant" for msg in history["messages"])
 
@@ -194,8 +211,7 @@ def test_send_message_and_read_history() -> None:
 def test_send_message_rejects_when_session_is_busy() -> None:
     app = _build_app()
     client = TestClient(app)
-
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
+    session = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()
     session_id = session["sessionId"]
     app.state.chat_runtime.state_store.update_session(
         session_id,
@@ -203,7 +219,7 @@ def test_send_message_rejects_when_session_is_busy() -> None:
         current_action="Processing request",
     )
 
-    response = client.post(f"/chat/sessions/{session_id}/messages", json={"content": "hello again"})
+    response = client.post(f"/sessions/{session_id}/messages", json={"content": "hello again"})
     assert response.status_code == 409
     assert "Session is busy" in response.json()["detail"]
 
@@ -211,35 +227,40 @@ def test_send_message_rejects_when_session_is_busy() -> None:
 def test_permission_decision_approves_tool_execution() -> None:
     app = _build_app()
     client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
+    client.post(f"/sessions/{session_id}/messages", json={"content": "write login feature"})
 
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
-    client.post(f"/chat/sessions/{session_id}/messages", json={"content": "write login feature"})
-
-    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
-    pending = client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"][0]
-
-    decision = client.post(
-        f"/chat/sessions/{session_id}/tool-decisions",
-        json={"permissionId": pending["permissionId"], "decision": "approve_once"},
-    )
-    assert decision.status_code == 200
-
-    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 0)
-    diff = client.get(f"/chat/sessions/{session_id}/diff").json()
+    _approve_pending_permission(client, session_id)
+    diff = client.get(f"/sessions/{session_id}/diff").json()
     assert diff["summary"]["files"] == 1
+
+    audit_events = asyncio.run(app.state.policy_service.list_audit_events(limit=10))
+    event_types = [item["eventType"] for item in audit_events]
+    assert "permission.requested" in event_types
+    assert "permission.approved" in event_types
+
+
+def test_permission_decision_via_policy_writes_policy_audit() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
+    client.post(f"/sessions/{session_id}/messages", json={"content": "write login feature"})
+
+    _approve_pending_permission(client, session_id)
+
+    audit_events = asyncio.run(app.state.policy_service.list_audit_events(limit=10))
+    approved = [item for item in audit_events if item["eventType"] == "permission.approved"]
+    assert approved
 
 
 def test_status_and_diff_endpoints_return_control_plane() -> None:
-    app = _build_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
-    client.post(f"/chat/sessions/{session_id}/messages", json={"content": "write test"})
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
+    client.post(f"/sessions/{session_id}/messages", json={"content": "write test"})
 
-    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
+    _wait_until(lambda: len(client.get(f"/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
 
-    status_response = client.get(f"/chat/sessions/{session_id}/status")
+    status_response = client.get(f"/sessions/{session_id}/status")
     assert status_response.status_code == 200
     status_payload = status_response.json()
     assert status_payload["pendingPermissionsCount"] == 1
@@ -248,19 +269,17 @@ def test_status_and_diff_endpoints_return_control_plane() -> None:
     assert status_payload["lastRetryAttempt"] is None
     assert status_payload["lastRetryAt"] is None
 
-    diff_response = client.get(f"/chat/sessions/{session_id}/diff")
+    diff_response = client.get(f"/sessions/{session_id}/diff")
     assert diff_response.status_code == 200
     diff_payload = diff_response.json()
     assert diff_payload["summary"]["files"] >= 0
 
 
 def test_commands_endpoint_executes_runtime_command() -> None:
-    app = _build_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
-    response = client.post(f"/chat/sessions/{session_id}/commands", json={"command": "compact"})
+    response = client.post(f"/sessions/{session_id}/commands", json={"command": "compact"})
     assert response.status_code == 200
     payload = response.json()
     assert payload["accepted"] is True
@@ -268,20 +287,17 @@ def test_commands_endpoint_executes_runtime_command() -> None:
 
 
 def test_commands_endpoint_rejects_unknown_command() -> None:
-    app = _build_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
-    response = client.post(f"/chat/sessions/{session_id}/commands", json={"command": "unknown"})
+    response = client.post(f"/sessions/{session_id}/commands", json={"command": "unknown"})
     assert response.status_code == 422
 
 
 def test_status_exposes_retry_metadata_when_present() -> None:
     app = _build_app()
     client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
     app.state.chat_runtime.state_store.update_session(
         session_id,
@@ -292,7 +308,7 @@ def test_status_exposes_retry_metadata_when_present() -> None:
         last_retry_at=_utcnow(),
     )
 
-    response = client.get(f"/chat/sessions/{session_id}/status")
+    response = client.get(f"/sessions/{session_id}/status")
     assert response.status_code == 200
     payload = response.json()
     assert payload["activity"] == "retry"
@@ -304,8 +320,7 @@ def test_status_exposes_retry_metadata_when_present() -> None:
 def test_chat_stream_supports_from_index() -> None:
     app = _build_app()
     client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
     app.state.chat_runtime.state_store.append_event(session_id, "event.zero", {"v": 0})
     app.state.chat_runtime.state_store.append_event(session_id, "event.one", {"v": 1})
 
@@ -324,91 +339,75 @@ def test_chat_stream_supports_from_index() -> None:
 
 
 def test_autotest_natural_message_creates_preview_and_pending_save() -> None:
-    app = _build_autotest_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    client = TestClient(_build_autotest_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
     response = client.post(
-        f"/chat/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/messages",
         json={"content": "generate feature from this test case"},
     )
     assert response.status_code == 200
 
     def _has_pending_permission() -> bool:
-        history = client.get(f"/chat/sessions/{session_id}/history").json()
+        history = client.get(f"/sessions/{session_id}/history").json()
         return len(history["pendingPermissions"]) == 1
 
     _wait_until(_has_pending_permission)
-    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    history = client.get(f"/sessions/{session_id}/history").json()
     assert "feature" in history["messages"][-1]["content"].lower()
     assert "feature" in history["pendingPermissions"][0]["title"].lower()
 
 
 def test_autotest_without_feature_result_finishes_without_worker_crash() -> None:
-    app = _build_autotest_no_result_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    client = TestClient(_build_autotest_app(supervisor_cls=_SupervisorNoResultStub))
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
     response = client.post(
-        f"/chat/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/messages",
         json={"content": "generate feature"},
     )
     assert response.status_code == 200
 
     def _assistant_replied_without_pending() -> bool:
-        history = client.get(f"/chat/sessions/{session_id}/history").json()
+        history = client.get(f"/sessions/{session_id}/history").json()
         assistant = [msg for msg in history["messages"] if msg["role"] == "assistant"]
         return len(assistant) > 0 and len(history["pendingPermissions"]) == 0
 
     _wait_until(_assistant_replied_without_pending)
-    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    history = client.get(f"/sessions/{session_id}/history").json()
     assert "feature" in history["messages"][-1]["content"].lower()
     event_types = [event["eventType"] for event in history["events"]]
     assert "message.worker_failed" not in event_types
 
-    status_payload = client.get(f"/chat/sessions/{session_id}/status").json()
+    status_payload = client.get(f"/sessions/{session_id}/status").json()
     assert status_payload["activity"] == "idle"
 
 
 def test_autotest_save_permission_executes_save_tool() -> None:
-    app = _build_autotest_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    client = TestClient(_build_autotest_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
     client.post(
-        f"/chat/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/messages",
         json={"content": "generate feature and suggest save"},
     )
-    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
-    permission = client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"][0]
-
-    decision = client.post(
-        f"/chat/sessions/{session_id}/tool-decisions",
-        json={"permissionId": permission["permissionId"], "decision": "approve_once"},
-    )
-    assert decision.status_code == 200
-    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 0)
-    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    _approve_pending_permission(client, session_id)
+    history = client.get(f"/sessions/{session_id}/history").json()
     assert any("feature" in msg["content"].lower() for msg in history["messages"] if msg["role"] == "assistant")
 
 
 def test_autotest_uses_jira_key_as_default_target_path() -> None:
-    app = _build_autotest_app()
-    client = TestClient(app)
-    session = client.post("/chat/sessions", json={"projectRoot": "/tmp/project"}).json()
-    session_id = session["sessionId"]
+    client = TestClient(_build_autotest_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project"}).json()["sessionId"]
 
     response = client.post(
-        f"/chat/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/messages",
         json={"content": "generate feature for SCBC-T1"},
     )
     assert response.status_code == 200
 
-    _wait_until(lambda: len(client.get(f"/chat/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
-    history = client.get(f"/chat/sessions/{session_id}/history").json()
+    _wait_until(lambda: len(client.get(f"/sessions/{session_id}/history").json()["pendingPermissions"]) == 1)
+    history = client.get(f"/sessions/{session_id}/history").json()
     pending = history["pendingPermissions"][0]
     assert pending["metadata"]["target_path"] == "src/test/resources/features/SCBC-T1.feature"
 
@@ -416,35 +415,33 @@ def test_autotest_uses_jira_key_as_default_target_path() -> None:
 def test_chat_autotest_job_inherits_session_zephyr_auth_and_jira_instance() -> None:
     app = _build_autotest_app()
     client = TestClient(app)
-    session = client.post(
-        "/chat/sessions",
+    session_id = client.post(
+        "/sessions",
         json={
             "projectRoot": "/tmp/project",
             "zephyrAuth": {"authType": "TOKEN", "token": "demo-token"},
             "jiraInstance": "https://jira.sberbank.ru",
         },
-    ).json()
-    session_id = session["sessionId"]
+    ).json()["sessionId"]
 
     response = client.post(
-        f"/chat/sessions/{session_id}/messages",
+        f"/sessions/{session_id}/messages",
         json={"content": "generate feature for SCBC-T3282"},
     )
     assert response.status_code == 200
 
-    def _has_job_with_auth() -> bool:
-        jobs = getattr(app.state.run_state_store, "_jobs", {})
-        return any(item.get("zephyr_auth") for item in jobs.values())
+    def _has_run_with_auth() -> bool:
+        runs = getattr(app.state.run_state_store, "_runs", {})
+        return any(item.get("zephyr_auth") for item in runs.values())
 
-    _wait_until(_has_job_with_auth)
-    jobs = getattr(app.state.run_state_store, "_jobs", {})
-    assert jobs
-    created_job = next(iter(jobs.values()))
-    assert created_job["zephyr_auth"] == {
+    _wait_until(_has_run_with_auth)
+    runs = getattr(app.state.run_state_store, "_runs", {})
+    assert runs
+    created_run = next(iter(runs.values()))
+    assert created_run["zephyr_auth"] == {
         "authType": "TOKEN",
         "token": "demo-token",
         "login": None,
         "password": None,
     }
-    assert created_job["jira_instance"] == "https://jira.sberbank.ru"
-
+    assert created_run["jira_instance"] == "https://jira.sberbank.ru"

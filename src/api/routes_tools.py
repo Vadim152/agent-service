@@ -6,7 +6,7 @@ from pydantic import Field
 
 from api.schemas import ApiBaseModel
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+router = APIRouter(prefix="/platform/tools", tags=["platform-tools"])
 
 
 class FindStepsRequest(ApiBaseModel):

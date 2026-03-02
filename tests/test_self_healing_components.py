@@ -25,20 +25,28 @@ def test_remediation_playbooks_allowlist() -> None:
 
 def test_state_and_artifact_store(tmp_path: Path) -> None:
     state = RunStateStore()
-    state.put_job({"job_id": "j1", "status": "queued"})
-    state.append_event("j1", "job.queued", {"jobId": "j1"})
+    state.put_job({"run_id": "j1", "status": "queued"})
+    state.append_event("j1", "run.queued", {"runId": "j1"})
     events, size = state.list_events("j1")
     assert size == 1
-    assert events[0]["event_type"] == "job.queued"
+    assert events[0]["event_type"] == "run.queued"
 
     artifacts = ArtifactStore(tmp_path)
-    uri = artifacts.write_text(job_id="j1", run_id="r1", attempt_id="a1", name="stdout.log", content="ok")
+    uri = artifacts.write_text(run_id="r1", execution_id="exec-1", attempt_id="a1", name="stdout.log", content="ok")
     assert Path(uri).exists()
+    published = artifacts.publish_json(
+        run_id="r1",
+        execution_id="exec-1",
+        attempt_id="a1",
+        name="result.json",
+        payload={"ok": True},
+    )
+    assert str(published["uri"]).startswith("artifact://")
 
 
 def test_run_state_store_event_indexes_survive_retention() -> None:
     state = RunStateStore(max_events_per_job=2)
-    state.put_job({"job_id": "j2", "status": "queued"})
+    state.put_job({"run_id": "j2", "status": "queued"})
     state.append_event("j2", "event.0", {"value": 0})
     state.append_event("j2", "event.1", {"value": 1})
     state.append_event("j2", "event.2", {"value": 2})
@@ -50,9 +58,9 @@ def test_run_state_store_event_indexes_survive_retention() -> None:
 
 def test_run_state_store_evicts_old_jobs() -> None:
     state = RunStateStore(max_jobs=2)
-    state.put_job({"job_id": "j1", "status": "queued"})
-    state.put_job({"job_id": "j2", "status": "queued"})
-    state.put_job({"job_id": "j3", "status": "queued"})
+    state.put_job({"run_id": "j1", "status": "queued"})
+    state.put_job({"run_id": "j2", "status": "queued"})
+    state.put_job({"run_id": "j3", "status": "queued"})
     assert state.get_job("j1") is None
     assert state.get_job("j2") is not None
     assert state.get_job("j3") is not None
