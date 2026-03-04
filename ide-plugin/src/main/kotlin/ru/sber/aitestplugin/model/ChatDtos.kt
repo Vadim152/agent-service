@@ -6,6 +6,7 @@ data class ChatSessionCreateRequestDto(
     val projectRoot: String,
     val source: String = "ide-plugin",
     val profile: String = "quick",
+    val runtime: String = "chat",
     val reuseExisting: Boolean = false,
     val zephyrAuth: ZephyrAuthDto? = null,
     val jiraInstance: String? = null
@@ -14,6 +15,7 @@ data class ChatSessionCreateRequestDto(
 data class ChatSessionCreateResponseDto(
     val sessionId: String,
     val createdAt: Instant,
+    val runtime: String = "chat",
     val reused: Boolean = false,
     val memorySnapshot: Map<String, Any?> = emptyMap()
 )
@@ -23,6 +25,7 @@ data class ChatSessionListItemDto(
     val projectRoot: String,
     val source: String = "ide-plugin",
     val profile: String = "quick",
+    val runtime: String = "chat",
     val status: String = "active",
     val activity: String = "idle",
     val currentAction: String = "Idle",
@@ -92,6 +95,7 @@ data class ChatHistoryResponseDto(
     val projectRoot: String,
     val source: String,
     val profile: String,
+    val runtime: String = "chat",
     val status: String,
     val messages: List<ChatMessageDto> = emptyList(),
     val events: List<ChatEventDto> = emptyList(),
@@ -126,11 +130,15 @@ data class ChatRiskDto(
 
 data class ChatSessionStatusResponseDto(
     val sessionId: String,
+    val runtime: String = "chat",
     val activity: String,
     val currentAction: String,
     val lastEventAt: Instant,
     val updatedAt: Instant,
     val pendingPermissionsCount: Int,
+    val activeRunId: String? = null,
+    val activeRunStatus: String? = null,
+    val activeRunBackend: String? = null,
     val totals: ChatUsageTotalsDto = ChatUsageTotalsDto(),
     val limits: ChatLimitsDto = ChatLimitsDto(),
     val lastRetryMessage: String? = null,
@@ -155,6 +163,7 @@ data class ChatDiffFileDto(
 
 data class ChatSessionDiffResponseDto(
     val sessionId: String,
+    val runtime: String = "chat",
     val summary: ChatDiffSummaryDto = ChatDiffSummaryDto(),
     val files: List<ChatDiffFileDto> = emptyList(),
     val updatedAt: Instant,

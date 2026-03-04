@@ -59,11 +59,18 @@ class PostgresChatStateStore:
                         project_root TEXT NOT NULL,
                         source TEXT NOT NULL,
                         profile TEXT NOT NULL,
+                        runtime TEXT NOT NULL DEFAULT 'chat',
                         status TEXT NOT NULL,
                         payload JSONB NOT NULL,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     )
+                    """
+                )
+                cur.execute(
+                    """
+                    ALTER TABLE cp_sessions
+                    ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT 'chat'
                     """
                 )
                 cur.execute(
@@ -144,7 +151,7 @@ class PostgresChatStateStore:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT session_id, project_root, source, profile, status, payload, created_at, updated_at
+                SELECT session_id, project_root, source, profile, runtime, status, payload, created_at, updated_at
                 FROM cp_sessions
                 WHERE session_id = %s
                 """,
@@ -153,14 +160,15 @@ class PostgresChatStateStore:
             return cur.fetchone()
 
     def _row_to_session(self, row: tuple[Any, ...]) -> dict[str, Any]:
-        payload = self._loads(row[5])
+        payload = self._loads(row[6])
         payload["session_id"] = str(row[0])
         payload["project_root"] = str(row[1])
         payload["source"] = str(row[2])
         payload["profile"] = str(row[3])
-        payload["status"] = str(row[4])
-        payload["created_at"] = self._isoformat(row[6])
-        payload["updated_at"] = self._isoformat(row[7])
+        payload["runtime"] = str(row[4] or "chat")
+        payload["status"] = str(row[5])
+        payload["created_at"] = self._isoformat(row[7])
+        payload["updated_at"] = self._isoformat(row[8])
         return payload
 
     def _load_messages(self, conn: Any, session_id: str, *, trim: bool = True) -> list[dict[str, Any]]:
@@ -404,11 +412,12 @@ class PostgresChatStateStore:
         project_root: str,
         source: str,
         profile: str,
+        runtime: str = "chat",
         reuse_existing: bool = True,
     ) -> tuple[dict[str, Any], bool]:
         with self._lock, self._connect() as conn:
             if reuse_existing:
-                existing = self._find_latest_session_locked(conn, project_root)
+                existing = self._find_latest_session_locked(conn, project_root, runtime=runtime)
                 if existing:
                     return existing, True
 
@@ -419,6 +428,7 @@ class PostgresChatStateStore:
                 "project_root": project_root,
                 "source": source,
                 "profile": profile,
+                "runtime": runtime,
                 "status": "active",
                 "created_at": _utcnow(),
                 "updated_at": _utcnow(),
@@ -431,10 +441,10 @@ class PostgresChatStateStore:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO cp_sessions (session_id, project_root, source, profile, status, payload)
-                    VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+                    INSERT INTO cp_sessions (session_id, project_root, source, profile, runtime, status, payload)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
                     """,
-                    (session_id, project_root, source, profile, "active", self._dumps(payload)),
+                    (session_id, project_root, source, profile, runtime, "active", self._dumps(payload)),
                 )
                 cur.execute(
                     """
@@ -443,32 +453,44 @@ class PostgresChatStateStore:
                     """,
                     (session_id, 0),
                 )
-            self._append_event_locked(conn, session_id, "session.created", {"sessionId": session_id})
+            self._append_event_locked(conn, session_id, "session.created", {"sessionId": session_id, "runtime": runtime})
             self._enforce_project_session_limit_locked(conn, project_root)
             conn.commit()
             created = self._hydrate_session(conn, session_id)
             return deepcopy(created or payload), False
 
-    def _find_latest_session_locked(self, conn: Any, project_root: str) -> dict[str, Any] | None:
+    def _find_latest_session_locked(self, conn: Any, project_root: str, *, runtime: str | None = None) -> dict[str, Any] | None:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT session_id
-                FROM cp_sessions
-                WHERE project_root = %s
-                ORDER BY updated_at DESC
-                LIMIT 1
-                """,
-                (project_root,),
-            )
+            if runtime is None:
+                cur.execute(
+                    """
+                    SELECT session_id
+                    FROM cp_sessions
+                    WHERE project_root = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (project_root,),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT session_id
+                    FROM cp_sessions
+                    WHERE project_root = %s AND runtime = %s
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                    """,
+                    (project_root, runtime),
+                )
             row = cur.fetchone()
         if not row:
             return None
         return self._hydrate_session(conn, str(row[0]))
 
-    def find_latest_session(self, project_root: str) -> dict[str, Any] | None:
+    def find_latest_session(self, project_root: str, *, runtime: str | None = None) -> dict[str, Any] | None:
         with self._lock, self._connect() as conn:
-            payload = self._find_latest_session_locked(conn, project_root)
+            payload = self._find_latest_session_locked(conn, project_root, runtime=runtime)
             return deepcopy(payload) if payload else None
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
@@ -476,20 +498,38 @@ class PostgresChatStateStore:
             payload = self._hydrate_session(conn, session_id)
             return deepcopy(payload) if payload else None
 
-    def list_sessions(self, project_root: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    def list_sessions(
+        self,
+        project_root: str,
+        *,
+        limit: int = 50,
+        runtime: str | None = None,
+    ) -> list[dict[str, Any]]:
         bounded = max(1, min(limit, 200))
         with self._lock, self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT session_id
-                    FROM cp_sessions
-                    WHERE project_root = %s
-                    ORDER BY updated_at DESC
-                    LIMIT %s
-                    """,
-                    (project_root, bounded),
-                )
+                if runtime is None:
+                    cur.execute(
+                        """
+                        SELECT session_id
+                        FROM cp_sessions
+                        WHERE project_root = %s
+                        ORDER BY updated_at DESC
+                        LIMIT %s
+                        """,
+                        (project_root, bounded),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT session_id
+                        FROM cp_sessions
+                        WHERE project_root = %s AND runtime = %s
+                        ORDER BY updated_at DESC
+                        LIMIT %s
+                        """,
+                        (project_root, runtime, bounded),
+                    )
                 rows = cur.fetchall()
             return [deepcopy(self._hydrate_session(conn, str(row[0]))) for row in rows if row]
 
@@ -522,7 +562,8 @@ class PostgresChatStateStore:
             project_root = str(payload.get("project_root", row[1]))
             source = str(payload.get("source", row[2]))
             profile = str(payload.get("profile", row[3]))
-            status = str(payload.get("status", row[4]))
+            runtime = str(payload.get("runtime", row[4] or "chat"))
+            status = str(payload.get("status", row[5]))
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -530,12 +571,13 @@ class PostgresChatStateStore:
                     SET project_root = %s,
                         source = %s,
                         profile = %s,
+                        runtime = %s,
                         status = %s,
                         payload = %s::jsonb,
                         updated_at = NOW()
                     WHERE session_id = %s
                     """,
-                    (project_root, source, profile, status, self._dumps(payload), session_id),
+                    (project_root, source, profile, runtime, status, self._dumps(payload), session_id),
                 )
             if messages is not None:
                 self._replace_messages(conn, session_id, list(messages))

@@ -25,11 +25,13 @@ class RunService:
         supervisor: Any | None,
         dispatcher: Any | None = None,
         task_registry: Any | None = None,
+        plugin_drivers: dict[str, Any] | None = None,
     ) -> None:
         self._run_state_store = run_state_store
         self._supervisor = supervisor
         self._dispatcher = dispatcher
         self._task_registry = task_registry
+        self._plugin_drivers = plugin_drivers or {}
 
     def build_testgen_run_record(
         self,
@@ -101,13 +103,8 @@ class RunService:
         source: str,
         priority: str,
         idempotency_key: str | None,
+        requested_run_id: str | None = None,
     ) -> dict[str, Any]:
-        if plugin != "testgen":
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unsupported plugin: {plugin}",
-            )
-
         request_payload = {
             "projectRoot": project_root,
             "plugin": plugin,
@@ -121,7 +118,7 @@ class RunService:
             json.dumps(request_payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
 
-        run_id = payload_fingerprint[:8] + "-" + payload_fingerprint[8:16]
+        run_id = str(requested_run_id or "").strip() or payload_fingerprint[:8] + "-" + payload_fingerprint[8:16]
         if idempotency_key:
             claimed, existing_run_id = self._run_state_store.claim_idempotency_key(
                 idempotency_key,
@@ -146,37 +143,73 @@ class RunService:
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Idempotency key reuse with different payload is not allowed",
                 )
-        else:
+        elif not requested_run_id:
             run_id = hashlib.sha1((payload_fingerprint + _utcnow()).encode("utf-8")).hexdigest()
 
-        test_case_text = str(
-            input_payload.get("testCaseText")
-            or input_payload.get("test_case_text")
-            or input_payload.get("jiraKey")
-            or ""
-        ).strip()
-        quality_policy = str(input_payload.get("qualityPolicy") or input_payload.get("quality_policy") or "strict")
-        job_payload = self.build_testgen_run_record(
-            run_id=run_id,
-            project_root=project_root,
-            test_case_text=test_case_text,
-            target_path=input_payload.get("targetPath") or input_payload.get("target_path"),
-            create_file=bool(input_payload.get("createFile", input_payload.get("create_file", False))),
-            overwrite_existing=bool(
-                input_payload.get("overwriteExisting", input_payload.get("overwrite_existing", False))
-            ),
-            language=input_payload.get("language"),
-            quality_policy=quality_policy,
-            zephyr_auth=input_payload.get("zephyrAuth") or input_payload.get("zephyr_auth"),
-            jira_instance=input_payload.get("jiraInstance") or input_payload.get("jira_instance"),
-            profile=profile,
-            source=source,
-            session_id=session_id,
-            priority=priority,
-            input_payload=input_payload,
-            quality_policy_explicit="qualityPolicy" in input_payload or "quality_policy" in input_payload,
-            plugin=plugin,
-        )
+        if plugin == "testgen":
+            test_case_text = str(
+                input_payload.get("testCaseText")
+                or input_payload.get("test_case_text")
+                or input_payload.get("jiraKey")
+                or ""
+            ).strip()
+            quality_policy = str(input_payload.get("qualityPolicy") or input_payload.get("quality_policy") or "strict")
+            job_payload = self.build_testgen_run_record(
+                run_id=run_id,
+                project_root=project_root,
+                test_case_text=test_case_text,
+                target_path=input_payload.get("targetPath") or input_payload.get("target_path"),
+                create_file=bool(input_payload.get("createFile", input_payload.get("create_file", False))),
+                overwrite_existing=bool(
+                    input_payload.get("overwriteExisting", input_payload.get("overwrite_existing", False))
+                ),
+                language=input_payload.get("language"),
+                quality_policy=quality_policy,
+                zephyr_auth=input_payload.get("zephyrAuth") or input_payload.get("zephyr_auth"),
+                jira_instance=input_payload.get("jiraInstance") or input_payload.get("jira_instance"),
+                profile=profile,
+                source=source,
+                session_id=session_id,
+                priority=priority,
+                input_payload=input_payload,
+                quality_policy_explicit="qualityPolicy" in input_payload or "quality_policy" in input_payload,
+                plugin=plugin,
+            )
+        elif plugin == "opencode":
+            prompt = str(input_payload.get("prompt") or input_payload.get("message") or input_payload.get("content") or "").strip()
+            if not prompt:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="opencode runs require input.prompt or input.message",
+                )
+            job_payload = {
+                "run_id": run_id,
+                "status": "queued",
+                "plugin": plugin,
+                "runtime": "opencode",
+                "backend": "opencode-adapter",
+                "backend_run_id": None,
+                "backend_session_id": input_payload.get("backendSessionId") or input_payload.get("backend_session_id"),
+                "sync_cursor": 0,
+                "last_synced_at": None,
+                "cancel_requested": False,
+                "cancel_requested_at": None,
+                "project_root": project_root,
+                "profile": profile,
+                "source": source,
+                "session_id": session_id,
+                "priority": priority,
+                "input": dict(input_payload),
+                "started_at": _utcnow(),
+                "updated_at": _utcnow(),
+                "attempts": [],
+                "result": None,
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unsupported plugin: {plugin}",
+            )
         self._run_state_store.put_job(job_payload)
         self._run_state_store.append_event(
             run_id,
@@ -239,13 +272,22 @@ class RunService:
         }
 
     def schedule_execution(self, *, run_id: str, source: str) -> None:
-        if self._supervisor is None:
+        run = self.get_run(run_id)
+        if not run:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Run not found: {run_id}")
+        plugin = str(run.get("plugin", "testgen"))
+        plugin_driver = self._plugin_drivers.get(plugin)
+
+        if plugin_driver is None and self._supervisor is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Run control plane is not initialized",
             )
 
         async def _worker() -> None:
+            if plugin_driver is not None:
+                await plugin_driver.execute_run(run_id)
+                return
             execute = getattr(self._supervisor, "execute_run", None) or self._supervisor.execute_job
             await execute(run_id)
 
@@ -263,7 +305,7 @@ class RunService:
                 {"runId": run_id, "status": "needs_attention", "message": str(exc)},
             )
 
-        if self._dispatcher is not None:
+        if plugin_driver is None and self._dispatcher is not None:
             try:
                 self._dispatcher.dispatch(
                     run_id=run_id,
@@ -280,7 +322,17 @@ class RunService:
 
         if self._task_registry is None:
             import asyncio
+            import threading
 
+            if plugin_driver is not None:
+                def _run_plugin_driver() -> None:
+                    try:
+                        asyncio.run(_worker())
+                    except Exception as exc:
+                        _on_error(exc)
+
+                threading.Thread(target=_run_plugin_driver, daemon=True).start()
+                return
             asyncio.create_task(_worker())
             return
 

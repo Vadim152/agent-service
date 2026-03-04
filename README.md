@@ -147,6 +147,36 @@ curl http://127.0.0.1:8000/health
 - startup: `503`, `status=initializing`
 - ready: `200`, `status=ok`
 
+## Local OpenCode Stack
+
+For local `Agent` runtime development you only need two services:
+
+- `agent-service`
+- `opencode-adapter`
+
+Start both:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
+```
+
+Start both and run a quick delegated smoke test:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1 -SmokeTest
+```
+
+Stop both:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
+```
+
+The adapter is configured through `.env` and by default talks to local `opencode serve` via:
+
+- `AGENT_SERVICE_OPENCODE_BACKEND_MODE=http`
+- `AGENT_SERVICE_OPENCODE_ADAPTER_URL=http://127.0.0.1:8011`
+
 ## Key Environment Variables
 
 - `AGENT_SERVICE_API_PREFIX`

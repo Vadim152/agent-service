@@ -118,6 +118,8 @@ class GraphChatEngine:
 
 
 class ChatAgentRuntime:
+    name = "chat"
+
     def __init__(
         self,
         *,
@@ -494,6 +496,7 @@ class ChatAgentRuntime:
             "projectRoot": history["project_root"],
             "source": history.get("source", "ide-plugin"),
             "profile": history.get("profile", "quick"),
+            "runtime": history.get("runtime", self.name),
             "status": history.get("status", "active"),
             "messages": [
                 {
@@ -545,6 +548,7 @@ class ChatAgentRuntime:
             project_root=project_root,
             source=source,
             profile=profile,
+            runtime=self.name,
             reuse_existing=reuse_existing,
         )
         defaults = {
@@ -564,6 +568,7 @@ class ChatAgentRuntime:
         session = self._require_session(payload["session_id"])
         return {
             "sessionId": session["session_id"],
+            "runtime": session.get("runtime", self.name),
             "createdAt": session["created_at"],
             "reused": reused,
             "projectRoot": session["project_root"],
@@ -833,6 +838,7 @@ class ChatAgentRuntime:
                     "projectRoot": row["project_root"],
                     "source": row.get("source", "ide-plugin"),
                     "profile": row.get("profile", "quick"),
+                    "runtime": row.get("runtime", self.name),
                     "status": row.get("status", "active"),
                     "activity": row.get("activity", "idle"),
                     "currentAction": row.get("current_action", "Ожидание"),
@@ -850,11 +856,15 @@ class ChatAgentRuntime:
         last_event = events[-1]["created_at"] if events else session.get("updated_at", _utcnow())
         return {
             "sessionId": session["session_id"],
+            "runtime": session.get("runtime", self.name),
             "activity": session.get("activity", "idle"),
             "currentAction": session.get("current_action", "Ожидание"),
             "lastEventAt": last_event,
             "updatedAt": session.get("updated_at", _utcnow()),
             "pendingPermissionsCount": len(session.get("pending_tool_calls", [])),
+            "activeRunId": session.get("active_run_id"),
+            "activeRunStatus": session.get("active_run_status"),
+            "activeRunBackend": session.get("active_run_backend"),
             "totals": session.get(
                 "totals",
                 {"tokens": {"input": 0, "output": 0, "reasoning": 0, "cacheRead": 0, "cacheWrite": 0}, "cost": 0.0},
@@ -873,6 +883,7 @@ class ChatAgentRuntime:
         diff = session.get("diff") or {"summary": {"files": 0, "additions": 0, "deletions": 0}, "files": []}
         return {
             "sessionId": session["session_id"],
+            "runtime": session.get("runtime", self.name),
             "summary": diff.get("summary", {"files": 0, "additions": 0, "deletions": 0}),
             "files": diff.get("files", []),
             "updatedAt": session.get("updated_at", _utcnow()),

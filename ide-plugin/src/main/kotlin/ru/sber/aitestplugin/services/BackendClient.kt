@@ -31,6 +31,7 @@ import ru.sber.aitestplugin.model.StepTemplateListResponseDto
 import ru.sber.aitestplugin.model.StepTemplatePatchRequestDto
 import ru.sber.aitestplugin.model.RunCreateRequestDto
 import ru.sber.aitestplugin.model.RunCreateResponseDto
+import ru.sber.aitestplugin.model.RunArtifactsResponseDto
 import ru.sber.aitestplugin.model.RunResultResponseDto
 import ru.sber.aitestplugin.model.RunStatusResponseDto
 
@@ -50,6 +51,10 @@ interface BackendClient {
     fun getRun(runId: String): RunStatusResponseDto
 
     fun getRunResult(runId: String): RunResultResponseDto
+
+    fun listRunArtifacts(runId: String): RunArtifactsResponseDto
+
+    fun getRunArtifactContent(runId: String, artifactId: String): String
 
     fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto
 

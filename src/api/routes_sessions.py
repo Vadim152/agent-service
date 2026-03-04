@@ -32,9 +32,14 @@ from api.chat_schemas import (
     ChatUsageTotalsDto,
 )
 from infrastructure.runtime_errors import ChatRuntimeError
+from runtime.session_runtime import SessionRuntimeRegistry
 
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
+
+
+def _get_runtime_registry(request: Request) -> SessionRuntimeRegistry | None:
+    return getattr(request.app.state, "session_runtime_registry", None)
 
 
 def _get_runtime(request: Request):
@@ -45,6 +50,26 @@ def _get_runtime(request: Request):
             detail="Session runtime is not initialized",
         )
     return runtime
+
+
+def _resolve_runtime_for_create(request: Request, runtime_name: str):
+    registry = _get_runtime_registry(request)
+    if registry is not None:
+        return registry.get(runtime_name)
+    runtime = _get_runtime(request)
+    if runtime_name != "chat":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Unsupported session runtime: {runtime_name}")
+    return runtime
+
+
+def _resolve_runtime_for_session(request: Request, session_id: str):
+    registry = _get_runtime_registry(request)
+    if registry is not None:
+        try:
+            return registry.resolve_session(session_id)
+        except ChatRuntimeError as exc:
+            raise _runtime_to_http_error(exc) from exc
+    return _get_runtime(request)
 
 
 def _runtime_to_http_error(exc: ChatRuntimeError) -> HTTPException:
@@ -104,7 +129,7 @@ def _build_risk(
 
 @router.post("", response_model=ChatSessionCreateResponse)
 async def create_session(payload: ChatSessionCreateRequest, request: Request) -> ChatSessionCreateResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_create(request, payload.runtime)
     try:
         session = await runtime.create_session(
             project_root=payload.project_root,
@@ -120,6 +145,7 @@ async def create_session(payload: ChatSessionCreateRequest, request: Request) ->
     return ChatSessionCreateResponse(
         session_id=str(session["sessionId"]),
         created_at=_parse_iso_datetime(str(session["createdAt"])),
+        runtime=str(session.get("runtime", payload.runtime)),
         reused=bool(session.get("reused", False)),
         memory_snapshot=session.get("memorySnapshot", {}),
     )
@@ -127,7 +153,7 @@ async def create_session(payload: ChatSessionCreateRequest, request: Request) ->
 
 @router.get("", response_model=ChatSessionsListResponse)
 async def list_sessions(request: Request, projectRoot: str, limit: int = 50) -> ChatSessionsListResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_create(request, "chat")
     bounded_limit = max(1, min(limit, 200))
     try:
         payload = await runtime.list_sessions(project_root=projectRoot, limit=bounded_limit)
@@ -140,6 +166,7 @@ async def list_sessions(request: Request, projectRoot: str, limit: int = 50) -> 
             project_root=str(item.get("projectRoot", projectRoot)),
             source=str(item.get("source", "ide-plugin")),
             profile=str(item.get("profile", "quick")),
+            runtime=str(item.get("runtime", "chat")),
             status=str(item.get("status", "active")),
             activity=str(item.get("activity", "idle")),
             current_action=str(item.get("currentAction", "Idle")),
@@ -159,7 +186,7 @@ async def send_message(
     payload: ChatMessageRequest,
     request: Request,
 ) -> ChatMessageAcceptedResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_session(request, session_id)
     try:
         exists = await runtime.has_session(session_id)
         if not exists:
@@ -197,7 +224,7 @@ async def send_message(
 
 @router.get("/{session_id}/history", response_model=ChatHistoryResponse)
 async def get_history(session_id: str, request: Request, limit: int = 200) -> ChatHistoryResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_session(request, session_id)
     try:
         history = await runtime.get_history(session_id=session_id, limit=limit)
     except ChatRuntimeError as exc:
@@ -208,6 +235,7 @@ async def get_history(session_id: str, request: Request, limit: int = 200) -> Ch
         project_root=history["projectRoot"],
         source=history.get("source", "ide-plugin"),
         profile=history.get("profile", "quick"),
+        runtime=history.get("runtime", "chat"),
         status=history.get("status", "active"),
         messages=[ChatMessageDto.model_validate(item) for item in history.get("messages", [])],
         events=[ChatEventDto.model_validate(item) for item in history.get("events", [])],
@@ -219,7 +247,7 @@ async def get_history(session_id: str, request: Request, limit: int = 200) -> Ch
 
 @router.get("/{session_id}/status", response_model=ChatSessionStatusResponse)
 async def get_status(session_id: str, request: Request) -> ChatSessionStatusResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_session(request, session_id)
     try:
         status_payload = await runtime.get_status(session_id=session_id)
         diff_payload = await runtime.get_diff(session_id=session_id)
@@ -253,11 +281,15 @@ async def get_status(session_id: str, request: Request) -> ChatSessionStatusResp
     )
     return ChatSessionStatusResponse(
         session_id=status_payload["sessionId"],
+        runtime=str(status_payload.get("runtime", "chat")),
         activity=str(status_payload.get("activity", "idle")),
         current_action=str(status_payload.get("currentAction", "Idle")),
         last_event_at=_parse_iso_datetime(str(status_payload.get("lastEventAt"))),
         updated_at=_parse_iso_datetime(str(status_payload.get("updatedAt"))),
         pending_permissions_count=pending_permissions_count,
+        active_run_id=status_payload.get("activeRunId"),
+        active_run_status=status_payload.get("activeRunStatus"),
+        active_run_backend=status_payload.get("activeRunBackend"),
         totals=totals,
         limits=limits,
         last_retry_message=status_payload.get("lastRetryMessage"),
@@ -269,7 +301,7 @@ async def get_status(session_id: str, request: Request) -> ChatSessionStatusResp
 
 @router.get("/{session_id}/diff", response_model=ChatSessionDiffResponse)
 async def get_diff(session_id: str, request: Request) -> ChatSessionDiffResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_session(request, session_id)
     try:
         diff_payload = await runtime.get_diff(session_id=session_id)
         status_payload = await runtime.get_status(session_id=session_id)
@@ -289,6 +321,7 @@ async def get_diff(session_id: str, request: Request) -> ChatSessionDiffResponse
     )
     return ChatSessionDiffResponse(
         session_id=diff_payload["sessionId"],
+        runtime=str(diff_payload.get("runtime", "chat")),
         summary=summary,
         files=[ChatDiffFileDto.model_validate(item) for item in diff_payload.get("files", [])],
         updated_at=_parse_iso_datetime(str(diff_payload.get("updatedAt"))),
@@ -298,7 +331,7 @@ async def get_diff(session_id: str, request: Request) -> ChatSessionDiffResponse
 
 @router.post("/{session_id}/commands", response_model=ChatCommandResponse)
 async def execute_command(session_id: str, payload: ChatCommandRequest, request: Request) -> ChatCommandResponse:
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_session(request, session_id)
     try:
         command_result = await runtime.execute_command(session_id=session_id, command=payload.command)
         status_payload = await runtime.get_status(session_id=session_id)
@@ -324,7 +357,7 @@ async def execute_command(session_id: str, payload: ChatCommandRequest, request:
 
 @router.get("/{session_id}/stream")
 async def stream_events(session_id: str, request: Request, fromIndex: int = 0):
-    runtime = _get_runtime(request)
+    runtime = _resolve_runtime_for_session(request, session_id)
     try:
         exists = await runtime.has_session(session_id)
     except ChatRuntimeError as exc:

@@ -1,10 +1,16 @@
 package ru.sber.aitestplugin.ui.toolwindow
 
+import com.fasterxml.jackson.databind.DeserializationFeature
+import com.fasterxml.jackson.databind.SerializationFeature
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import com.fasterxml.jackson.module.kotlin.readValue
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.ui.popup.JBPopup
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.ui.popup.JBPopupListener
@@ -34,6 +40,8 @@ import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatSessionListItemDto
 import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
+import ru.sber.aitestplugin.model.RunArtifactDto
+import ru.sber.aitestplugin.model.RunEventResponseDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
@@ -53,6 +61,7 @@ import java.awt.RenderingHints
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.BorderFactory
@@ -60,8 +69,10 @@ import javax.swing.BoxLayout
 import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultListModel
 import javax.swing.JButton
+import javax.swing.JComboBox
 import javax.swing.JList
 import javax.swing.JPanel
+import javax.swing.JSplitPane
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.UIManager
@@ -77,6 +88,10 @@ class AiToolWindowPanel(
     private val settings = AiTestPluginSettingsService.getInstance(project).settings
     private val refreshInFlight = AtomicBoolean(false)
     private val streamClient = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
+    private val jsonMapper = jacksonObjectMapper()
+        .registerModule(JavaTimeModule())
+        .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
     private val pollTimer = Timer(3000) { refreshControlPlaneAsync() }
     private val uiRefreshDebounceMs = 200
     private val autoScrollBottomThresholdPx = 48
@@ -114,6 +129,62 @@ class AiToolWindowPanel(
 
     private val inputArea = JBTextArea(4, 20)
     private val sendButton = JButton()
+    private val runtimeSelector = JComboBox(RuntimeMode.values())
+    private val runInfoLabel = JBLabel().apply { foreground = theme.secondaryText }
+    private val runArtifactsModel = DefaultListModel<RunArtifactDto>()
+    private val runArtifactsList = JBList(runArtifactsModel)
+    private val artifactPreviewLabel = JBLabel().apply { foreground = theme.secondaryText }
+    private val artifactPreviewArea = JBTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        isOpaque = false
+        foreground = theme.primaryText
+        caretColor = theme.primaryText
+        border = JBUI.Borders.empty(8, 10)
+        text = "Artifacts and logs will appear here for Agent runs."
+    }
+    private val runArtifactsPanel = JPanel(BorderLayout()).apply {
+        isOpaque = true
+        background = theme.containerBackground
+        border = JBUI.Borders.compound(
+            BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+            JBUI.Borders.empty(6, 8)
+        )
+        isVisible = false
+    }
+    private val runEventsModel = DefaultListModel<LiveRunEventItem>()
+    private val runEventsList = JBList(runEventsModel)
+    private val runEventPreviewLabel = JBLabel().apply { foreground = theme.secondaryText }
+    private val runEventPreviewArea = JBTextArea().apply {
+        isEditable = false
+        lineWrap = true
+        wrapStyleWord = true
+        isOpaque = false
+        foreground = theme.primaryText
+        caretColor = theme.primaryText
+        border = JBUI.Borders.empty(8, 10)
+        text = "Live run activity will appear here for Agent runs."
+    }
+    private val runEventsPanel = JPanel(BorderLayout()).apply {
+        isOpaque = true
+        background = theme.containerBackground
+        border = JBUI.Borders.compound(
+            BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+            JBUI.Borders.empty(6, 8)
+        )
+        isVisible = false
+    }
+    private val runInfoPanel = JPanel(BorderLayout()).apply {
+        isOpaque = true
+        background = theme.containerBackground
+        border = JBUI.Borders.compound(
+            BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+            JBUI.Borders.empty(6, 8)
+        )
+        isVisible = false
+        add(runInfoLabel, BorderLayout.CENTER)
+    }
     private val statusLabel = JBLabel("Подключение...")
 
     private val approvalPanel = JPanel().apply {
@@ -123,9 +194,14 @@ class AiToolWindowPanel(
     }
     private val uiApplyTimer = Timer(uiRefreshDebounceMs) { applyPendingUiRefresh() }.apply { isRepeats = false }
 
+    private var selectedRuntime: RuntimeMode = RuntimeMode.CHAT
     private var sessionId: String? = null
+    private val sessionIdsByRuntime = mutableMapOf<RuntimeMode, String>()
     private var streamSessionId: String? = null
     private var streamCall: Call? = null
+    private var runEventsStreamRunId: String? = null
+    private var runEventsStreamCall: Call? = null
+    private var runEventsFromIndex: Int = 0
     private var slashPopup: JBPopup? = null
     private var isApplyingSlashSelection: Boolean = false
     private var suppressSlashPopupUntilReset: Boolean = false
@@ -144,8 +220,14 @@ class AiToolWindowPanel(
     private var initialSessionReady: Boolean = false
     @Volatile
     private var forceScrollToBottom: Boolean = false
+    private val artifactsRefreshInFlight = AtomicBoolean(false)
     private val sessionStateLock = Any()
     private var lastRenderedServerTailKey: String? = null
+    private var currentArtifactRunId: String? = null
+    private var selectedArtifactKey: String? = null
+    private var selectedRunEventIndex: Int? = null
+    private var lastAgentRunId: String? = null
+    private var lastArtifactsRefreshAtMs: Long = 0L
 
     init {
         border = JBUI.Borders.empty(8, 8, 10, 8)
@@ -169,6 +251,7 @@ class AiToolWindowPanel(
         pendingHistoryForRender = null
         pendingStatusForRender = null
         stopEventStream()
+        stopRunEventStream()
         suppressSlashPopupUntilReset = false
         lastSlashMatches = emptyList()
         hideSlashPopup()
@@ -245,6 +328,24 @@ class AiToolWindowPanel(
             isOpaque = false
             add(timelineContainer, BorderLayout.NORTH)
         }
+        val footer = JPanel().apply {
+            layout = BoxLayout(this, BoxLayout.Y_AXIS)
+            isOpaque = false
+            add(runInfoPanel)
+            add(JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(6)
+                add(runEventsPanel, BorderLayout.CENTER)
+            })
+            add(JPanel(BorderLayout()).apply {
+                isOpaque = false
+                border = JBUI.Borders.emptyTop(6)
+                add(runArtifactsPanel, BorderLayout.CENTER)
+            })
+            add(approvalPanel)
+        }
+        configureRunEventsPanel()
+        configureRunArtifactsPanel()
         renderTimeline()
 
         return JPanel(BorderLayout()).apply {
@@ -264,7 +365,7 @@ class AiToolWindowPanel(
                 })
                 timelineScrollPane = this
             }, BorderLayout.CENTER)
-            add(approvalPanel, BorderLayout.SOUTH)
+            add(footer, BorderLayout.SOUTH)
         }
     }
 
@@ -278,7 +379,7 @@ class AiToolWindowPanel(
         historyList.addMouseListener(object : java.awt.event.MouseAdapter() {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
                 if (e.clickCount >= 2) {
-                    historyList.selectedValue?.let { activateSession(it.sessionId) }
+                    historyList.selectedValue?.let { activateSession(it) }
                 }
             }
         })
@@ -315,7 +416,7 @@ class AiToolWindowPanel(
                     border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
                     isContentAreaFilled = true
                     isFocusPainted = false
-                    addActionListener { historyList.selectedValue?.let { activateSession(it.sessionId) } }
+                    addActionListener { historyList.selectedValue?.let { activateSession(it) } }
                 })
             }, BorderLayout.SOUTH)
         }
@@ -354,6 +455,26 @@ class AiToolWindowPanel(
         sendButton.addActionListener { onSendOrStop() }
         updateSendButtonState()
 
+        runtimeSelector.selectedItem = selectedRuntime
+        runtimeSelector.toolTipText = "Runtime"
+        runtimeSelector.background = theme.controlBackground
+        runtimeSelector.foreground = theme.primaryText
+        runtimeSelector.border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+        runtimeSelector.renderer = RuntimeModeRenderer()
+        runtimeSelector.addActionListener {
+            val target = runtimeSelector.selectedItem as? RuntimeMode ?: return@addActionListener
+            if (target == selectedRuntime) return@addActionListener
+            selectedRuntime = target
+            sessionId = sessionIdsByRuntime[target]
+            latestActivity = "idle"
+            connectionDetails = null
+            stopRunEventStream()
+            clearRunEventsPanel()
+            clearRunArtifactsPanel()
+            updateStatusLabel()
+            ensureSessionAsync(forceNew = false)
+        }
+
         return JPanel(BorderLayout()).apply {
             isOpaque = false
             border = JBUI.Borders.emptyTop(8)
@@ -364,6 +485,14 @@ class AiToolWindowPanel(
                     border = JBUI.Borders.compound(
                         BorderFactory.createLineBorder(theme.containerBorder, 1, true),
                         JBUI.Borders.empty(8, 8, 8, 6)
+                    )
+                    add(
+                        JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+                            isOpaque = false
+                            border = JBUI.Borders.emptyBottom(6)
+                            add(runtimeSelector)
+                        },
+                        BorderLayout.NORTH
                     )
                     add(JBScrollPane(inputArea).apply {
                         border = JBUI.Borders.empty()
@@ -494,6 +623,14 @@ class AiToolWindowPanel(
 
     private fun ensureSessionBlocking(forceNew: Boolean): String? {
         synchronized(sessionStateLock) {
+            if (!forceNew) {
+                val existing = sessionIdsByRuntime[selectedRuntime]
+                if (!existing.isNullOrBlank()) {
+                    sessionId = existing
+                    initialSessionReady = true
+                    return existing
+                }
+            }
             if (!forceNew && !sessionId.isNullOrBlank()) {
                 initialSessionReady = true
                 return sessionId
@@ -514,13 +651,15 @@ class AiToolWindowPanel(
                     ChatSessionCreateRequestDto(
                         projectRoot = projectRoot,
                         source = "ide-plugin",
-                        profile = "quick",
+                        profile = selectedRuntime.defaultProfile,
+                        runtime = selectedRuntime.backendValue,
                         reuseExisting = !forceNew,
                         zephyrAuth = settings.toZephyrAuthDto(),
                         jiraInstance = settings.toJiraInstanceUrl()
                     )
                 )
                 sessionId = created.sessionId
+                sessionIdsByRuntime[selectedRuntime] = created.sessionId
                 latestActivity = "idle"
                 streamReconnectAttempt = 0
                 streamFromIndex = 0
@@ -535,6 +674,7 @@ class AiToolWindowPanel(
                         lastRenderedServerTailKey = null
                         renderTimeline()
                         renderPendingApprovals(emptyList())
+                        clearRunArtifactsPanel()
                     }
                 }
                 created.sessionId
@@ -549,8 +689,11 @@ class AiToolWindowPanel(
         }
     }
 
-    private fun activateSession(targetSessionId: String) {
-        sessionId = targetSessionId
+    private fun activateSession(targetSession: ChatSessionListItemDto) {
+        selectedRuntime = runtimeModeFromBackend(targetSession.runtime)
+        runtimeSelector.selectedItem = selectedRuntime
+        sessionId = targetSession.sessionId
+        sessionIdsByRuntime[selectedRuntime] = targetSession.sessionId
         initialSessionRequested = true
         initialSessionReady = true
         latestActivity = "idle"
@@ -562,10 +705,11 @@ class AiToolWindowPanel(
         lastRenderedServerTailKey = null
         renderTimeline()
         renderPendingApprovals(emptyList())
+        clearRunArtifactsPanel()
         streamReconnectAttempt = 0
         streamFromIndex = 0
         showChatScreen()
-        startEventStreamAsync(targetSessionId)
+        startEventStreamAsync(targetSession.sessionId)
         refreshControlPlaneAsync()
     }
 
@@ -675,6 +819,8 @@ class AiToolWindowPanel(
 
     private fun renderStatus(status: ChatSessionStatusResponseDto) {
         latestActivity = status.activity.lowercase()
+        selectedRuntime = runtimeModeFromBackend(status.runtime)
+        runtimeSelector.selectedItem = selectedRuntime
         updateSendButtonState()
 
         val progress = when (latestActivity) {
@@ -690,6 +836,29 @@ class AiToolWindowPanel(
             upsertProgressLine(progress)
         } else {
             removeProgressLine()
+        }
+        val isAgentRuntime = status.runtime == RuntimeMode.AGENT.backendValue
+        val runIdForPanel = if (isAgentRuntime) {
+            status.activeRunId?.takeIf { it.isNotBlank() }?.also { lastAgentRunId = it } ?: lastAgentRunId
+        } else {
+            null
+        }
+        if (runIdForPanel != null) {
+            val statusText = status.activeRunStatus ?: if (latestActivity == "idle") "ready" else "running"
+            runInfoLabel.text = "Run ${runIdForPanel.take(8)} | $statusText | ${status.currentAction}"
+            runInfoPanel.isVisible = true
+            runEventsPanel.isVisible = true
+            ensureRunEventStream(runIdForPanel)
+            runArtifactsPanel.isVisible = true
+            refreshRunArtifactsAsync(runIdForPanel)
+            if (status.activeRunStatus?.lowercase() in setOf("succeeded", "failed", "cancelled")) {
+                stopRunEventStream()
+            }
+        } else {
+            runInfoPanel.isVisible = false
+            stopRunEventStream()
+            clearRunEventsPanel()
+            clearRunArtifactsPanel()
         }
         updateStatusLabel()
     }
@@ -848,6 +1017,7 @@ class AiToolWindowPanel(
     }
 
     private fun updateStatusLabel() {
+        val runtimeText = selectedRuntime.title
         val activityText = when (latestActivity) {
             "busy" -> "В работе"
             "retry" -> "Повтор"
@@ -863,9 +1033,9 @@ class AiToolWindowPanel(
         }
         val details = connectionDetails?.takeIf { it.isNotBlank() }
         val text = if (details != null) {
-            "$activityText | $connectionText | $details"
+            "$runtimeText | $activityText | $connectionText | $details"
         } else {
-            "$activityText | $connectionText"
+            "$runtimeText | $activityText | $connectionText"
         }
         if (SwingUtilities.isEventDispatchThread()) {
             statusLabel.text = text
@@ -894,6 +1064,492 @@ class AiToolWindowPanel(
         )
         renderTimeline()
         scrollToBottomIfNeeded(shouldStickToBottom)
+    }
+
+    private fun updateRunEventsIndexFromLine(line: String) {
+        val payload = line.removePrefix("data:").trim()
+        val match = sseIndexPattern.find(payload) ?: return
+        val parsed = match.groupValues.getOrNull(1)?.toIntOrNull() ?: return
+        runEventsFromIndex = maxOf(runEventsFromIndex, parsed + 1)
+    }
+
+    private fun configureRunArtifactsPanel() {
+        runArtifactsList.background = theme.containerBackground
+        runArtifactsList.foreground = theme.primaryText
+        runArtifactsList.selectionBackground = theme.controlBackground
+        runArtifactsList.selectionForeground = theme.primaryText
+        runArtifactsList.visibleRowCount = 6
+        runArtifactsList.cellRenderer = ArtifactRenderer()
+        runArtifactsList.addListSelectionListener {
+            if (!it.valueIsAdjusting) {
+                renderSelectedArtifactPreview(runArtifactsList.selectedValue)
+            }
+        }
+
+        artifactPreviewArea.background = theme.containerBackground
+        artifactPreviewArea.font = artifactPreviewArea.font.deriveFont(12.5f)
+
+        val header = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(JBLabel("Artifacts / Logs").apply {
+                foreground = theme.primaryText
+                font = font.deriveFont(Font.BOLD, 12.5f)
+            }, BorderLayout.WEST)
+            add(actionButton("Refresh") {
+                currentArtifactRunId?.let { refreshRunArtifactsAsync(it, force = true) }
+            }, BorderLayout.EAST)
+        }
+
+        val previewPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(artifactPreviewLabel, BorderLayout.NORTH)
+            add(JBScrollPane(artifactPreviewArea).apply {
+                border = JBUI.Borders.compound(
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                    JBUI.Borders.empty(2)
+                )
+                viewport.background = theme.containerBackground
+                background = theme.containerBackground
+                preferredSize = Dimension(100, 150)
+            }, BorderLayout.CENTER)
+        }
+
+        runArtifactsPanel.add(header, BorderLayout.NORTH)
+        runArtifactsPanel.add(
+            JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                JBScrollPane(runArtifactsList).apply {
+                    border = JBUI.Borders.compound(
+                        BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                        JBUI.Borders.empty(2)
+                    )
+                    viewport.background = theme.containerBackground
+                    background = theme.containerBackground
+                    preferredSize = Dimension(100, 120)
+                },
+                previewPanel
+            ).apply {
+                border = JBUI.Borders.emptyTop(6)
+                resizeWeight = 0.38
+                isOpaque = false
+            },
+            BorderLayout.CENTER
+        )
+    }
+
+    private fun configureRunEventsPanel() {
+        runEventsList.background = theme.containerBackground
+        runEventsList.foreground = theme.primaryText
+        runEventsList.selectionBackground = theme.controlBackground
+        runEventsList.selectionForeground = theme.primaryText
+        runEventsList.visibleRowCount = 5
+        runEventsList.cellRenderer = RunEventRenderer()
+        runEventsList.addListSelectionListener {
+            if (!it.valueIsAdjusting) {
+                renderSelectedRunEvent(runEventsList.selectedValue)
+            }
+        }
+
+        runEventPreviewArea.background = theme.containerBackground
+        runEventPreviewArea.font = runEventPreviewArea.font.deriveFont(12.5f)
+
+        val header = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(JBLabel("Live Activity").apply {
+                foreground = theme.primaryText
+                font = font.deriveFont(Font.BOLD, 12.5f)
+            }, BorderLayout.WEST)
+        }
+
+        val previewPanel = JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(runEventPreviewLabel, BorderLayout.NORTH)
+            add(JBScrollPane(runEventPreviewArea).apply {
+                border = JBUI.Borders.compound(
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                    JBUI.Borders.empty(2)
+                )
+                viewport.background = theme.containerBackground
+                background = theme.containerBackground
+                preferredSize = Dimension(100, 130)
+            }, BorderLayout.CENTER)
+        }
+
+        runEventsPanel.add(header, BorderLayout.NORTH)
+        runEventsPanel.add(
+            JSplitPane(
+                JSplitPane.VERTICAL_SPLIT,
+                JBScrollPane(runEventsList).apply {
+                    border = JBUI.Borders.compound(
+                        BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                        JBUI.Borders.empty(2)
+                    )
+                    viewport.background = theme.containerBackground
+                    background = theme.containerBackground
+                    preferredSize = Dimension(100, 110)
+                },
+                previewPanel
+            ).apply {
+                border = JBUI.Borders.emptyTop(6)
+                resizeWeight = 0.42
+                isOpaque = false
+            },
+            BorderLayout.CENTER
+        )
+    }
+
+    private fun ensureRunEventStream(runId: String) {
+        if (runEventsStreamRunId == runId && runEventsStreamCall != null) {
+            return
+        }
+        stopRunEventStream()
+        if (runEventsStreamRunId != runId) {
+            clearRunEventsPanel()
+            runEventsFromIndex = 0
+        }
+        runEventsStreamRunId = runId
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val base = settings.backendUrl.trimEnd('/')
+            val request = Request.Builder()
+                .url("$base/runs/$runId/events?fromIndex=$runEventsFromIndex")
+                .header("Accept", "text/event-stream")
+                .get()
+                .build()
+            val call = streamClient.newCall(request)
+            runEventsStreamCall = call
+            try {
+                call.execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException("HTTP ${response.code}")
+                    }
+                    val source = response.body?.source() ?: return@use
+                    var currentEventType: String? = null
+                    var currentData = StringBuilder()
+                    while (!source.exhausted() && isDisplayable && runEventsStreamRunId == runId) {
+                        val line = source.readUtf8Line() ?: break
+                        when {
+                            line.startsWith("event:") -> {
+                                currentEventType = line.removePrefix("event:").trim()
+                            }
+                            line.startsWith("data:") -> {
+                                updateRunEventsIndexFromLine(line)
+                                if (currentData.isNotEmpty()) {
+                                    currentData.append('\n')
+                                }
+                                currentData.append(line.removePrefix("data:").trim())
+                            }
+                            line.isBlank() -> {
+                                val eventType = currentEventType
+                                val payload = currentData.toString().trim()
+                                if (!eventType.isNullOrBlank() && payload.isNotBlank()) {
+                                    handleRunEventData(runId, eventType, payload)
+                                }
+                                currentEventType = null
+                                currentData = StringBuilder()
+                            }
+                        }
+                    }
+                }
+            } catch (ex: Exception) {
+                if (logger.isDebugEnabled) {
+                    logger.debug("Run event stream disconnected for $runId", ex)
+                }
+            } finally {
+                if (runEventsStreamCall == call) {
+                    runEventsStreamCall = null
+                }
+            }
+        }
+    }
+
+    private fun stopRunEventStream() {
+        runEventsStreamCall?.cancel()
+        runEventsStreamCall = null
+        runEventsStreamRunId = null
+        runEventsFromIndex = 0
+    }
+
+    private fun handleRunEventData(runId: String, eventType: String, rawData: String) {
+        if (eventType.equals("heartbeat", ignoreCase = true)) {
+            return
+        }
+        val event = try {
+            jsonMapper.readValue<RunEventResponseDto>(rawData)
+        } catch (ex: Exception) {
+            if (logger.isDebugEnabled) {
+                logger.debug("Failed to parse run event for $runId: $rawData", ex)
+            }
+            return
+        }
+        SwingUtilities.invokeLater {
+            if (runEventsStreamRunId != runId && currentArtifactRunId != runId && lastAgentRunId != runId) {
+                return@invokeLater
+            }
+            appendRunEvent(event)
+        }
+    }
+
+    private fun appendRunEvent(event: RunEventResponseDto) {
+        if ((0 until runEventsModel.size()).any { runEventsModel.get(it).index == event.index }) {
+            return
+        }
+        val item = LiveRunEventItem(
+            index = event.index,
+            eventType = event.eventType,
+            createdAt = event.createdAt,
+            summary = summarizeRunEvent(event),
+            details = buildRunEventDetails(event)
+        )
+        runEventsModel.addElement(item)
+        while (runEventsModel.size() > 200) {
+            runEventsModel.remove(0)
+        }
+        runEventsPanel.isVisible = true
+        val previousSelection = selectedRunEventIndex
+        if (previousSelection == null || previousSelection == item.index || runEventsModel.size() == 1) {
+            runEventsList.selectedIndex = runEventsModel.size() - 1
+        }
+    }
+
+    private fun clearRunEventsPanel() {
+        selectedRunEventIndex = null
+        runEventsModel.clear()
+        runEventsList.clearSelection()
+        runEventPreviewLabel.text = "Live Activity"
+        runEventPreviewArea.text = "Live run activity will appear here for Agent runs."
+        runEventsPanel.isVisible = false
+    }
+
+    private fun renderSelectedRunEvent(item: LiveRunEventItem?) {
+        if (item == null) {
+            selectedRunEventIndex = null
+            runEventPreviewLabel.text = "Live Activity"
+            runEventPreviewArea.text = "Select an event to inspect it."
+            return
+        }
+        selectedRunEventIndex = item.index
+        runEventPreviewLabel.text = "${item.eventType} | ${timeFormatter.format(item.createdAt)}"
+        runEventPreviewArea.text = item.details
+        runEventPreviewArea.caretPosition = 0
+    }
+
+    private fun refreshRunArtifactsAsync(runId: String, force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && currentArtifactRunId == runId && now - lastArtifactsRefreshAtMs < 1_500L) {
+            return
+        }
+        if (!artifactsRefreshInFlight.compareAndSet(false, true)) {
+            return
+        }
+        currentArtifactRunId = runId
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val response = backendClient.listRunArtifacts(runId)
+                SwingUtilities.invokeLater {
+                    lastArtifactsRefreshAtMs = System.currentTimeMillis()
+                    applyRunArtifacts(runId, response.items)
+                }
+            } catch (ex: Exception) {
+                logger.debug("Failed to refresh run artifacts for $runId", ex)
+                SwingUtilities.invokeLater {
+                    artifactPreviewLabel.text = "Artifacts"
+                    artifactPreviewArea.text = "Failed to load artifacts: ${ex.message}"
+                    runArtifactsPanel.isVisible = true
+                }
+            } finally {
+                artifactsRefreshInFlight.set(false)
+            }
+        }
+    }
+
+    private fun applyRunArtifacts(runId: String, items: List<RunArtifactDto>) {
+        currentArtifactRunId = runId
+        val sortedItems = items.sortedWith(
+            compareByDescending<RunArtifactDto> { isLikelyLogArtifact(it) }
+                .thenBy { it.attemptId ?: "" }
+                .thenBy { it.name.lowercase(Locale.getDefault()) }
+        )
+        val desiredKey = selectedArtifactKey
+        runArtifactsModel.clear()
+        sortedItems.forEach(runArtifactsModel::addElement)
+        runArtifactsPanel.isVisible = true
+
+        if (sortedItems.isEmpty()) {
+            artifactPreviewLabel.text = "Artifacts"
+            artifactPreviewArea.text = "No artifacts published for this run yet."
+            selectedArtifactKey = null
+            runArtifactsList.clearSelection()
+            return
+        }
+
+        val preferredIndex = sortedItems.indexOfFirst { artifactKey(it) == desiredKey }
+            .takeIf { it >= 0 }
+            ?: sortedItems.indexOfFirst(::isLikelyLogArtifact).takeIf { it >= 0 }
+            ?: 0
+        runArtifactsList.selectedIndex = preferredIndex
+        runArtifactsList.ensureIndexIsVisible(preferredIndex)
+    }
+
+    private fun clearRunArtifactsPanel() {
+        currentArtifactRunId = null
+        selectedArtifactKey = null
+        lastAgentRunId = null
+        lastArtifactsRefreshAtMs = 0L
+        runArtifactsModel.clear()
+        runArtifactsList.clearSelection()
+        artifactPreviewLabel.text = "Artifacts"
+        artifactPreviewArea.text = "Artifacts and logs will appear here for Agent runs."
+        runArtifactsPanel.isVisible = false
+    }
+
+    private fun renderSelectedArtifactPreview(artifact: RunArtifactDto?) {
+        if (artifact == null) {
+            artifactPreviewLabel.text = "Artifacts"
+            artifactPreviewArea.text = "Select an artifact to inspect it."
+            return
+        }
+        selectedArtifactKey = artifactKey(artifact)
+        artifactPreviewLabel.text = buildArtifactCaption(artifact)
+        val inlineContent = artifact.content?.takeIf { it.isNotBlank() }
+        if (inlineContent != null) {
+            artifactPreviewArea.text = trimPreview(inlineContent)
+            artifactPreviewArea.caretPosition = 0
+            return
+        }
+        if (!isPreviewableTextArtifact(artifact)) {
+            artifactPreviewArea.text = buildNonTextArtifactSummary(artifact)
+            artifactPreviewArea.caretPosition = 0
+            return
+        }
+        val runId = currentArtifactRunId ?: return
+        artifactPreviewArea.text = "Loading ${artifact.name}..."
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                val artifactId = artifact.artifactId
+                    ?: throw IllegalStateException("Artifact content is unavailable for ${artifact.name}")
+                val content = backendClient.getRunArtifactContent(runId, artifactId)
+                SwingUtilities.invokeLater {
+                    if (currentArtifactRunId == runId && selectedArtifactKey == artifactKey(artifact)) {
+                        artifactPreviewArea.text = trimPreview(content)
+                        artifactPreviewArea.caretPosition = 0
+                    }
+                }
+            } catch (ex: Exception) {
+                SwingUtilities.invokeLater {
+                    if (currentArtifactRunId == runId && selectedArtifactKey == artifactKey(artifact)) {
+                        artifactPreviewArea.text = buildNonTextArtifactSummary(artifact) + "\n\nPreview unavailable: ${ex.message}"
+                        artifactPreviewArea.caretPosition = 0
+                    }
+                }
+            }
+        }
+    }
+
+    private fun artifactKey(artifact: RunArtifactDto): String =
+        listOfNotNull(artifact.artifactId, artifact.uri.ifBlank { null }, artifact.name).joinToString("|")
+
+    private fun buildArtifactCaption(artifact: RunArtifactDto): String {
+        val type = artifact.mediaType ?: "unknown"
+        val attempt = artifact.attemptId?.let { " | attempt ${it.take(8)}" }.orEmpty()
+        return "${artifact.name} | $type$attempt"
+    }
+
+    private fun buildNonTextArtifactSummary(artifact: RunArtifactDto): String {
+        val lines = mutableListOf<String>()
+        lines += "name: ${artifact.name}"
+        lines += "type: ${artifact.mediaType ?: "unknown"}"
+        artifact.size?.let { lines += "size: $it bytes" }
+        artifact.attemptId?.let { lines += "attempt: $it" }
+        artifact.connectorSource?.let { lines += "source: $it" }
+        artifact.signedUrl?.takeIf { it.isNotBlank() }?.let { lines += "url: $it" }
+        if (artifact.uri.isNotBlank()) {
+            lines += "uri: ${artifact.uri}"
+        }
+        return lines.joinToString("\n")
+    }
+
+    private fun trimPreview(content: String): String =
+        StringUtil.shortenTextWithEllipsis(content.trim(), 12_000, 0, true)
+
+    private fun isPreviewableTextArtifact(artifact: RunArtifactDto): Boolean {
+        val mediaType = artifact.mediaType?.lowercase(Locale.getDefault()).orEmpty()
+        if (mediaType.startsWith("text/")) {
+            return true
+        }
+        if (mediaType.contains("json") || mediaType.contains("xml") || mediaType.contains("yaml")) {
+            return true
+        }
+        val lowerName = artifact.name.lowercase(Locale.getDefault())
+        return listOf(".log", ".txt", ".md", ".json", ".xml", ".yml", ".yaml", ".diff", ".patch")
+            .any(lowerName::endsWith)
+    }
+
+    private fun isLikelyLogArtifact(artifact: RunArtifactDto): Boolean {
+        val lowerName = artifact.name.lowercase(Locale.getDefault())
+        return lowerName.contains("log") || lowerName.endsWith(".log") || lowerName.endsWith(".txt")
+    }
+
+    private fun summarizeRunEvent(event: RunEventResponseDto): String {
+        val payload = event.payload
+        return when (event.eventType) {
+            "run.started" -> "Run started"
+            "run.awaiting_approval" -> {
+                val title = payload["title"]?.toString()
+                    ?: (payload["approval"] as? Map<*, *>)?.get("title")?.toString()
+                    ?: "Approval required"
+                "Approval required: $title"
+            }
+            "run.artifact_published" -> {
+                val artifactName = (payload["artifact"] as? Map<*, *>)?.get("name")?.toString() ?: "artifact"
+                "Artifact published: $artifactName"
+            }
+            "run.finished" -> "Run finished"
+            "run.failed" -> "Run failed: ${payload["message"]?.toString() ?: "unknown error"}"
+            "run.cancelled" -> "Run cancelled"
+            "approval.decision" -> "Approval decision: ${payload["decision"]?.toString() ?: "sent"}"
+            else -> {
+                payload["message"]?.toString()
+                    ?: payload["currentAction"]?.toString()
+                    ?: extractNestedProgressText(payload)
+                    ?: event.eventType
+            }
+        }
+    }
+
+    private fun extractNestedProgressText(payload: Map<String, Any?>): String? {
+        val nestedPayload = payload["payload"] as? Map<*, *> ?: return null
+        val properties = nestedPayload["properties"] as? Map<*, *>
+        val info = properties?.get("info") as? Map<*, *>
+        val part = properties?.get("part") as? Map<*, *>
+        return listOfNotNull(
+            part?.get("type")?.toString()?.takeIf { it.isNotBlank() }?.let { "part: $it" },
+            info?.get("error")?.toString()?.takeIf { it.isNotBlank() },
+            properties?.get("permission")?.toString()?.takeIf { it.isNotBlank() },
+            nestedPayload["type"]?.toString()?.takeIf { it.isNotBlank() }
+        ).firstOrNull()
+    }
+
+    private fun buildRunEventDetails(event: RunEventResponseDto): String {
+        val prettyPayload = try {
+            jsonMapper.writerWithDefaultPrettyPrinter().writeValueAsString(event.payload)
+        } catch (_: Exception) {
+            event.payload.toString()
+        }
+        return buildString {
+            append("summary: ")
+            append(summarizeRunEvent(event))
+            append("\n")
+            append("type: ")
+            append(event.eventType)
+            append("\n")
+            append("index: ")
+            append(event.index)
+            append("\n")
+            append("time: ")
+            append(event.createdAt)
+            append("\n\npayload:\n")
+            append(prettyPayload)
+        }
     }
 
     private fun upsertProgressLine(text: String) {
@@ -1041,6 +1697,23 @@ class AiToolWindowPanel(
         val text: String
     )
 
+    private data class LiveRunEventItem(
+        val index: Int,
+        val eventType: String,
+        val createdAt: Instant,
+        val summary: String,
+        val details: String
+    )
+
+    private enum class RuntimeMode(
+        val backendValue: String,
+        val title: String,
+        val defaultProfile: String
+    ) {
+        CHAT("chat", "Chat", "quick"),
+        AGENT("opencode", "Agent", "agent")
+    }
+
     private enum class UiLineSource {
         SERVER_MESSAGE,
         LOCAL_SYSTEM,
@@ -1060,6 +1733,9 @@ class AiToolWindowPanel(
         SYSTEM,
         PROGRESS
     }
+
+    private fun runtimeModeFromBackend(value: String?): RuntimeMode =
+        RuntimeMode.values().firstOrNull { it.backendValue.equals(value ?: "chat", ignoreCase = true) } ?: RuntimeMode.CHAT
 
     private fun uiThemeColor(keys: List<String>, fallback: Color): JBColor {
         val resolved = keys.asSequence().mapNotNull { UIManager.getColor(it) }.firstOrNull() ?: fallback
@@ -1188,12 +1864,74 @@ class AiToolWindowPanel(
                 ""
             } else {
                 val preview = item.lastMessagePreview?.takeIf { it.isNotBlank() } ?: "Сессия ${item.sessionId.take(8)}"
-                "$preview  |  ${formatter.format(item.updatedAt)}  |  ${item.activity}"
+                "[${runtimeModeFromBackend(item.runtime).title}] $preview  |  ${formatter.format(item.updatedAt)}  |  ${item.activity}"
             }
             return (super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {
                 border = JBUI.Borders.empty(8, 10)
                 foreground = if (isSelected) theme.primaryText else theme.primaryText
                 background = if (isSelected) theme.controlBackground else theme.containerBackground
+            }
+        }
+    }
+
+    private inner class ArtifactRenderer : DefaultListCellRenderer() {
+        override fun getListCellRendererComponent(
+            list: JList<*>,
+            value: Any?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            val item = value as? RunArtifactDto
+            val typeHint = item?.mediaType?.substringBefore(';')?.takeIf { it.isNotBlank() } ?: "artifact"
+            val text = if (item == null) {
+                ""
+            } else {
+                "${item.name}  |  $typeHint"
+            }
+            return (super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {
+                border = JBUI.Borders.empty(6, 8)
+                foreground = theme.primaryText
+                background = if (isSelected) theme.controlBackground else theme.containerBackground
+            }
+        }
+    }
+
+    private inner class RunEventRenderer : DefaultListCellRenderer() {
+        override fun getListCellRendererComponent(
+            list: JList<*>,
+            value: Any?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            val item = value as? LiveRunEventItem
+            val text = if (item == null) {
+                ""
+            } else {
+                "${timeFormatter.format(item.createdAt)}  |  ${item.summary}"
+            }
+            return (super.getListCellRendererComponent(list, text, index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {
+                border = JBUI.Borders.empty(6, 8)
+                foreground = theme.primaryText
+                background = if (isSelected) theme.controlBackground else theme.containerBackground
+            }
+        }
+    }
+
+    private inner class RuntimeModeRenderer : DefaultListCellRenderer() {
+        override fun getListCellRendererComponent(
+            list: JList<*>,
+            value: Any?,
+            index: Int,
+            isSelected: Boolean,
+            cellHasFocus: Boolean
+        ): Component {
+            val mode = value as? RuntimeMode
+            return (super.getListCellRendererComponent(list, mode?.title ?: "", index, isSelected, cellHasFocus) as DefaultListCellRenderer).apply {
+                foreground = theme.primaryText
+                background = if (isSelected) theme.controlBackground else theme.containerBackground
+                border = JBUI.Borders.empty(4, 8)
             }
         }
     }

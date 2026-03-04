@@ -11,7 +11,7 @@ from api.schemas import ApiBaseModel, FeatureResultDto, RunAttemptDto
 
 class RunCreateRequest(ApiBaseModel):
     project_root: str = Field(..., alias="projectRoot")
-    plugin: Literal["testgen", "ift", "debug", "browser", "analytics"]
+    plugin: Literal["testgen", "ift", "debug", "browser", "analytics", "opencode"]
     input: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = Field(default=None, alias="sessionId")
     profile: str = "quick"
@@ -30,10 +30,15 @@ class RunStatusResponse(ApiBaseModel):
     run_id: str = Field(..., alias="runId")
     session_id: str | None = Field(default=None, alias="sessionId")
     plugin: str
+    runtime: str | None = None
+    backend: str | None = None
     status: str
     source: str | None = None
     current_attempt: int = Field(default=0, alias="currentAttempt")
     execution_id: str | None = Field(default=None, alias="executionId")
+    backend_run_id: str | None = Field(default=None, alias="backendRunId")
+    backend_session_id: str | None = Field(default=None, alias="backendSessionId")
+    last_synced_at: datetime | None = Field(default=None, alias="lastSyncedAt")
     incident_uri: str | None = Field(default=None, alias="incidentUri")
     started_at: datetime | None = Field(default=None, alias="startedAt")
     finished_at: datetime | None = Field(default=None, alias="finishedAt")
@@ -85,8 +90,13 @@ class RunResultResponse(ApiBaseModel):
     run_id: str = Field(..., alias="runId")
     session_id: str | None = Field(default=None, alias="sessionId")
     plugin: str
+    runtime: str | None = None
+    backend: str | None = None
     status: str
     source: str | None = None
+    backend_run_id: str | None = Field(default=None, alias="backendRunId")
+    backend_session_id: str | None = Field(default=None, alias="backendSessionId")
+    last_synced_at: datetime | None = Field(default=None, alias="lastSyncedAt")
     incident_uri: str | None = Field(default=None, alias="incidentUri")
     started_at: datetime | None = Field(default=None, alias="startedAt")
     finished_at: datetime | None = Field(default=None, alias="finishedAt")

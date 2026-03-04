@@ -49,17 +49,22 @@ class _FakeCursor:
         args = params or ()
         self._results = []
 
-        if sql.startswith("CREATE TABLE IF NOT EXISTS") or sql.startswith("CREATE INDEX IF NOT EXISTS"):
+        if sql.startswith("CREATE TABLE IF NOT EXISTS") or sql.startswith("CREATE INDEX IF NOT EXISTS") or sql.startswith("ALTER TABLE cp_sessions ADD COLUMN IF NOT EXISTS runtime"):
             return
 
         if sql.startswith("INSERT INTO cp_sessions "):
-            session_id, project_root, source, profile, status, payload_raw = args
+            if len(args) == 7:
+                session_id, project_root, source, profile, runtime, status, payload_raw = args
+            else:
+                session_id, project_root, source, profile, status, payload_raw = args
+                runtime = "chat"
             now = datetime.now(timezone.utc)
             self._db.sessions[str(session_id)] = {
                 "session_id": str(session_id),
                 "project_root": str(project_root),
                 "source": str(source),
                 "profile": str(profile),
+                "runtime": str(runtime),
                 "status": str(status),
                 "payload": json.loads(str(payload_raw)),
                 "created_at": now,
@@ -67,7 +72,7 @@ class _FakeCursor:
             }
             return
 
-        if sql.startswith("SELECT session_id, project_root, source, profile, status, payload, created_at, updated_at FROM cp_sessions WHERE session_id ="):
+        if sql.startswith("SELECT session_id, project_root, source, profile, runtime, status, payload, created_at, updated_at FROM cp_sessions WHERE session_id ="):
             session = self._db.sessions.get(str(args[0]))
             if session:
                 self._results = [
@@ -76,6 +81,7 @@ class _FakeCursor:
                         session["project_root"],
                         session["source"],
                         session["profile"],
+                        session["runtime"],
                         session["status"],
                         session["payload"],
                         session["created_at"],
@@ -86,7 +92,12 @@ class _FakeCursor:
 
         if sql.startswith("SELECT session_id FROM cp_sessions WHERE project_root =") and "LIMIT 1" in sql:
             project_root = str(args[0])
-            rows = [row for row in self._db.sessions.values() if row["project_root"] == project_root]
+            runtime = str(args[1]) if len(args) > 1 else None
+            rows = [
+                row
+                for row in self._db.sessions.values()
+                if row["project_root"] == project_root and (runtime is None or row["runtime"] == runtime)
+            ]
             rows.sort(key=lambda row: row["updated_at"], reverse=True)
             if rows:
                 self._results = [(rows[0]["session_id"],)]
@@ -94,8 +105,17 @@ class _FakeCursor:
 
         if sql.startswith("SELECT session_id FROM cp_sessions WHERE project_root =") and "LIMIT %s" in sql:
             project_root = str(args[0])
-            limit = int(args[1])
-            rows = [row for row in self._db.sessions.values() if row["project_root"] == project_root]
+            if len(args) == 3:
+                runtime = str(args[1])
+                limit = int(args[2])
+            else:
+                runtime = None
+                limit = int(args[1])
+            rows = [
+                row
+                for row in self._db.sessions.values()
+                if row["project_root"] == project_root and (runtime is None or row["runtime"] == runtime)
+            ]
             rows.sort(key=lambda row: row["updated_at"], reverse=True)
             self._results = [(row["session_id"],) for row in rows[:limit]]
             return
@@ -114,7 +134,7 @@ class _FakeCursor:
             return
 
         if sql.startswith("UPDATE cp_sessions SET project_root ="):
-            project_root, source, profile, status, payload_raw, session_id = args
+            project_root, source, profile, runtime, status, payload_raw, session_id = args
             row = self._db.sessions.get(str(session_id))
             if row:
                 row.update(
@@ -122,6 +142,7 @@ class _FakeCursor:
                         "project_root": str(project_root),
                         "source": str(source),
                         "profile": str(profile),
+                        "runtime": str(runtime),
                         "status": str(status),
                         "payload": json.loads(str(payload_raw)),
                         "updated_at": datetime.now(timezone.utc),

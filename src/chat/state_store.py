@@ -38,6 +38,7 @@ class ChatStateStore:
             session_id = str(session.get("session_id", "")).strip()
             if not session_id:
                 continue
+            session.setdefault("runtime", "chat")
             session.setdefault("messages", [])
             session.setdefault("events", [])
             session.setdefault("pending_tool_calls", [])
@@ -90,11 +91,12 @@ class ChatStateStore:
         project_root: str,
         source: str,
         profile: str,
+        runtime: str = "chat",
         reuse_existing: bool = True,
     ) -> tuple[dict[str, Any], bool]:
         with self._lock:
             if reuse_existing:
-                existing = self.find_latest_session(project_root)
+                existing = self.find_latest_session(project_root, runtime=runtime)
                 if existing:
                     return existing, True
 
@@ -105,6 +107,7 @@ class ChatStateStore:
                 "project_root": project_root,
                 "source": source,
                 "profile": profile,
+                "runtime": runtime,
                 "status": "active",
                 "created_at": _utcnow(),
                 "updated_at": _utcnow(),
@@ -115,16 +118,17 @@ class ChatStateStore:
                 "memory_snapshot": memory_snapshot,
             }
             self._sessions[session_id] = payload
-            self.append_event(session_id, "session.created", {"sessionId": session_id})
+            self.append_event(session_id, "session.created", {"sessionId": session_id, "runtime": runtime})
             self._enforce_project_session_limit_locked(project_root)
             self._persist(session_id)
             return deepcopy(payload), False
 
-    def find_latest_session(self, project_root: str) -> dict[str, Any] | None:
+    def find_latest_session(self, project_root: str, *, runtime: str | None = None) -> dict[str, Any] | None:
         candidates = [
             value
             for value in self._sessions.values()
             if value.get("project_root") == project_root
+            and (runtime is None or value.get("runtime", "chat") == runtime)
         ]
         if not candidates:
             return None
@@ -138,12 +142,19 @@ class ChatStateStore:
                 return None
             return deepcopy(session)
 
-    def list_sessions(self, project_root: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    def list_sessions(
+        self,
+        project_root: str,
+        *,
+        limit: int = 50,
+        runtime: str | None = None,
+    ) -> list[dict[str, Any]]:
         with self._lock:
             rows = [
                 deepcopy(value)
                 for value in self._sessions.values()
                 if value.get("project_root") == project_root
+                and (runtime is None or value.get("runtime", "chat") == runtime)
             ]
             rows.sort(key=lambda item: str(item.get("updated_at", "")), reverse=True)
             bounded = max(1, min(limit, 200))

@@ -19,6 +19,7 @@ from app.bootstrap import (
     create_artifact_store,
     create_chat_state_store,
     create_job_dispatch_components,
+    create_opencode_adapter_client,
     create_policy_store,
     create_run_state_store,
     create_tool_host_client,
@@ -30,7 +31,9 @@ from chat.runtime import ChatAgentRuntime
 from infrastructure.job_worker import JobQueueWorker
 from infrastructure.task_registry import TaskRegistry
 from policy import PolicyService
+from runtime.opencode_runtime import OpenCodeRunDriver, OpenCodeSessionRuntime
 from runtime.run_service import RunService
+from runtime.session_runtime import SessionRuntimeRegistry
 from self_healing.supervisor import ExecutionSupervisor
 
 warnings.filterwarnings(
@@ -69,6 +72,7 @@ async def _startup_app(app: FastAPI) -> None:
     )
     dispatch_components = create_job_dispatch_components(settings)
     tool_host_client = create_tool_host_client(settings)
+    opencode_adapter_client = create_opencode_adapter_client(settings)
     task_registry = TaskRegistry()
 
     app.state.chat_memory_store = chat_memory_store
@@ -80,13 +84,8 @@ async def _startup_app(app: FastAPI) -> None:
     app.state.job_dispatcher = dispatch_components.dispatcher
     app.state.job_queue = dispatch_components.queue
     app.state.tool_host_client = tool_host_client
+    app.state.opencode_adapter_client = opencode_adapter_client
     app.state.task_registry = task_registry
-    app.state.run_service = RunService(
-        run_state_store=run_state_store,
-        supervisor=execution_supervisor,
-        dispatcher=dispatch_components.dispatcher,
-        task_registry=task_registry,
-    )
 
     chat_runtime = ChatAgentRuntime(
         memory_store=chat_memory_store,
@@ -102,17 +101,51 @@ async def _startup_app(app: FastAPI) -> None:
         store=policy_store,
     )
     chat_runtime.bind_policy_service(policy_service)
+    plugin_drivers: dict[str, object] = {}
+    runtime_registry = SessionRuntimeRegistry(state_store=chat_state_store)
+    runtime_registry.register(chat_runtime)
+    opencode_runtime = None
+    opencode_run_driver = None
+    if opencode_adapter_client is not None:
+        opencode_run_driver = OpenCodeRunDriver(
+            adapter_client=opencode_adapter_client,
+            run_state_store=run_state_store,
+            session_state_store=chat_state_store,
+            policy_service=policy_service,
+            artifact_store=artifact_store,
+            poll_interval_ms=settings.opencode_poll_interval_ms,
+            max_poll_interval_ms=settings.opencode_max_poll_interval_ms,
+        )
+        opencode_runtime = OpenCodeSessionRuntime(
+            state_store=chat_state_store,
+            run_state_store=run_state_store,
+            adapter_client=opencode_adapter_client,
+        )
+        runtime_registry.register(opencode_runtime)
+        plugin_drivers["opencode"] = opencode_run_driver
+    app.state.run_service = RunService(
+        run_state_store=run_state_store,
+        supervisor=execution_supervisor,
+        dispatcher=dispatch_components.dispatcher,
+        task_registry=task_registry,
+        plugin_drivers=plugin_drivers,
+    )
+    if opencode_runtime is not None:
+        opencode_runtime.bind_run_service(app.state.run_service)
     policy_service.bind_decision_executor(
-        lambda session_id, run_id, approval_id, decision: chat_runtime.process_tool_decision(
+        lambda session_id, run_id, approval_id, decision: runtime_registry.resolve_session(session_id).process_tool_decision(
             session_id=session_id,
             run_id=run_id,
             permission_id=approval_id,
             decision=decision,
         )
     )
-    policy_service.sync_tools(chat_runtime.describe_registered_tools())
+    policy_service.sync_tools(runtime_registry.all_tools())
     app.state.chat_runtime = chat_runtime
+    app.state.opencode_runtime = opencode_runtime
+    app.state.opencode_run_driver = opencode_run_driver
     app.state.policy_service = policy_service
+    app.state.session_runtime_registry = runtime_registry
 
     if dispatch_components.queue is not None and settings.embedded_execution_worker:
         queue_worker = JobQueueWorker(

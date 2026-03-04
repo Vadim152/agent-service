@@ -45,6 +45,7 @@ import ru.sber.aitestplugin.model.StepTemplateListResponseDto
 import ru.sber.aitestplugin.model.StepTemplatePatchRequestDto
 import ru.sber.aitestplugin.model.RunCreateRequestDto
 import ru.sber.aitestplugin.model.RunCreateResponseDto
+import ru.sber.aitestplugin.model.RunArtifactsResponseDto
 import ru.sber.aitestplugin.model.RunEventResponseDto
 import ru.sber.aitestplugin.model.RunResultResponseDto
 import ru.sber.aitestplugin.model.RunStatusResponseDto
@@ -142,6 +143,14 @@ class HttpBackendClient(
 
     override fun getRunResult(runId: String): RunResultResponseDto =
         get("/runs/$runId/result")
+
+    override fun listRunArtifacts(runId: String): RunArtifactsResponseDto =
+        get("/runs/$runId/artifacts")
+
+    override fun getRunArtifactContent(runId: String, artifactId: String): String {
+        val encodedArtifactId = URLEncoder.encode(artifactId, StandardCharsets.UTF_8)
+        return getRaw("/runs/$runId/artifacts/$encodedArtifactId/content")
+    }
 
     fun awaitTerminalRunStatus(runId: String, timeoutMs: Int = 60_000): RunStatusResponseDto {
         val sseStatus = tryAwaitTerminalStatusViaEvents(runId, timeoutMs)
@@ -454,6 +463,36 @@ class HttpBackendClient(
                 .connectTimeout(duration)
                 .readTimeout(duration)
                 .build()
+        }
+    }
+
+    private fun getRaw(
+        path: String,
+        timeoutMs: Int? = null
+    ): String {
+        val settings = settingsProvider()
+        val url = "${settings.backendUrl.trimEnd('/')}$path"
+        val effectiveTimeoutMs = timeoutMs ?: settings.requestTimeoutMs
+        val client = getHttpClient(effectiveTimeoutMs)
+
+        val request = Request.Builder()
+            .url(URI.create(url).toURL())
+            .get()
+            .build()
+
+        val response = try {
+            client.newCall(request).execute()
+        } catch (ex: Exception) {
+            throw BackendException("Failed to call $url: ${ex.message}", ex)
+        }
+
+        response.use { httpResponse ->
+            val responseBody = httpResponse.body?.string().orEmpty()
+            if (!httpResponse.isSuccessful) {
+                val message = responseBody.takeIf { it.isNotBlank() } ?: "HTTP ${httpResponse.code}"
+                throw BackendException("Backend $url responded with ${httpResponse.code}: $message")
+            }
+            return responseBody
         }
     }
 
