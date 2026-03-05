@@ -126,4 +126,32 @@ class AgentEventLogFormatterTest {
             AgentEventLogFormatter.formatPhaseProgress("idle", "Idle")
         )
     }
+
+    @Test
+    fun `buildAgentEventLines uses nested part text detail from payload`() {
+        val now = Instant.parse("2026-03-05T10:00:00Z")
+        val events = listOf(
+            ChatEventDto(
+                "opencode.run.progress",
+                mapOf(
+                    "payload" to mapOf(
+                        "type" to "message.part.updated",
+                        "properties" to mapOf(
+                            "part" to mapOf(
+                                "type" to "text",
+                                "text" to "Running gradle test for PurchaseTest"
+                            )
+                        )
+                    )
+                ),
+                now,
+                0
+            )
+        )
+
+        val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
+
+        assertEquals(1, lines.size)
+        assertTrue(lines.first().text.contains("Running gradle test for PurchaseTest"))
+    }
 }

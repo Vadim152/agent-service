@@ -139,6 +139,20 @@ class OpenCodeRunDriver:
             totals=totals,
             limits=limits,
         )
+        last_progress_action = str(run.get("last_progress_action") or "")
+        if session_id and current_action and normalized_status not in TERMINAL_RUN_STATUSES and current_action != last_progress_action:
+            self._session_state_store.append_event(
+                session_id,
+                "opencode.run.progress",
+                {
+                    "sessionId": session_id,
+                    "runId": run_id,
+                    "backendRunId": status_payload.get("backendRunId") or status_payload.get("runId") or run.get("backend_run_id"),
+                    "message": current_action,
+                    "currentAction": current_action,
+                },
+            )
+            self._run_state_store.patch_job(run_id, last_progress_action=current_action)
         pending = status_payload.get("pendingApprovals") or []
         if isinstance(pending, list):
             self._sync_pending_approvals(

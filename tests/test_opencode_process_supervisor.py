@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Iterator
 
-from opencode_adapter_app.process_supervisor import OpenCodeProcessSupervisor
+from opencode_adapter_app.process_supervisor import OpenCodeProcessSupervisor, _extract_usage_limits
 from opencode_adapter_app.state_store import OpenCodeAdapterStateStore, utcnow
 
 
@@ -174,3 +174,55 @@ def test_server_backed_run_fails_when_retry_still_token_expired(tmp_path: Path) 
     assert "Token has expired" in str(payload.get("current_action", ""))
     assert headless.refresh_calls == 1
     assert headless.restart_calls == 1
+
+
+def test_extract_usage_limits_reads_tokens_from_message_info_payload() -> None:
+    payload = {
+        "message": {
+            "info": {
+                "tokens": {
+                    "total": 13808,
+                    "input": 2074,
+                    "output": 75,
+                    "reasoning": 0,
+                    "cache": {"read": 11461, "write": 198},
+                },
+                "cost": 0,
+            }
+        }
+    }
+
+    totals, limits = _extract_usage_limits(payload)
+
+    assert totals is not None
+    assert totals["tokens"]["input"] == 2074
+    assert totals["tokens"]["output"] == 75
+    assert totals["tokens"]["cacheRead"] == 11461
+    assert totals["tokens"]["cacheWrite"] == 198
+    assert limits is not None
+    assert limits["used"] == 13808
+
+
+def test_extract_usage_limits_reads_tokens_from_part_finish_payload() -> None:
+    payload = {
+        "parts": [
+            {
+                "type": "step-finish",
+                "tokens": {
+                    "total": 2302,
+                    "input": 2273,
+                    "output": 29,
+                    "reasoning": 0,
+                    "cache": {"read": 0, "write": 0},
+                },
+            }
+        ]
+    }
+
+    totals, limits = _extract_usage_limits(payload)
+
+    assert totals is not None
+    assert totals["tokens"]["input"] == 2273
+    assert totals["tokens"]["output"] == 29
+    assert limits is not None
+    assert limits["used"] == 2302

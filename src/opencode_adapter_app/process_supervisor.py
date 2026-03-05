@@ -303,24 +303,20 @@ class OpenCodeProcessSupervisor:
 
         if event_type == "session.status":
             status = ((payload.get("properties") or {}).get("status") or {}).get("type")
+            detail = _status_detail_from_event(payload)
             if status == "busy":
-                patches["current_action"] = "OpenCode is running"
+                patches["current_action"] = detail or "OpenCode is running"
             elif status == "retry":
-                retry = (payload.get("properties") or {}).get("status") or {}
-                patches["current_action"] = str(retry.get("message") or "Retrying")
+                patches["current_action"] = detail or "Retrying"
             elif status == "idle":
                 patches["current_action"] = "Idle"
         elif event_type == "message.part.updated":
-            part = (payload.get("properties") or {}).get("part") or {}
-            part_type = str(part.get("type") or "")
-            if part_type == "text":
-                patches["current_action"] = "Streaming response"
-            elif part_type == "step-start":
-                patches["current_action"] = "Step started"
-            elif part_type == "step-finish":
-                patches["current_action"] = "Step finished"
+            detail = _part_detail_from_event(payload)
+            if detail:
+                patches["current_action"] = detail
         elif event_type == "message.part.delta":
-            patches["current_action"] = "Streaming response"
+            detail = _part_detail_from_event(payload)
+            patches["current_action"] = detail or "Streaming response"
         elif event_type == "message.updated":
             info = (payload.get("properties") or {}).get("info") or {}
             if info.get("role") == "assistant" and info.get("error"):
@@ -921,9 +917,24 @@ def _extract_usage_limits(payload: Any) -> tuple[dict[str, Any] | None, dict[str
         status_block = properties.get("status")
         if isinstance(status_block, dict):
             candidates.append(status_block)
+        part = properties.get("part")
+        if isinstance(part, dict):
+            candidates.append(part)
     message = payload.get("message")
     if isinstance(message, dict):
         candidates.append(message)
+        message_info = message.get("info")
+        if isinstance(message_info, dict):
+            candidates.append(message_info)
+        parts = message.get("parts")
+        if isinstance(parts, list):
+            candidates.extend(item for item in parts if isinstance(item, dict))
+    info = payload.get("info")
+    if isinstance(info, dict):
+        candidates.append(info)
+    parts = payload.get("parts")
+    if isinstance(parts, list):
+        candidates.extend(item for item in parts if isinstance(item, dict))
 
     totals: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
@@ -949,6 +960,12 @@ def _extract_totals(payload: dict[str, Any]) -> dict[str, Any] | None:
             "tokens": _normalize_tokens(usage),
             "cost": _to_float(usage.get("cost"), default=0.0),
         }
+    tokens = payload.get("tokens")
+    if isinstance(tokens, dict):
+        return {
+            "tokens": _normalize_tokens(tokens),
+            "cost": _to_float(payload.get("cost"), default=0.0),
+        }
     return None
 
 
@@ -972,18 +989,77 @@ def _extract_limits(payload: dict[str, Any]) -> dict[str, Any] | None:
         if percent is None and context_window and context_window > 0:
             percent = round(float(used) / float(context_window), 4)
         return {"contextWindow": context_window, "used": used, "percent": percent}
+    tokens = payload.get("tokens")
+    if isinstance(tokens, dict):
+        context_window = _first_int(payload, "contextWindow", "context_window", "window")
+        used = _first_int(tokens, "total", "totalTokens", default=0)
+        percent = _first_float(payload, "percent", "usagePercent", "usage_ratio")
+        if percent is None and context_window and context_window > 0:
+            percent = round(float(used) / float(context_window), 4)
+        return {"contextWindow": context_window, "used": used, "percent": percent}
     return None
 
 
 def _normalize_tokens(tokens: dict[str, Any] | None) -> dict[str, int]:
     payload = tokens if isinstance(tokens, dict) else {}
+    cache = payload.get("cache")
+    cache_payload = cache if isinstance(cache, dict) else {}
     return {
         "input": _first_int(payload, "input", "inputTokens", "promptTokens", "prompt_tokens", default=0),
         "output": _first_int(payload, "output", "outputTokens", "completionTokens", "completion_tokens", default=0),
         "reasoning": _first_int(payload, "reasoning", "reasoningTokens", "thinkingTokens", default=0),
-        "cacheRead": _first_int(payload, "cacheRead", "cache_read", "cacheReadTokens", default=0),
-        "cacheWrite": _first_int(payload, "cacheWrite", "cache_write", "cacheWriteTokens", default=0),
+        "cacheRead": _first_int(payload, "cacheRead", "cache_read", "cacheReadTokens", default=None)
+        or _first_int(cache_payload, "read", "cacheRead", default=0),
+        "cacheWrite": _first_int(payload, "cacheWrite", "cache_write", "cacheWriteTokens", default=None)
+        or _first_int(cache_payload, "write", "cacheWrite", default=0),
     }
+
+
+def _status_detail_from_event(payload: dict[str, Any]) -> str:
+    properties = payload.get("properties")
+    if not isinstance(properties, dict):
+        return ""
+    status = properties.get("status")
+    if not isinstance(status, dict):
+        return ""
+    message = str(status.get("message") or status.get("detail") or "").strip()
+    if message:
+        return message
+    status_type = str(status.get("type") or "").strip()
+    return status_type.title() if status_type else ""
+
+
+def _part_detail_from_event(payload: dict[str, Any]) -> str:
+    properties = payload.get("properties")
+    if not isinstance(properties, dict):
+        return ""
+    part = properties.get("part")
+    if not isinstance(part, dict):
+        return ""
+    part_type = str(part.get("type") or "").strip().lower()
+    if part_type == "text":
+        text = str(part.get("text") or "").strip()
+        return _truncate_detail(f"Streaming: {text}") if text else "Streaming response"
+    if part_type == "reasoning":
+        text = str(part.get("text") or "").strip()
+        return _truncate_detail(f"Reasoning: {text}") if text else "Reasoning"
+    if part_type == "tool":
+        tool_name = str(part.get("tool") or part.get("name") or "").strip()
+        return f"Tool: {tool_name}" if tool_name else "Tool execution"
+    if part_type == "step-start":
+        snapshot = str(part.get("snapshot") or "").strip()
+        return f"Step started ({snapshot[:8]})" if snapshot else "Step started"
+    if part_type == "step-finish":
+        reason = str(part.get("reason") or "").strip()
+        return f"Step finished ({reason})" if reason else "Step finished"
+    return part_type.replace("-", " ").title() if part_type else ""
+
+
+def _truncate_detail(value: str, *, max_len: int = 160) -> str:
+    text = value.strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3].rstrip() + "..."
 
 
 def _first_int(payload: dict[str, Any], *keys: str, default: int | None = None) -> int | None:

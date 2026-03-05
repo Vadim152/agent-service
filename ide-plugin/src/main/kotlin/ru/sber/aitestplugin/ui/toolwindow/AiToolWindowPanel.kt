@@ -125,6 +125,7 @@ class AiToolWindowPanel(
     private val runtimeSelector = JComboBox(RuntimeMode.values())
     private val statusLabel = JBLabel(UiStrings.connecting)
     private val statusBadge = StatusBadge(UiStrings.connecting, false)
+    private val traceToggleButton = JButton()
 
     private val approvalPanel = JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
@@ -145,6 +146,7 @@ class AiToolWindowPanel(
     private var latestActivity: String = "idle"
     private var latestContextPercent: Int? = null
     private var latestTokenTotal: Int? = null
+    private var showAgentTrace: Boolean = true
     private var connectionState: ConnectionState = ConnectionState.CONNECTING
     private var connectionDetails: String? = null
     private var streamReconnectAttempt: Int = 0
@@ -238,10 +240,28 @@ class AiToolWindowPanel(
             isOpaque = false
             add(timelineContainer, BorderLayout.NORTH)
         }
+        val traceControls = JPanel(FlowLayout(FlowLayout.RIGHT, 8, 2)).apply {
+            isOpaque = false
+            add(traceToggleButton.apply {
+                cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+                foreground = theme.secondaryText
+                background = theme.controlBackground
+                border = BorderFactory.createLineBorder(theme.controlBorder, 1, true)
+                isContentAreaFilled = true
+                isFocusPainted = false
+                addActionListener {
+                    showAgentTrace = !showAgentTrace
+                    updateTraceToggleState()
+                    renderTimeline()
+                }
+            })
+        }
         val footer = JPanel(BorderLayout()).apply {
             isOpaque = false
+            add(traceControls, BorderLayout.NORTH)
             add(approvalPanel, BorderLayout.CENTER)
         }
+        updateTraceToggleState()
         renderTimeline()
 
         return JPanel(BorderLayout()).apply {
@@ -700,6 +720,7 @@ class AiToolWindowPanel(
             latestTokenTotal = null
         }
         runtimeSelector.selectedItem = selectedRuntime
+        updateTraceToggleState()
         updateSendButtonState()
 
         val progress = AgentEventLogFormatter.formatPhaseProgress(
@@ -1110,8 +1131,9 @@ class AiToolWindowPanel(
     }
 
     private fun renderTimeline() {
+        val visibleLines = timelineLines.filterNot { !showAgentTrace && it.kind == UiLineKind.AGENT_EVENT }
         timelineContainer.removeAll()
-        if (timelineLines.isEmpty()) {
+        if (visibleLines.isEmpty()) {
             timelineContainer.add(
                 JBLabel("\u0417\u0430\u0434\u0430\u0439\u0442\u0435 \u0432\u043e\u043f\u0440\u043e\u0441 \u043f\u043e \u043f\u0440\u043e\u0435\u043a\u0442\u0443").apply {
                     foreground = theme.secondaryText
@@ -1119,10 +1141,16 @@ class AiToolWindowPanel(
                 }
             )
         } else {
-            timelineLines.forEach { line -> timelineContainer.add(buildTimelineLine(line)) }
+            visibleLines.forEach { line -> timelineContainer.add(buildTimelineLine(line)) }
         }
         timelineContainer.revalidate()
         timelineContainer.repaint()
+    }
+
+    private fun updateTraceToggleState() {
+        val isAgent = selectedRuntime == RuntimeMode.AGENT
+        traceToggleButton.isVisible = isAgent
+        traceToggleButton.text = if (showAgentTrace) "\u0421\u043a\u0440\u044b\u0442\u044c \u0442\u0440\u0430\u0441\u0441\u0443" else "\u041f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0442\u0440\u0430\u0441\u0441\u0443"
     }
 
     private fun buildTimelineLine(line: UiLine): JPanel {

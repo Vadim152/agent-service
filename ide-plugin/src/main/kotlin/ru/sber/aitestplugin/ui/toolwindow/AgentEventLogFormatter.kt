@@ -158,14 +158,23 @@ internal object AgentEventLogFormatter {
         val currentAction = payload["currentAction"]?.toString()?.trim().orEmpty()
         val nestedPayload = payload["payload"] as? Map<*, *>
         val nestedType = nestedPayload?.get("type")?.toString()?.trim().orEmpty()
+        val nestedProperties = nestedPayload?.get("properties") as? Map<*, *>
+        val nestedStatus = nestedProperties?.get("status") as? Map<*, *>
+        val nestedStatusMessage = nestedStatus?.get("message")?.toString()?.trim().orEmpty()
+        val nestedPart = nestedProperties?.get("part") as? Map<*, *>
+        val nestedPartType = nestedPart?.get("type")?.toString()?.trim().orEmpty()
+        val nestedPartText = nestedPart?.get("text")?.toString()?.trim().orEmpty()
         val nestedInfo = nestedPayload?.get("info") as? Map<*, *>
         val nestedError = nestedInfo?.get("error") as? Map<*, *>
         val nestedErrorData = nestedError?.get("data") as? Map<*, *>
         val nestedErrorMessage = nestedErrorData?.get("message")?.toString()?.trim().orEmpty()
         return when {
             nestedErrorMessage.isNotBlank() -> nestedErrorMessage
+            nestedPartText.isNotBlank() -> nestedPartText
+            nestedStatusMessage.isNotBlank() -> nestedStatusMessage
             message.isNotBlank() -> message
             currentAction.isNotBlank() -> currentAction
+            nestedPartType.isNotBlank() -> nestedPartType
             else -> nestedType
         }
     }

@@ -248,6 +248,9 @@ def test_opencode_message_creates_delegated_run_and_updates_history() -> None:
     history = client.get(f"/sessions/{session_id}/history").json()
     assert history["runtime"] == "opencode"
     assert any("OpenCode finished" in item["content"] for item in history["messages"])
+    progress_events = [item for item in history["events"] if item["eventType"] == "opencode.run.progress"]
+    assert progress_events
+    assert any(str(item.get("payload", {}).get("message", "")).strip() for item in progress_events)
 
 
 def test_opencode_approval_flow_uses_policy_endpoint() -> None:
