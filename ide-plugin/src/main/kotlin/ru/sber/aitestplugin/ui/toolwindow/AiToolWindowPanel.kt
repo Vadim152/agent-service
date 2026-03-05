@@ -87,6 +87,7 @@ class AiToolWindowPanel(
     private val pollTimer = Timer(3000) { refreshControlPlaneAsync() }
     private val uiRefreshDebounceMs = 200
     private val autoScrollBottomThresholdPx = 48
+    private val maxTraceLines = 30
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
     private val supportedCommands = listOf("status", "diff", "compact", "abort", "help")
     private val slashTemplates = listOf(
@@ -601,12 +602,37 @@ class AiToolWindowPanel(
                     source = UiLineSource.SERVER_MESSAGE
                 )
             }
+        val eventTraceLines = if (history.runtime.equals("opencode", ignoreCase = true)) {
+            history.events
+                .sortedBy { it.createdAt }
+                .mapNotNull { event ->
+                    val traceText = mapEventToTraceText(event.eventType, event.payload) ?: return@mapNotNull null
+                    UiLine(
+                        kind = UiLineKind.PROGRESS,
+                        text = traceText,
+                        createdAt = event.createdAt,
+                        stableKey = "trace:${event.index}:${event.eventType}",
+                        source = UiLineSource.SERVER_TRACE
+                    )
+                }
+                .fold(mutableListOf<UiLine>()) { acc, item ->
+                    val previous = acc.lastOrNull()
+                    if (previous == null || previous.text != item.text) {
+                        acc.add(item)
+                    }
+                    acc
+                }
+                .takeLast(maxTraceLines)
+        } else {
+            emptyList()
+        }
 
         val localLines = timelineLines.filter { it.source == UiLineSource.LOCAL_SYSTEM }
         val progressLine = timelineLines.firstOrNull { it.source == UiLineSource.PROGRESS }
 
         val targetLines = buildList {
             addAll(serverLines)
+            addAll(eventTraceLines)
             addAll(localLines)
             progressLine?.let { add(it) }
         }
@@ -853,6 +879,39 @@ class AiToolWindowPanel(
         scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
+    private fun mapEventToTraceText(eventType: String, payload: Map<String, Any?>): String? {
+        val normalized = eventType.lowercase()
+        val message = payload["message"]?.toString()?.trim().orEmpty()
+        val currentAction = payload["currentAction"]?.toString()?.trim().orEmpty()
+        val nestedPayload = payload["payload"] as? Map<*, *>
+        val nestedType = nestedPayload?.get("type")?.toString()?.trim().orEmpty()
+        val nestedInfo = (nestedPayload?.get("info") as? Map<*, *>)
+        val nestedError = (nestedInfo?.get("error") as? Map<*, *>)
+        val nestedErrorData = (nestedError?.get("data") as? Map<*, *>)
+        val nestedErrorMessage = nestedErrorData?.get("message")?.toString()?.trim().orEmpty()
+        val detail = when {
+            nestedErrorMessage.isNotBlank() -> nestedErrorMessage
+            message.isNotBlank() -> message
+            currentAction.isNotBlank() -> currentAction
+            else -> nestedType
+        }
+        return when (normalized) {
+            "message.received" -> "Запрос отправлен"
+            "opencode.run_created" -> "Создан запуск агента"
+            "opencode.run.queued" -> "Поставлено в очередь"
+            "opencode.run.started" -> "Запуск начат"
+            "opencode.run.retrying" -> "Обновляю токен и повторяю запрос"
+            "opencode.run.awaiting_approval", "permission.requested" -> "Ожидается подтверждение действия"
+            "approval.decision", "permission.approved", "permission.rejected" -> "Решение по подтверждению отправлено"
+            "opencode.run.artifact_published" -> "Опубликован артефакт"
+            "opencode.run.progress" -> if (detail.isNotBlank()) detail else "Выполняется шаг"
+            "opencode.run.finished", "run.succeeded" -> "Завершено"
+            "opencode.run.failed", "run.failed" -> if (detail.isNotBlank()) "Ошибка: $detail" else "Ошибка выполнения"
+            "run.cancelled", "opencode.run.cancelled" -> "Остановлено"
+            else -> null
+        }
+    }
+
     private fun upsertProgressLine(text: String) {
         val shouldStickToBottom = isUserNearBottom()
         val idx = timelineLines.indexOfFirst { it.source == UiLineSource.PROGRESS }.takeIf { it >= 0 }
@@ -1009,6 +1068,7 @@ class AiToolWindowPanel(
 
     private enum class UiLineSource {
         SERVER_MESSAGE,
+        SERVER_TRACE,
         LOCAL_SYSTEM,
         PROGRESS
     }

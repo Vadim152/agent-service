@@ -139,12 +139,11 @@ class OpenCodeProcessSupervisor:
             listener.start()
 
             prompt_payload = self._build_prompt_payload(run)
-            response = self._headless_server.request(
-                "POST",
-                f"/session/{session_id}/message",
-                params={"directory": str(run["project_root"])},
-                json_payload=prompt_payload,
-                timeout_s=300.0,
+            response, session_id = self._send_prompt_with_retry(
+                run=run,
+                backend_run_id=backend_run_id,
+                session_id=session_id,
+                prompt_payload=prompt_payload,
             )
             self._complete_server_run(backend_run_id, session_id, response, artifacts_dir, result_path)
             stop_event.set()
@@ -169,6 +168,58 @@ class OpenCodeProcessSupervisor:
             stop_event.set()
             self._run_stops.pop(backend_run_id, None)
             events_handle.close()
+
+    def _send_prompt_with_retry(
+        self,
+        *,
+        run: dict[str, Any],
+        backend_run_id: str,
+        session_id: str,
+        prompt_payload: dict[str, Any],
+    ) -> tuple[Any, str]:
+        response = self._headless_server.request(
+            "POST",
+            f"/session/{session_id}/message",
+            params={"directory": str(run["project_root"])},
+            json_payload=prompt_payload,
+            timeout_s=300.0,
+        )
+        if not _is_token_expired_error_response(response):
+            return response, session_id
+
+        self._state_store.patch_run(
+            backend_run_id,
+            current_action="Refreshing GigaChat token and retrying",
+            status="running",
+            finished_at=None,
+        )
+        self._state_store.append_event(
+            backend_run_id,
+            "run.retrying",
+            {
+                "backendRunId": backend_run_id,
+                "sessionId": session_id,
+                "message": "401 Token has expired; refreshing token and retrying once",
+            },
+        )
+        self._headless_server.refresh_gigachat_access_token()
+        self._headless_server.restart(project_root=str(run["project_root"]))
+        run["backend_session_id"] = None
+        self._state_store.patch_run(backend_run_id, backend_session_id=None, finished_at=None)
+        retried_session_id = self._ensure_backend_session(run)
+        self._state_store.patch_run(
+            backend_run_id,
+            backend_session_id=retried_session_id,
+            current_action="Retrying request with refreshed token",
+        )
+        retried_response = self._headless_server.request(
+            "POST",
+            f"/session/{retried_session_id}/message",
+            params={"directory": str(run["project_root"])},
+            json_payload=prompt_payload,
+            timeout_s=300.0,
+        )
+        return retried_response, retried_session_id
 
     def _ensure_backend_session(self, run: dict[str, Any]) -> str:
         existing = str(run.get("backend_session_id") or "").strip()
@@ -331,6 +382,25 @@ class OpenCodeProcessSupervisor:
     ) -> None:
         current = self._state_store.get_run(backend_run_id) or {}
         if str(current.get("status")) in {"failed", "cancelled"}:
+            return
+        response_error = _extract_response_error(response)
+        if response_error is not None:
+            error_message = _extract_error_message(response_error) or "OpenCode failed"
+            self._state_store.patch_run(
+                backend_run_id,
+                status="failed",
+                current_action=error_message,
+                output={"error": response_error},
+                result={"error": response_error},
+                pending_approvals=[],
+                finished_at=utcnow().isoformat(),
+                exit_code=-1,
+            )
+            self._state_store.append_event(
+                backend_run_id,
+                "run.failed",
+                {"backendRunId": backend_run_id, "backendSessionId": session_id, "message": error_message},
+            )
             return
         text = _extract_text_output(response)
         result = {
@@ -814,6 +884,35 @@ def _extract_error_message(error: Any) -> str | None:
         if message:
             return message
     return str(error.get("name") or "").strip() or None
+
+
+def _extract_response_error(response: Any) -> dict[str, Any] | None:
+    if not isinstance(response, dict):
+        return None
+    info = response.get("info")
+    if not isinstance(info, dict):
+        return None
+    error = info.get("error")
+    if not isinstance(error, dict):
+        return None
+    return error
+
+
+def _is_token_expired_error_response(response: Any) -> bool:
+    error = _extract_response_error(response)
+    if not isinstance(error, dict):
+        return False
+    data = error.get("data")
+    if isinstance(data, dict):
+        status_code = int(data.get("statusCode") or 0)
+        message = str(data.get("message") or "").strip().lower()
+        response_body = str(data.get("responseBody") or "").strip().lower()
+        if status_code == 401 and "token has expired" in (message or response_body):
+            return True
+        if "token has expired" in message or "token has expired" in response_body:
+            return True
+    message = _extract_error_message(error)
+    return bool(message and "token has expired" in message.lower())
 
 
 def _extract_text_output(response: Any) -> str:

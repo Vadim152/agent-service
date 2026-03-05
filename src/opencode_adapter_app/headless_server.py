@@ -90,6 +90,19 @@ class OpenCodeHeadlessServer:
             )
             return self.base_url
 
+    def restart(self, *, project_root: str | None = None) -> str:
+        with self._lock:
+            resolved_project_root = str(project_root) if project_root else None
+            resolved_config_file = self._settings.resolve_opencode_config_file(resolved_project_root)
+            resolved_config_dir = self._settings.resolve_opencode_config_dir(resolved_project_root)
+            self._stop_locked()
+            self._start_locked(
+                project_root=resolved_project_root,
+                config_file=resolved_config_file,
+                config_dir=resolved_config_dir,
+            )
+            return self.base_url
+
     def shutdown(self) -> None:
         with self._lock:
             self._stop_locked()
@@ -226,8 +239,8 @@ class OpenCodeHeadlessServer:
             time.sleep(0.2)
         raise OpenCodeServerError("OpenCode headless server did not become ready in time")
 
-    def _inject_gigachat_access_token(self, env: dict[str, str]) -> None:
-        if env.get("GIGACHAT_ACCESS_TOKEN"):
+    def _inject_gigachat_access_token(self, env: dict[str, str], *, force_refresh: bool = False) -> None:
+        if env.get("GIGACHAT_ACCESS_TOKEN") and not force_refresh:
             return
         if not (self._settings.gigachat_client_id and self._settings.gigachat_client_secret):
             return
@@ -239,6 +252,19 @@ class OpenCodeHeadlessServer:
         env["GIGACHAT_ACCESS_TOKEN"] = token
         env.setdefault("GIGACHAT_API_URL", self._settings.gigachat_api_url)
         LOGGER.info("Bootstrapped GigaChat access token for OpenCode provider")
+
+    def refresh_gigachat_access_token(self) -> str:
+        with self._lock:
+            env = self._settings.build_child_env(
+                project_root=self._active_project_root,
+                config_file=self._active_config_file,
+                config_dir=self._active_config_dir,
+            )
+            self._inject_gigachat_access_token(env, force_refresh=True)
+            token = str(env.get("GIGACHAT_ACCESS_TOKEN") or "").strip()
+            if not token:
+                raise OpenCodeServerError("Failed to refresh GigaChat access token")
+            return token
 
     def _stop_locked(self) -> None:
         process = self._process

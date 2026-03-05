@@ -234,3 +234,32 @@ def test_opencode_approval_flow_uses_policy_endpoint() -> None:
     event_types = [item["eventType"] for item in audit["items"]]
     assert "permission.requested" in event_types
     assert "permission.approved" in event_types
+
+
+def test_terminal_message_extracts_structured_error_text() -> None:
+    run = {"status": "failed"}
+    status_payload = {
+        "output": {
+            "message": {
+                "info": {
+                    "error": {
+                        "name": "APIError",
+                        "data": {"message": "Unauthorized: Token has expired", "statusCode": 401},
+                    }
+                }
+            }
+        }
+    }
+
+    message = OpenCodeRunDriver._build_terminal_message(run, status_payload)
+
+    assert message == "Unauthorized: Token has expired"
+
+
+def test_terminal_message_falls_back_to_current_action_error() -> None:
+    run = {"status": "failed"}
+    status_payload = {"currentAction": "Error: self signed certificate in certificate chain"}
+
+    message = OpenCodeRunDriver._build_terminal_message(run, status_payload)
+
+    assert message == "Error: self signed certificate in certificate chain"

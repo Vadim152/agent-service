@@ -311,16 +311,34 @@ class OpenCodeRunDriver:
     def _build_terminal_message(run: dict[str, Any], status_payload: dict[str, Any]) -> str:
         output = status_payload.get("output") or status_payload.get("result") or run.get("result") or {}
         text = ""
+        error_text = ""
+        fallback_error = ""
         if isinstance(output, dict):
             text = str(output.get("summary") or output.get("message") or output.get("text") or "").strip()
+            nested = output.get("message")
+            if isinstance(nested, dict):
+                error = _extract_structured_error(nested)
+                if error:
+                    error_text = error
+                if not text:
+                    text = str(nested.get("text") or "").strip()
         elif output is not None:
             text = str(output).strip()
+        fallback_error = str(
+            status_payload.get("currentAction")
+            or status_payload.get("message")
+            or run.get("current_action")
+            or run.get("currentAction")
+            or ""
+        ).strip()
         status = str(run.get("status") or "failed")
         if status == "succeeded":
             return text or "OpenCode run completed successfully."
         if status == "cancelled":
             return text or "OpenCode run was cancelled."
-        return text or "OpenCode run failed."
+        if fallback_error and fallback_error.lower() not in {"failed", "error", "opencode failed", "opencode run failed"}:
+            return error_text or text or fallback_error
+        return error_text or text or "OpenCode run failed."
 
     @staticmethod
     def _normalize_status(value: Any) -> str:
@@ -349,6 +367,22 @@ class OpenCodeRunDriver:
         if not run:
             raise RuntimeError(f"Run not found: {run_id}")
         return run
+
+
+def _extract_structured_error(payload: dict[str, Any]) -> str:
+    info = payload.get("info")
+    if not isinstance(info, dict):
+        return ""
+    error = info.get("error")
+    if not isinstance(error, dict):
+        return ""
+    data = error.get("data")
+    if isinstance(data, dict):
+        message = str(data.get("message") or "").strip()
+        if message:
+            return message
+    fallback = str(error.get("name") or "").strip()
+    return fallback
 
 
 class OpenCodeSessionRuntime:
