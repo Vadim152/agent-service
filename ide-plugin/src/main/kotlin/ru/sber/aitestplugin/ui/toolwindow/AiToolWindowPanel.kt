@@ -603,36 +603,65 @@ class AiToolWindowPanel(
                 )
             }
         val eventTraceLines = if (history.runtime.equals("opencode", ignoreCase = true)) {
-            history.events
-                .sortedBy { it.createdAt }
-                .mapNotNull { event ->
-                    val traceText = mapEventToTraceText(event.eventType, event.payload) ?: return@mapNotNull null
+            AgentEventLogFormatter.buildAgentEventLines(history.events, maxTraceLines)
+                .map { event ->
                     UiLine(
-                        kind = UiLineKind.PROGRESS,
-                        text = traceText,
+                        kind = UiLineKind.AGENT_EVENT,
+                        text = event.text,
                         createdAt = event.createdAt,
-                        stableKey = "trace:${event.index}:${event.eventType}",
-                        source = UiLineSource.SERVER_TRACE
+                        stableKey = event.stableKey,
+                        source = UiLineSource.SERVER_EVENT
                     )
                 }
-                .fold(mutableListOf<UiLine>()) { acc, item ->
-                    val previous = acc.lastOrNull()
-                    if (previous == null || previous.text != item.text) {
-                        acc.add(item)
-                    }
-                    acc
-                }
-                .takeLast(maxTraceLines)
         } else {
             emptyList()
         }
 
         val localLines = timelineLines.filter { it.source == UiLineSource.LOCAL_SYSTEM }
         val progressLine = timelineLines.firstOrNull { it.source == UiLineSource.PROGRESS }
+        val mergedServerTimeline = if (history.runtime.equals("opencode", ignoreCase = true)) {
+            AgentEventLogFormatter.mergeConversationAndEvents(
+                messages = serverLines.map { line ->
+                    AgentEventLogFormatter.TimelineItem(
+                        kind = when (line.kind) {
+                            UiLineKind.USER -> AgentEventLogFormatter.TimelineKind.USER
+                            UiLineKind.ASSISTANT -> AgentEventLogFormatter.TimelineKind.ASSISTANT
+                            UiLineKind.SYSTEM -> AgentEventLogFormatter.TimelineKind.SYSTEM
+                            UiLineKind.PROGRESS, UiLineKind.AGENT_EVENT -> AgentEventLogFormatter.TimelineKind.AGENT_EVENT
+                        },
+                        text = line.text,
+                        createdAt = line.createdAt,
+                        stableKey = line.stableKey
+                    )
+                },
+                events = eventTraceLines.map { line ->
+                    AgentEventLogFormatter.TimelineItem(
+                        kind = AgentEventLogFormatter.TimelineKind.AGENT_EVENT,
+                        text = line.text,
+                        createdAt = line.createdAt,
+                        stableKey = line.stableKey
+                    )
+                }
+            ).map { item ->
+                UiLine(
+                    kind = when (item.kind) {
+                        AgentEventLogFormatter.TimelineKind.USER -> UiLineKind.USER
+                        AgentEventLogFormatter.TimelineKind.ASSISTANT -> UiLineKind.ASSISTANT
+                        AgentEventLogFormatter.TimelineKind.SYSTEM -> UiLineKind.SYSTEM
+                        AgentEventLogFormatter.TimelineKind.AGENT_EVENT -> UiLineKind.AGENT_EVENT
+                    },
+                    text = item.text,
+                    createdAt = item.createdAt,
+                    stableKey = item.stableKey,
+                    source = if (item.kind == AgentEventLogFormatter.TimelineKind.AGENT_EVENT) UiLineSource.SERVER_EVENT else UiLineSource.SERVER_MESSAGE
+                )
+            }
+        } else {
+            serverLines
+        }
 
         val targetLines = buildList {
-            addAll(serverLines)
-            addAll(eventTraceLines)
+            addAll(mergedServerTimeline)
             addAll(localLines)
             progressLine?.let { add(it) }
         }
@@ -879,39 +908,6 @@ class AiToolWindowPanel(
         scrollToBottomIfNeeded(shouldStickToBottom)
     }
 
-    private fun mapEventToTraceText(eventType: String, payload: Map<String, Any?>): String? {
-        val normalized = eventType.lowercase()
-        val message = payload["message"]?.toString()?.trim().orEmpty()
-        val currentAction = payload["currentAction"]?.toString()?.trim().orEmpty()
-        val nestedPayload = payload["payload"] as? Map<*, *>
-        val nestedType = nestedPayload?.get("type")?.toString()?.trim().orEmpty()
-        val nestedInfo = (nestedPayload?.get("info") as? Map<*, *>)
-        val nestedError = (nestedInfo?.get("error") as? Map<*, *>)
-        val nestedErrorData = (nestedError?.get("data") as? Map<*, *>)
-        val nestedErrorMessage = nestedErrorData?.get("message")?.toString()?.trim().orEmpty()
-        val detail = when {
-            nestedErrorMessage.isNotBlank() -> nestedErrorMessage
-            message.isNotBlank() -> message
-            currentAction.isNotBlank() -> currentAction
-            else -> nestedType
-        }
-        return when (normalized) {
-            "message.received" -> "Запрос отправлен"
-            "opencode.run_created" -> "Создан запуск агента"
-            "opencode.run.queued" -> "Поставлено в очередь"
-            "opencode.run.started" -> "Запуск начат"
-            "opencode.run.retrying" -> "Обновляю токен и повторяю запрос"
-            "opencode.run.awaiting_approval", "permission.requested" -> "Ожидается подтверждение действия"
-            "approval.decision", "permission.approved", "permission.rejected" -> "Решение по подтверждению отправлено"
-            "opencode.run.artifact_published" -> "Опубликован артефакт"
-            "opencode.run.progress" -> if (detail.isNotBlank()) detail else "Выполняется шаг"
-            "opencode.run.finished", "run.succeeded" -> "Завершено"
-            "opencode.run.failed", "run.failed" -> if (detail.isNotBlank()) "Ошибка: $detail" else "Ошибка выполнения"
-            "run.cancelled", "opencode.run.cancelled" -> "Остановлено"
-            else -> null
-        }
-    }
-
     private fun upsertProgressLine(text: String) {
         val shouldStickToBottom = isUserNearBottom()
         val idx = timelineLines.indexOfFirst { it.source == UiLineSource.PROGRESS }.takeIf { it >= 0 }
@@ -1068,7 +1064,7 @@ class AiToolWindowPanel(
 
     private enum class UiLineSource {
         SERVER_MESSAGE,
-        SERVER_TRACE,
+        SERVER_EVENT,
         LOCAL_SYSTEM,
         PROGRESS
     }
@@ -1082,6 +1078,7 @@ class AiToolWindowPanel(
 
     private enum class UiLineKind {
         USER,
+        AGENT_EVENT,
         ASSISTANT,
         SYSTEM,
         PROGRESS
@@ -1149,6 +1146,19 @@ class AiToolWindowPanel(
             }
             UiLineKind.ASSISTANT -> {
                 row.add(textArea, BorderLayout.CENTER)
+            }
+            UiLineKind.AGENT_EVENT -> {
+                val bubble = JPanel(BorderLayout()).apply {
+                    isOpaque = true
+                    background = theme.progressBubble
+                    border = JBUI.Borders.compound(
+                        RoundedLineBorder(theme.containerBorder, 1, 14),
+                        JBUI.Borders.empty()
+                    )
+                    add(textArea, BorderLayout.CENTER)
+                    maximumSize = Dimension(contentWidth, Int.MAX_VALUE)
+                }
+                row.add(bubble, BorderLayout.WEST)
             }
             UiLineKind.PROGRESS -> {
                 val bubble = JPanel(BorderLayout()).apply {
