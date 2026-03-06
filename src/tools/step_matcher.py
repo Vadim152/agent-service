@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from domain.enums import MatchStatus, StepKeyword
+from domain.enums import MatchStatus, StepIntentType, StepKeyword
 from domain.models import MatchedStep, StepDefinition, TestStep
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.llm_client import LLMClient
@@ -59,6 +59,7 @@ class StepMatcher:
         step_definitions: list[StepDefinition],
         project_root: str | None = None,
         step_boosts: dict[str, float] | None = None,
+        scenario_context: dict[str, Any] | None = None,
     ) -> list[MatchedStep]:
         """Matches testcase steps to indexed definitions."""
 
@@ -79,9 +80,11 @@ class StepMatcher:
             ) = self._find_best_match(
                 match_text,
                 step_definitions,
+                test_step=test_step,
                 project_root=project_root,
                 step_boosts=step_boosts,
                 input_leading_keyword=input_leading_keyword,
+                scenario_context=scenario_context,
             )
             status = self._derive_status(
                 score,
@@ -165,9 +168,11 @@ class StepMatcher:
         self,
         test_text: str,
         step_definitions: Iterable[StepDefinition],
+        test_step: TestStep | None = None,
         project_root: str | None = None,
         step_boosts: dict[str, float] | None = None,
         input_leading_keyword: str | None = None,
+        scenario_context: dict[str, Any] | None = None,
     ) -> tuple[StepDefinition | None, float, dict[str, float], bool, bool, dict[str, Any]]:
         """Finds the best step definition with semantic + deterministic ranking."""
 
@@ -208,7 +213,11 @@ class StepMatcher:
             except Exception:
                 candidates = list(all_candidates)
 
-        candidates = self._prefilter_candidates(candidates, input_leading_keyword)
+        candidates = self._prefilter_candidates(
+            candidates,
+            input_leading_keyword,
+            intent_type=test_step.intent_type if test_step else None,
+        )
         ranking_meta["candidate_pool_size"] = len(candidates)
         if not candidates:
             return None, 0.0, {
@@ -223,18 +232,20 @@ class StepMatcher:
 
         best_def: StepDefinition | None = None
         best_score = 0.0
-        best_rank = (-1.0, -1.0, -1.0, -1.0, -1.0)
+        best_rank = (-1.0, -1.0, -1.0, -1.0, -1.0, -1.0)
         similarity_scores: dict[str, float] = {}
+        alias_scores: dict[str, float] = {}
         exact_definition_match = False
         ranking_rows: list[tuple[StepDefinition, float]] = []
 
         for definition in candidates:
             candidate_text = self._normalize(definition.pattern)
-            sequence_score = difflib.SequenceMatcher(None, normalized_test, candidate_text).ratio()
+            sequence_score, alias_score = self._best_text_similarity(normalized_test, definition)
             similarity_scores[definition.id] = sequence_score
+            alias_scores[definition.id] = alias_score
             parameter_fit = self._estimate_parameter_fit(definition, test_text)
             parameter_fit_scores[definition.id] = parameter_fit
-            literal_overlap = self._literal_overlap_score(normalized_test, candidate_text)
+            literal_overlap = self._best_literal_overlap(normalized_test, definition)
             literal_overlap_scores[definition.id] = literal_overlap
             embedding_score = embedding_scores.get(definition.id)
             learned_boost = step_boosts.get(definition.id, 0.0)
@@ -247,10 +258,16 @@ class StepMatcher:
                 parameter_fit=parameter_fit,
                 literal_overlap=literal_overlap,
             )
+            intent_bonus = self._intent_bonus(
+                expected_intent=test_step.intent_type if test_step else None,
+                definition=definition,
+            )
+            combined = max(0.0, min(1.0, combined + intent_bonus))
             ranking_rows.append((definition, combined))
             rank = (
                 exact_match,
                 literal_overlap,
+                alias_score,
                 combined,
                 sequence_score,
                 parameter_fit,
@@ -299,6 +316,9 @@ class StepMatcher:
             "parameter_fit": parameter_fit,
             "llm": 1.0 if llm_reranked else 0.0,
         }
+        alias_score = alias_scores.get(best_def.id, 0.0) if best_def else 0.0
+        if alias_score > 0.0:
+            confidence_sources["alias"] = alias_score
         if abs(learned_boost) > 1e-9:
             confidence_sources["learned_boost"] = learned_boost
 
@@ -308,13 +328,21 @@ class StepMatcher:
         self,
         candidates: list[StepDefinition],
         input_leading_keyword: str | None,
+        intent_type: StepIntentType | None,
     ) -> list[StepDefinition]:
         canonical = self._canonicalize_input_keyword(input_leading_keyword)
-        if canonical is None or canonical in {StepKeyword.AND, StepKeyword.BUT}:
-            return self._dedupe_candidates(candidates)
-        allowed = {canonical, StepKeyword.AND, StepKeyword.BUT}
-        filtered = [definition for definition in candidates if definition.keyword in allowed]
-        return self._dedupe_candidates(filtered or candidates)
+        filtered = list(candidates)
+        if canonical is not None and canonical not in {StepKeyword.AND, StepKeyword.BUT}:
+            allowed = {canonical, StepKeyword.AND, StepKeyword.BUT}
+            filtered = [definition for definition in filtered if definition.keyword in allowed] or list(candidates)
+        if intent_type is not None:
+            typed = [
+                definition
+                for definition in filtered
+                if self._intent_compatible(definition.step_type, intent_type)
+            ]
+            filtered = typed or filtered
+        return self._dedupe_candidates(filtered)
 
     @staticmethod
     def _dedupe_candidates(candidates: list[StepDefinition]) -> list[StepDefinition]:
@@ -350,6 +378,54 @@ class StepMatcher:
     @staticmethod
     def _normalize(text: str) -> str:
         return " ".join(text.lower().strip().split())
+
+    def _best_text_similarity(self, normalized_test: str, definition: StepDefinition) -> tuple[float, float]:
+        candidates = [self._normalize(definition.pattern)]
+        candidates.extend(self._normalize(alias) for alias in definition.aliases if alias)
+        best_sequence = 0.0
+        best_alias = 0.0
+        for index, candidate_text in enumerate(candidates):
+            if not candidate_text:
+                continue
+            sequence_score = difflib.SequenceMatcher(None, normalized_test, candidate_text).ratio()
+            best_sequence = max(best_sequence, sequence_score)
+            if index > 0:
+                best_alias = max(best_alias, sequence_score)
+        return best_sequence, best_alias
+
+    def _best_literal_overlap(self, normalized_test: str, definition: StepDefinition) -> float:
+        texts = [self._normalize(definition.pattern)]
+        texts.extend(self._normalize(alias) for alias in definition.aliases if alias)
+        return max((self._literal_overlap_score(normalized_test, text) for text in texts if text), default=0.0)
+
+    @staticmethod
+    def _intent_bonus(expected_intent: StepIntentType | None, definition: StepDefinition) -> float:
+        if expected_intent is None or definition.step_type is None:
+            return 0.0
+        if definition.step_type == expected_intent:
+            return 0.06
+        if definition.step_type in {StepIntentType.ACTION, StepIntentType.NAVIGATION} and expected_intent in {
+            StepIntentType.ACTION,
+            StepIntentType.NAVIGATION,
+        }:
+            return 0.02
+        return -0.04
+
+    @staticmethod
+    def _intent_compatible(
+        definition_intent: StepIntentType | None,
+        expected_intent: StepIntentType,
+    ) -> bool:
+        if definition_intent is None:
+            return True
+        if definition_intent == expected_intent:
+            return True
+        if definition_intent in {StepIntentType.ACTION, StepIntentType.NAVIGATION} and expected_intent in {
+            StepIntentType.ACTION,
+            StepIntentType.NAVIGATION,
+        }:
+            return True
+        return False
 
     def _derive_status(
         self,

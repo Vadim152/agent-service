@@ -39,6 +39,9 @@ class RunService:
         run_id: str,
         project_root: str,
         test_case_text: str,
+        plan_id: str | None,
+        selected_scenario_id: str | None,
+        binding_overrides: list[dict[str, Any]] | None,
         target_path: str | None,
         create_file: bool,
         overwrite_existing: bool,
@@ -54,10 +57,10 @@ class RunService:
         quality_policy_explicit: bool,
         plugin: str = "testgen",
     ) -> dict[str, Any]:
-        if not test_case_text.strip():
+        if not test_case_text.strip() and not str(plan_id or "").strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="testgen runs require input.testCaseText or input.jiraKey",
+                detail="testgen runs require input.testCaseText, input.jiraKey, or input.planId",
             )
         if quality_policy not in {"strict", "balanced", "lenient"}:
             raise HTTPException(
@@ -73,6 +76,9 @@ class RunService:
             "cancel_requested_at": None,
             "project_root": project_root,
             "test_case_text": test_case_text,
+            "plan_id": plan_id,
+            "selected_scenario_id": selected_scenario_id,
+            "binding_overrides": list(binding_overrides or []),
             "target_path": target_path,
             "create_file": create_file,
             "overwrite_existing": overwrite_existing,
@@ -158,6 +164,9 @@ class RunService:
                 run_id=run_id,
                 project_root=project_root,
                 test_case_text=test_case_text,
+                plan_id=input_payload.get("planId") or input_payload.get("plan_id"),
+                selected_scenario_id=input_payload.get("selectedScenarioId") or input_payload.get("selected_scenario_id"),
+                binding_overrides=input_payload.get("bindingOverrides") or input_payload.get("binding_overrides") or [],
                 target_path=input_payload.get("targetPath") or input_payload.get("target_path"),
                 create_file=bool(input_payload.get("createFile", input_payload.get("create_file", False))),
                 overwrite_existing=bool(

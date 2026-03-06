@@ -8,7 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from domain.enums import StepKeyword, StepPatternType
+from domain.enums import ScenarioType, StepIntentType, StepKeyword, StepPatternType
 
 
 def _to_camel(value: str) -> str:
@@ -96,6 +96,97 @@ class StepDefinitionDto(ApiBaseModel):
         default_factory=list,
         description="РџСЂРёРјРµСЂС‹ РёСЃРїРѕР»СЊР·РѕРІР°РЅРёСЏ С€Р°РіР° РёР· РєРѕРјРјРµРЅС‚Р°СЂРёРµРІ РёР»Рё РґРѕРєСѓРјРµРЅС‚Р°С†РёРё",
     )
+    step_type: StepIntentType | None = Field(default=None, alias="stepType")
+    usage_count: int = Field(default=0, alias="usageCount")
+    linked_scenario_ids: list[str] = Field(default_factory=list, alias="linkedScenarioIds")
+    sample_scenario_refs: list[str] = Field(default_factory=list, alias="sampleScenarioRefs")
+    aliases: list[str] = Field(default_factory=list)
+    domain: str | None = None
+
+
+class CanonicalStepDto(ApiBaseModel):
+    order: int
+    text: str
+    intent_type: StepIntentType = Field(..., alias="intentType")
+    source: str
+    origin: str
+    confidence: float = 1.0
+    normalized_from: str | None = Field(default=None, alias="normalizedFrom")
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CanonicalTestCaseDto(ApiBaseModel):
+    title: str
+    preconditions: list[CanonicalStepDto] = Field(default_factory=list)
+    actions: list[CanonicalStepDto] = Field(default_factory=list)
+    expected_results: list[CanonicalStepDto] = Field(default_factory=list, alias="expectedResults")
+    test_data: list[str] = Field(default_factory=list, alias="testData")
+    tags: list[str] = Field(default_factory=list)
+    scenario_type: ScenarioType = Field(default=ScenarioType.STANDARD, alias="scenarioType")
+    source: str | None = None
+
+
+class BindingCandidateDto(ApiBaseModel):
+    step_id: str = Field(..., alias="stepId")
+    step_text: str = Field(..., alias="stepText")
+    status: str
+    confidence: float
+    reason: str | None = None
+    source: str | None = None
+
+
+class BindingOverrideDto(ApiBaseModel):
+    order: int | None = None
+    text: str | None = None
+    step_id: str = Field(..., alias="stepId")
+
+
+class GenerationPlanItemDto(ApiBaseModel):
+    order: int
+    text: str
+    intent_type: StepIntentType = Field(..., alias="intentType")
+    section: str
+    keyword: StepKeyword
+    binding_candidates: list[BindingCandidateDto] = Field(default_factory=list, alias="bindingCandidates")
+    selected_step_id: str | None = Field(default=None, alias="selectedStepId")
+    selected_confidence: float | None = Field(default=None, alias="selectedConfidence")
+    warning: str | None = None
+
+
+class ScenarioCatalogDto(ApiBaseModel):
+    id: str
+    name: str
+    feature_path: str = Field(..., alias="featurePath")
+    scenario_name: str = Field(..., alias="scenarioName")
+    tags: list[str] = Field(default_factory=list)
+    background_steps: list[str] = Field(default_factory=list, alias="backgroundSteps")
+    steps: list[str] = Field(default_factory=list)
+    scenario_type: ScenarioType = Field(default=ScenarioType.STANDARD, alias="scenarioType")
+    document: str | None = None
+    description: str | None = None
+
+
+class SimilarScenarioDto(ApiBaseModel):
+    scenario_id: str = Field(..., alias="scenarioId")
+    name: str
+    feature_path: str = Field(..., alias="featurePath")
+    score: float
+    matched_fragments: list[str] = Field(default_factory=list, alias="matchedFragments")
+    background_steps: list[str] = Field(default_factory=list, alias="backgroundSteps")
+    steps: list[str] = Field(default_factory=list)
+    recommended: bool = False
+
+
+class GenerationPlanDto(ApiBaseModel):
+    plan_id: str | None = Field(default=None, alias="planId")
+    source: str = "retrieval_driven"
+    recommended_scenario_id: str | None = Field(default=None, alias="recommendedScenarioId")
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    candidate_background: list[str] = Field(default_factory=list, alias="candidateBackground")
+    items: list[GenerationPlanItemDto] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    draft_feature_text: str = Field(default="", alias="draftFeatureText")
 
 
 class UnmappedStepDto(ApiBaseModel):
@@ -132,6 +223,12 @@ class QualityMetricsDto(ApiBaseModel):
     ambiguous_count: int = Field(default=0, alias="ambiguousCount")
     llm_reranked_count: int = Field(default=0, alias="llmRerankedCount")
     normalization_split_count: int = Field(default=0, alias="normalizationSplitCount")
+    expected_result_count: int = Field(default=0, alias="expectedResultCount")
+    expected_result_coverage: float = Field(default=0.0, alias="expectedResultCoverage")
+    assertion_count: int = Field(default=0, alias="assertionCount")
+    missing_assertion_count: int = Field(default=0, alias="missingAssertionCount")
+    weak_match_count: int = Field(default=0, alias="weakMatchCount")
+    logical_completeness: bool = Field(default=False, alias="logicalCompleteness")
     quality_score: int = Field(default=0, alias="qualityScore")
 
 
@@ -140,6 +237,7 @@ class QualityReportDto(ApiBaseModel):
     passed: bool = Field(default=False)
     score: int = Field(default=0)
     failures: list[QualityFailureDto] = Field(default_factory=list)
+    warnings: list[QualityFailureDto] = Field(default_factory=list)
     critic_issues: list[str] = Field(default_factory=list, alias="criticIssues")
     metrics: QualityMetricsDto = Field(default_factory=QualityMetricsDto)
 
@@ -179,11 +277,16 @@ class ScanStepsResponse(ApiBaseModel):
 
     project_root: str = Field(..., alias="projectRoot", description="РџСѓС‚СЊ Рє РїСЂРѕРµРєС‚Сѓ")
     steps_count: int = Field(..., alias="stepsCount", description="РљРѕР»РёС‡РµСЃС‚РІРѕ С€Р°РіРѕРІ")
+    scenarios_count: int = Field(default=0, alias="scenariosCount")
     updated_at: datetime = Field(..., alias="updatedAt", description="Р’СЂРµРјСЏ РѕР±РЅРѕРІР»РµРЅРёСЏ")
     sample_steps: list[StepDefinitionDto] | None = Field(
         default=None,
         alias="sampleSteps",
         description="РџРµСЂРІС‹Рµ РЅР°Р№РґРµРЅРЅС‹Рµ С€Р°РіРё РґР»СЏ РїСЂРµРґРїСЂРѕСЃРјРѕС‚СЂР°",
+    )
+    sample_scenarios: list[ScenarioCatalogDto] = Field(
+        default_factory=list,
+        alias="sampleScenarios",
     )
     unmapped_steps: list[UnmappedStepDto] = Field(
         default_factory=list,
@@ -254,6 +357,9 @@ class GenerateFeatureRequest(ApiBaseModel):
         alias="qualityPolicy",
         description="Policy for deterministic quality gate over generated feature",
     )
+    plan_id: str | None = Field(default=None, alias="planId")
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    binding_overrides: list[BindingOverrideDto] = Field(default_factory=list, alias="bindingOverrides")
 
 
 class GenerateFeatureResponse(ApiBaseModel):
@@ -296,6 +402,32 @@ class GenerateFeatureResponse(ApiBaseModel):
         default=None,
         description="Deterministic quality evaluation and gate result",
     )
+    plan_id: str | None = Field(default=None, alias="planId")
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GenerationPreviewRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    test_case_text: str = Field(..., alias="testCaseText")
+    language: str | None = None
+    quality_policy: Literal["strict", "balanced", "lenient"] = Field(
+        default="strict",
+        alias="qualityPolicy",
+    )
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    binding_overrides: list[BindingOverrideDto] = Field(default_factory=list, alias="bindingOverrides")
+
+
+class GenerationPreviewResponse(ApiBaseModel):
+    plan_id: str | None = Field(default=None, alias="planId")
+    canonical_test_case: CanonicalTestCaseDto | None = Field(default=None, alias="canonicalTestCase")
+    similar_scenarios: list[SimilarScenarioDto] = Field(default_factory=list, alias="similarScenarios")
+    generation_plan: GenerationPlanDto = Field(default_factory=GenerationPlanDto, alias="generationPlan")
+    draft_feature_text: str = Field(default="", alias="draftFeatureText")
+    quality: QualityReportDto | None = None
+    warnings: list[str] = Field(default_factory=list)
+    memory_preview: dict[str, Any] | None = Field(default=None, alias="memoryPreview")
 
 
 class ApplyFeatureRequest(ApiBaseModel):
@@ -322,6 +454,33 @@ class ApplyFeatureResponse(ApiBaseModel):
     )
     status: str = Field(..., description="РЎС‚Р°С‚СѓСЃ РѕРїРµСЂР°С†РёРё: created/overwritten/skipped")
     message: str | None = Field(default=None, description="Р”РѕРїРѕР»РЅРёС‚РµР»СЊРЅРѕРµ РїРѕСЏСЃРЅРµРЅРёРµ")
+
+
+class ReviewLearningRequest(ApiBaseModel):
+    project_root: str = Field(..., alias="projectRoot")
+    plan_id: str | None = Field(default=None, alias="planId")
+    target_path: str = Field(..., alias="targetPath")
+    original_feature_text: str = Field(..., alias="originalFeatureText")
+    edited_feature_text: str = Field(..., alias="editedFeatureText")
+    overwrite_existing: bool = Field(default=False, alias="overwriteExisting")
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    accepted_step_ids: list[str] = Field(default_factory=list, alias="acceptedStepIds")
+    rejected_step_ids: list[str] = Field(default_factory=list, alias="rejectedStepIds")
+    binding_overrides: list[BindingOverrideDto] = Field(default_factory=list, alias="bindingOverrides")
+
+
+class ReviewLearningResultDto(ApiBaseModel):
+    rewrite_rules_saved: int = Field(default=0, alias="rewriteRulesSaved")
+    alias_candidates_saved: int = Field(default=0, alias="aliasCandidatesSaved")
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    memory_updated_at: datetime | None = Field(default=None, alias="memoryUpdatedAt")
+
+
+class ReviewLearningResponse(ApiBaseModel):
+    plan_id: str | None = Field(default=None, alias="planId")
+    file_status: ApplyFeatureResponse = Field(..., alias="fileStatus")
+    quality: QualityReportDto | None = None
+    learning: ReviewLearningResultDto = Field(default_factory=ReviewLearningResultDto)
 
 
 class FailureClassificationDto(ApiBaseModel):
@@ -371,6 +530,9 @@ class FeatureResultDto(ApiBaseModel):
     )
     file_status: dict[str, Any] | None = Field(default=None, alias="fileStatus")
     quality: QualityReportDto | None = Field(default=None)
+    plan_id: str | None = Field(default=None, alias="planId")
+    selected_scenario_id: str | None = Field(default=None, alias="selectedScenarioId")
+    warnings: list[str] = Field(default_factory=list)
 
 
 class LlmTestRequest(ApiBaseModel):
@@ -525,10 +687,18 @@ class GenerationResolvePreviewResponse(ApiBaseModel):
 __all__ = [
     "ApplyFeatureRequest",
     "ApplyFeatureResponse",
+    "BindingCandidateDto",
+    "BindingOverrideDto",
+    "CanonicalStepDto",
+    "CanonicalTestCaseDto",
     "LlmTestRequest",
     "LlmTestResponse",
     "MemoryFeedbackRequest",
     "MemoryFeedbackResponse",
+    "GenerationPlanDto",
+    "GenerationPlanItemDto",
+    "GenerationPreviewRequest",
+    "GenerationPreviewResponse",
     "GenerationRuleConditionDto",
     "GenerationRuleActionsDto",
     "GenerationRuleDto",
@@ -546,6 +716,9 @@ __all__ = [
     "GenerateFeatureResponse",
     "FailureClassificationDto",
     "FeatureResultDto",
+    "ReviewLearningRequest",
+    "ReviewLearningResponse",
+    "ReviewLearningResultDto",
     "RemediationActionDto",
     "IncidentReportDto",
     "RunAttemptDto",
@@ -560,6 +733,8 @@ __all__ = [
     "StepDefinitionDto",
     "StepParameterDto",
     "StepsSummaryDto",
+    "ScenarioCatalogDto",
+    "SimilarScenarioDto",
     "UnmappedStepDto",
 ]
 

@@ -7,12 +7,19 @@ from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
-from domain.enums import MatchStatus, StepKeyword, StepPatternType
+from domain.enums import MatchStatus, ScenarioType, StepIntentType, StepKeyword, StepPatternType
 from domain.models import (
+    CanonicalStep,
+    CanonicalTestCase,
     FeatureFile,
     FeatureScenario,
+    GenerationPlan,
+    GenerationPlanItem,
+    BindingCandidate,
     MatchedStep,
     Scenario,
+    ScenarioCatalogEntry,
+    SimilarScenarioCandidate,
     StepDefinition,
     StepImplementation,
     StepParameter,
@@ -20,6 +27,8 @@ from domain.models import (
 )
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.gigachat_adapter import GigaChatAdapter
+from infrastructure.preview_plan_store import PreviewPlanStore
+from infrastructure.scenario_index_store import ScenarioIndexStore
 from memory import MemoryRepository, MemoryService
 from infrastructure.step_index_store import StepIndexStore
 from integrations.jira_testcase_provider import JiraTestcaseProvider
@@ -30,15 +39,53 @@ from tools.step_matcher import StepMatcherConfig
 logger = logging.getLogger(__name__)
 
 
+def _enum_value(value: Any) -> Any:
+    return value.value if hasattr(value, "value") else value
+
+
+def _serialize_canonical_step(step: CanonicalStep) -> dict[str, Any]:
+    return {
+        "order": step.order,
+        "text": step.text,
+        "intent_type": step.intent_type.value,
+        "source": step.source,
+        "origin": step.origin,
+        "confidence": step.confidence,
+        "normalized_from": step.normalized_from,
+        "metadata": dict(step.metadata),
+    }
+
+
+def _serialize_canonical_testcase(testcase: CanonicalTestCase) -> dict[str, Any]:
+    return {
+        "title": testcase.title,
+        "preconditions": [_serialize_canonical_step(step) for step in testcase.preconditions],
+        "actions": [_serialize_canonical_step(step) for step in testcase.actions],
+        "expected_results": [_serialize_canonical_step(step) for step in testcase.expected_results],
+        "test_data": list(testcase.test_data),
+        "tags": list(testcase.tags),
+        "scenario_type": testcase.scenario_type.value,
+        "domain_context": testcase.domain_context,
+        "source": testcase.source,
+    }
+
+
 def _serialize_step_definition(step: StepDefinition) -> dict[str, Any]:
     data = asdict(step)
     data["keyword"] = step.keyword.value
     data["pattern_type"] = step.pattern_type.value
+    data["step_type"] = step.step_type.value if step.step_type else None
     return data
 
 
 def _serialize_test_step(test_step: TestStep) -> dict[str, Any]:
-    return asdict(test_step)
+    return {
+        "order": test_step.order,
+        "text": test_step.text,
+        "section": test_step.section,
+        "intent_type": test_step.intent_type.value if test_step.intent_type else None,
+        "source_text": test_step.source_text,
+    }
 
 
 def _serialize_scenario(scenario: Scenario) -> dict[str, Any]:
@@ -49,6 +96,9 @@ def _serialize_scenario(scenario: Scenario) -> dict[str, Any]:
         "steps": [_serialize_test_step(step) for step in scenario.steps],
         "expected_result": scenario.expected_result,
         "tags": list(scenario.tags),
+        "test_data": list(scenario.test_data),
+        "scenario_type": scenario.scenario_type.value,
+        "canonical": dict(scenario.canonical or {}),
     }
 
 
@@ -73,6 +123,8 @@ def _deserialize_test_step(data: dict[str, Any]) -> TestStep:
         order=int(data.get("order", 0)),
         text=data.get("text", ""),
         section=data.get("section"),
+        intent_type=StepIntentType(data["intent_type"]) if data.get("intent_type") else None,
+        source_text=data.get("source_text") or data.get("sourceText"),
     )
 
 
@@ -84,6 +136,11 @@ def _deserialize_scenario(data: dict[str, Any]) -> Scenario:
         steps=[_deserialize_test_step(step) for step in data.get("steps", [])],
         expected_result=data.get("expected_result"),
         tags=list(data.get("tags", []) or []),
+        test_data=list(data.get("test_data") or data.get("testData") or []),
+        scenario_type=ScenarioType(
+            data.get("scenario_type") or data.get("scenarioType") or ScenarioType.STANDARD.value
+        ),
+        canonical=data.get("canonical"),
     )
 
 
@@ -114,6 +171,16 @@ def _deserialize_step_definition(data: dict[str, Any]) -> StepDefinition:
         else None,
         summary=data.get("summary"),
         examples=list(data.get("examples", []) or []),
+        step_type=StepIntentType(data["step_type"]) if data.get("step_type") else None,
+        usage_count=int(data.get("usage_count") or data.get("usageCount") or 0),
+        linked_scenario_ids=list(
+            data.get("linked_scenario_ids") or data.get("linkedScenarioIds") or []
+        ),
+        sample_scenario_refs=list(
+            data.get("sample_scenario_refs") or data.get("sampleScenarioRefs") or []
+        ),
+        aliases=list(data.get("aliases", []) or []),
+        domain=data.get("domain"),
     )
 
 
@@ -195,16 +262,22 @@ def create_orchestrator(settings: Settings | None = None):
         corp_retry_jitter_s=resolved_settings.corp_retry_jitter_s,
     )
     step_index_store = StepIndexStore(resolved_settings.steps_index_dir)
-    embeddings_store = EmbeddingsStore()
-    memory_service = MemoryService(
-        MemoryRepository(Path(resolved_settings.steps_index_dir).parent / "learning_memory")
-    )
+    service_data_dir = Path(resolved_settings.steps_index_dir).parent
+    embeddings_store = EmbeddingsStore(service_data_dir / "chroma")
+    scenario_index_store = ScenarioIndexStore(service_data_dir / "scenario_index")
+    preview_plan_store = PreviewPlanStore(service_data_dir / "preview_plans")
+    memory_service = MemoryService(MemoryRepository(service_data_dir / "learning_memory"))
 
     logger.debug("LLMClient и хранилища инициализированы")
 
     agent_llm_client = llm_client if credentials_provided else None
 
-    repo_scanner = RepoScannerAgent(step_index_store, embeddings_store, agent_llm_client)
+    repo_scanner = RepoScannerAgent(
+        step_index_store,
+        embeddings_store,
+        scenario_index_store=scenario_index_store,
+        llm_client=agent_llm_client,
+    )
     testcase_parser = TestcaseParserAgent(agent_llm_client)
     step_matcher = StepMatcherAgent(
         step_index_store,
@@ -234,6 +307,8 @@ def create_orchestrator(settings: Settings | None = None):
         feature_builder_agent=feature_generator,
         step_index_store=step_index_store,
         embeddings_store=embeddings_store,
+        scenario_index_store=scenario_index_store,
+        preview_plan_store=preview_plan_store,
         project_learning_store=memory_service,
         llm_client=llm_client,
         jira_testcase_provider=jira_testcase_provider,

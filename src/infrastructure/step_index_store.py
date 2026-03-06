@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from domain.enums import StepKeyword, StepPatternType
+from domain.enums import StepIntentType, StepKeyword, StepPatternType
 from domain.models import StepDefinition, StepImplementation, StepParameter
 from tools.cucumber_expression import cucumber_expression_to_regex
 
@@ -113,6 +113,7 @@ class StepIndexStore:
         data = asdict(step)
         data["keyword"] = step.keyword.value
         data["pattern_type"] = step.pattern_type.value
+        data["step_type"] = step.step_type.value if step.step_type else None
         data["parameters"] = [asdict(param) for param in step.parameters]
         data["implementation"] = (
             asdict(step.implementation) if step.implementation else None
@@ -151,4 +152,14 @@ class StepIndexStore:
             summary=data.get("summary"),
             doc_summary=data.get("doc_summary"),
             examples=list(data.get("examples", []) or []),
+            step_type=StepIntentType(data["step_type"]) if data.get("step_type") else None,
+            usage_count=int(data.get("usage_count") or data.get("usageCount") or 0),
+            linked_scenario_ids=list(
+                data.get("linked_scenario_ids") or data.get("linkedScenarioIds") or []
+            ),
+            sample_scenario_refs=list(
+                data.get("sample_scenario_refs") or data.get("sampleScenarioRefs") or []
+            ),
+            aliases=list(data.get("aliases", []) or []),
+            domain=data.get("domain"),
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable
 
-from .enums import MatchStatus, StepKeyword, StepPatternType
+from .enums import MatchStatus, ScenarioType, StepIntentType, StepKeyword, StepPatternType
 
 GHERKIN_KEYWORDS: dict[str, dict[str, str]] = {
     "ru": {
@@ -61,6 +61,12 @@ class StepDefinition:
     summary: str | None = None
     doc_summary: str | None = None
     examples: list[str] = field(default_factory=list)
+    step_type: StepIntentType | None = None
+    usage_count: int = 0
+    linked_scenario_ids: list[str] = field(default_factory=list)
+    sample_scenario_refs: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
+    domain: str | None = None
 
     def __post_init__(self) -> None:
         if self.doc_summary and not self.summary:
@@ -71,6 +77,8 @@ class StepDefinition:
             self.pattern_type = StepPatternType(self.pattern_type)
         self.pattern_type = self.pattern_type or StepPatternType.CUCUMBER_EXPRESSION
         self.parameters = list(self._normalize_parameters(self.parameters))
+        if self.step_type and isinstance(self.step_type, str):
+            self.step_type = StepIntentType(self.step_type)
         if self.implementation and not isinstance(self.implementation, StepImplementation):
             impl = self.implementation
             self.implementation = StepImplementation(**impl) if isinstance(impl, dict) else None
@@ -93,6 +101,8 @@ class TestStep:
     order: int
     text: str
     section: str | None = None
+    intent_type: StepIntentType | None = None
+    source_text: str | None = None
     __test__ = False
 
 
@@ -106,6 +116,95 @@ class Scenario:
     steps: list[TestStep] = field(default_factory=list)
     expected_result: str | None = None
     tags: list[str] = field(default_factory=list)
+    test_data: list[str] = field(default_factory=list)
+    scenario_type: ScenarioType = ScenarioType.STANDARD
+    canonical: dict[str, Any] | None = None
+
+
+@dataclass
+class CanonicalStep:
+    order: int
+    text: str
+    intent_type: StepIntentType
+    source: str
+    origin: str
+    confidence: float = 1.0
+    normalized_from: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CanonicalTestCase:
+    title: str
+    preconditions: list[CanonicalStep] = field(default_factory=list)
+    actions: list[CanonicalStep] = field(default_factory=list)
+    expected_results: list[CanonicalStep] = field(default_factory=list)
+    test_data: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    scenario_type: ScenarioType = ScenarioType.STANDARD
+    domain_context: str | None = None
+    source: str | None = None
+
+
+@dataclass
+class ScenarioCatalogEntry:
+    id: str
+    name: str
+    feature_path: str
+    scenario_name: str
+    tags: list[str] = field(default_factory=list)
+    background_steps: list[str] = field(default_factory=list)
+    steps: list[str] = field(default_factory=list)
+    scenario_type: ScenarioType = ScenarioType.STANDARD
+    document: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class SimilarScenarioCandidate:
+    scenario_id: str
+    name: str
+    feature_path: str
+    score: float
+    matched_fragments: list[str] = field(default_factory=list)
+    background_steps: list[str] = field(default_factory=list)
+    steps: list[str] = field(default_factory=list)
+    recommended: bool = False
+
+
+@dataclass
+class BindingCandidate:
+    step_id: str
+    step_text: str
+    status: MatchStatus
+    confidence: float
+    reason: str | None = None
+    source: str | None = None
+
+
+@dataclass
+class GenerationPlanItem:
+    order: int
+    text: str
+    intent_type: StepIntentType
+    section: str
+    keyword: StepKeyword
+    binding_candidates: list[BindingCandidate] = field(default_factory=list)
+    selected_step_id: str | None = None
+    warning: str | None = None
+
+
+@dataclass
+class GenerationPlan:
+    plan_id: str
+    source: str
+    recommended_scenario_id: str | None = None
+    selected_scenario_id: str | None = None
+    candidate_background: list[str] = field(default_factory=list)
+    items: list[GenerationPlanItem] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    confidence: float = 0.0
+    draft_feature_text: str = ""
 
 
 @dataclass

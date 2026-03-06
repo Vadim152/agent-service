@@ -18,7 +18,10 @@ data class GenerateFeatureRequestDto(
     val targetPath: String? = null,
     val options: GenerateFeatureOptionsDto? = null,
     val zephyrAuth: ZephyrAuthDto? = null,
-    val qualityPolicy: String = "strict"
+    val qualityPolicy: String = "strict",
+    val planId: String? = null,
+    val selectedScenarioId: String? = null,
+    val bindingOverrides: List<BindingOverrideDto> = emptyList()
 )
 
 /** Ответ на генерацию feature. */
@@ -29,5 +32,8 @@ data class GenerateFeatureResponseDto(
     val meta: Map<String, Any?>? = emptyMap(),
     val stepDetails: List<Map<String, Any?>> = emptyList(),
     val parameterFillSummary: Map<String, Int> = emptyMap(),
-    val quality: QualityReportDto? = null
+    val quality: QualityReportDto? = null,
+    val planId: String? = null,
+    val selectedScenarioId: String? = null,
+    val warnings: List<String> = emptyList()
 )

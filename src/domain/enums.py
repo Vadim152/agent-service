@@ -96,6 +96,27 @@ class StepPatternType(str, Enum):
     REGULAR_EXPRESSION = "regularExpression"
 
 
+class StepIntentType(str, Enum):
+    """Semantic role of a testcase or feature step used by planning."""
+
+    SETUP = "setup"
+    ACTION = "action"
+    ASSERTION = "assertion"
+    NAVIGATION = "navigation"
+    TEST_DATA = "test_data"
+    UNKNOWN = "unknown"
+
+
+class ScenarioType(str, Enum):
+    """High-level scenario type used by retrieval and generation planning."""
+
+    STANDARD = "standard"
+    NEGATIVE = "negative"
+    VALIDATION = "validation"
+    NAVIGATION = "navigation"
+    CRUD = "crud"
+
+
 class JobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"

@@ -16,6 +16,8 @@ import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
+import ru.sber.aitestplugin.model.GenerationPreviewRequestDto
+import ru.sber.aitestplugin.model.GenerationPreviewResponseDto
 import ru.sber.aitestplugin.model.DeleteMemoryItemResponseDto
 import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
 import ru.sber.aitestplugin.model.GenerationRuleDto
@@ -23,6 +25,8 @@ import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
 import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
+import ru.sber.aitestplugin.model.ReviewLearningRequestDto
+import ru.sber.aitestplugin.model.ReviewLearningResponseDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
 import ru.sber.aitestplugin.model.StepTemplateCreateRequestDto
@@ -57,6 +61,10 @@ interface BackendClient {
     fun getRunArtifactContent(runId: String, artifactId: String): String
 
     fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto
+
+    fun previewGenerationPlan(request: GenerationPreviewRequestDto): GenerationPreviewResponseDto
+
+    fun reviewApplyFeature(request: ReviewLearningRequestDto): ReviewLearningResponseDto
 
     fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto
 

@@ -18,8 +18,13 @@ from api.schemas import (
     ApplyFeatureResponse,
     GenerateFeatureRequest,
     GenerateFeatureResponse,
+    GenerationPreviewRequest,
+    GenerationPreviewResponse,
     PipelineStepDto,
     QualityReportDto,
+    ReviewLearningRequest,
+    ReviewLearningResponse,
+    ReviewLearningResultDto,
     StepDetailDto,
     StepsSummaryDto,
     StepDefinitionDto,
@@ -66,6 +71,29 @@ def _dedup_used_steps(matched: Iterable[MatchedStep | dict[str, object]]) -> lis
 
         seen[dto.id] = dto
     return list(seen.values())
+
+
+@router.post(
+    "/preview-generation",
+    response_model=GenerationPreviewResponse,
+    summary="Preview retrieval-driven generation plan before feature creation",
+)
+async def preview_generation(
+    request_model: GenerationPreviewRequest,
+    request: Request,
+) -> GenerationPreviewResponse:
+    orchestrator = _get_orchestrator(request)
+    result = orchestrator.preview_generation_plan(
+        project_root=request_model.project_root,
+        testcase_text=request_model.test_case_text,
+        language=request_model.language,
+        quality_policy=request_model.quality_policy,
+        selected_scenario_id=request_model.selected_scenario_id,
+        binding_overrides=[
+            item.model_dump(by_alias=True, mode="json") for item in request_model.binding_overrides
+        ],
+    )
+    return GenerationPreviewResponse.model_validate(result)
 
 
 @router.post(
@@ -211,6 +239,11 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         explicit_quality_policy="qualityPolicy" in raw_payload_dict,
         explicit_language=bool(options and options.language is not None),
         explicit_target_path=request_model.target_path is not None,
+        plan_id=request_model.plan_id,
+        selected_scenario_id=request_model.selected_scenario_id,
+        binding_overrides=[
+            item.model_dump(by_alias=True, mode="json") for item in request_model.binding_overrides
+        ],
     )
 
     feature_payload = result.get("feature", {})
@@ -258,6 +291,13 @@ async def generate_feature(request: Request) -> GenerateFeatureResponse:
         step_details=step_details,
         parameter_fill_summary=feature_payload.get("parameterFillSummary") or {},
         quality=quality,
+        plan_id=((feature_payload.get("meta") or {}).get("planId")),
+        selected_scenario_id=((feature_payload.get("meta") or {}).get("selectedScenarioId")),
+        warnings=[
+            str(item.get("code"))
+            for item in (quality_payload.get("warnings", []) if isinstance(quality_payload, dict) else [])
+            if isinstance(item, dict) and item.get("code")
+        ],
     )
 
 
@@ -298,4 +338,44 @@ async def apply_feature(request_model: ApplyFeatureRequest, request: Request) ->
         target_path=result.get("targetPath", request_model.target_path),
         status=status_value,
         message=message_value,
+    )
+
+
+@router.post(
+    "/review-apply",
+    response_model=ReviewLearningResponse,
+    summary="Capture review edits, save learning, and apply feature safely",
+)
+async def review_apply_feature(
+    request_model: ReviewLearningRequest,
+    request: Request,
+) -> ReviewLearningResponse:
+    orchestrator = _get_orchestrator(request)
+    result = orchestrator.review_and_apply_feature(
+        project_root=request_model.project_root,
+        plan_id=request_model.plan_id,
+        target_path=request_model.target_path,
+        original_feature_text=request_model.original_feature_text,
+        edited_feature_text=request_model.edited_feature_text,
+        overwrite_existing=request_model.overwrite_existing,
+        selected_scenario_id=request_model.selected_scenario_id,
+        accepted_step_ids=request_model.accepted_step_ids,
+        rejected_step_ids=request_model.rejected_step_ids,
+        binding_overrides=[
+            item.model_dump(by_alias=True, mode="json") for item in request_model.binding_overrides
+        ],
+    )
+    file_status = result.get("fileStatus") or {}
+    quality = result.get("quality")
+    learning = result.get("learning") or {}
+    return ReviewLearningResponse(
+        plan_id=result.get("planId"),
+        file_status=ApplyFeatureResponse(
+            project_root=file_status.get("projectRoot", request_model.project_root),
+            target_path=file_status.get("targetPath", request_model.target_path),
+            status=file_status.get("status", "created"),
+            message=file_status.get("message"),
+        ),
+        quality=QualityReportDto.model_validate(quality) if isinstance(quality, dict) else None,
+        learning=ReviewLearningResultDto.model_validate(learning),
     )

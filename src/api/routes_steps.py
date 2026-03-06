@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from agents.orchestrator import Orchestrator
 from app.config import get_settings
 from api.schemas import (
+    ScenarioCatalogDto,
     ScanStepsRequest,
     ScanStepsResponse,
     StepDefinitionDto,
@@ -67,6 +68,12 @@ def _to_step_dto(step_definitions: Iterable[StepDefinition]) -> list[StepDefinit
             summary=step.summary,
             doc_summary=step.doc_summary,
             examples=step.examples,
+            step_type=step.step_type,
+            usage_count=step.usage_count,
+            linked_scenario_ids=step.linked_scenario_ids,
+            sample_scenario_refs=step.sample_scenario_refs,
+            aliases=step.aliases,
+            domain=step.domain,
         )
         for step in step_definitions
     ]
@@ -269,8 +276,13 @@ async def scan_steps(
     response = ScanStepsResponse(
         project_root=result.get("projectRoot", project_root),
         steps_count=int(result.get("stepsCount", 0)),
+        scenarios_count=int(result.get("scenariosCount", 0)),
         updated_at=updated_at_dt,
         sample_steps=_to_step_dto(sample_steps) or None,
+        sample_scenarios=[
+            ScenarioCatalogDto.model_validate(item, from_attributes=True)
+            for item in (result.get("sampleScenarios") or [])
+        ],
         unmapped_steps=unmapped_steps,
     )
     logger.info(

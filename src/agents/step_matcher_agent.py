@@ -9,8 +9,8 @@ from domain.enums import MatchStatus
 from domain.models import MatchedStep, Scenario
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.llm_client import LLMClient
-from infrastructure.project_learning_store import ProjectLearningStore
 from infrastructure.step_index_store import StepIndexStore
+from memory.service import MemoryService
 from tools.step_matcher import StepMatcher, StepMatcherConfig
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class StepMatcherAgent:
         step_index_store: StepIndexStore,
         embeddings_store: EmbeddingsStore,
         llm_client: LLMClient | None = None,
-        project_learning_store: ProjectLearningStore | None = None,
+        project_learning_store: MemoryService | None = None,
         matcher_config: StepMatcherConfig | None = None,
     ) -> None:
         self.step_index_store = step_index_store
@@ -41,11 +41,13 @@ class StepMatcherAgent:
         logger.info("[StepMatcherAgent] Matching steps for project %s", project_root)
         scenario: Scenario = _deserialize_scenario(scenario_dict)
         step_definitions = self.step_index_store.load_steps(project_root)
-        step_boosts = (
-            self.project_learning_store.get_step_boosts(project_root)
-            if self.project_learning_store
+        step_boosts = self.project_learning_store.get_step_boosts(project_root) if self.project_learning_store else {}
+        learned_aliases = (
+            self.project_learning_store.get_step_aliases(project_root)
+            if self.project_learning_store and hasattr(self.project_learning_store, "get_step_aliases")
             else {}
         )
+        step_definitions = self._merge_aliases(step_definitions, learned_aliases)
         index_status = "ready" if step_definitions else "missing"
         logger.debug("[StepMatcherAgent] Loaded %s step definitions", len(step_definitions))
         matched_steps: list[MatchedStep] = self.matcher.match_steps(
@@ -53,6 +55,7 @@ class StepMatcherAgent:
             step_definitions,
             project_root=project_root,
             step_boosts=step_boosts,
+            scenario_context=scenario.canonical,
         )
         unmatched = [m.test_step.text for m in matched_steps if m.status == MatchStatus.UNMATCHED]
         exact_definition_matches = 0
@@ -86,6 +89,23 @@ class StepMatcherAgent:
             "llmRerankedCount": llm_reranked_count,
             "ambiguousCount": ambiguous_count,
         }
+
+    @staticmethod
+    def _merge_aliases(step_definitions, learned_aliases: dict[str, list[str]]):
+        if not learned_aliases:
+            return step_definitions
+        for definition in step_definitions:
+            aliases = learned_aliases.get(definition.id, [])
+            if not aliases:
+                continue
+            seen = {alias.casefold() for alias in definition.aliases}
+            for alias in aliases:
+                normalized = str(alias).strip()
+                if not normalized or normalized.casefold() in seen:
+                    continue
+                definition.aliases.append(normalized)
+                seen.add(normalized.casefold())
+        return step_definitions
 
 
 __all__ = ["StepMatcherAgent"]

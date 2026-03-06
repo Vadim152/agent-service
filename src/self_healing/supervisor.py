@@ -149,6 +149,9 @@ class ExecutionSupervisor:
                         explicit_target_path=run_record.get("target_path") is not None,
                         zephyr_auth=run_record.get("zephyr_auth"),
                         jira_instance=run_record.get("jira_instance"),
+                        plan_id=run_record.get("plan_id"),
+                        selected_scenario_id=run_record.get("selected_scenario_id"),
+                        binding_overrides=run_record.get("binding_overrides") or [],
                     )
                 latest_result = result
                 if self._is_cancellation_requested(run_id):
@@ -445,4 +448,11 @@ class ExecutionSupervisor:
             "quality": feature_payload.get("quality"),
             "pipeline": result.get("pipeline", []),
             "fileStatus": result.get("fileStatus"),
+            "planId": (feature_payload.get("meta") or {}).get("planId"),
+            "selectedScenarioId": (feature_payload.get("meta") or {}).get("selectedScenarioId"),
+            "warnings": [
+                str(item.get("code"))
+                for item in (feature_payload.get("quality") or {}).get("warnings", [])
+                if isinstance(item, dict) and item.get("code")
+            ],
         }

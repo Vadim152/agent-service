@@ -6,8 +6,8 @@ import sys
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT / "src"))
 
-from domain.enums import StepKeyword
-from domain.models import StepDefinition
+from domain.enums import ScenarioType, StepKeyword
+from domain.models import ScenarioCatalogEntry, StepDefinition
 from infrastructure.embeddings_store import EmbeddingsStore
 
 
@@ -48,6 +48,19 @@ class EmbeddingsStoreTestCase(unittest.TestCase):
                 language="en",
             ),
         ]
+        self.scenarios = [
+            ScenarioCatalogEntry(
+                id="sc-1",
+                name="Dashboard: Open dashboard",
+                feature_path="dashboard.feature",
+                scenario_name="Open dashboard",
+                tags=["ui"],
+                background_steps=["Given user is logged in"],
+                steps=["When user opens dashboard", "Then dashboard is displayed"],
+                scenario_type=ScenarioType.NAVIGATION,
+                document="Dashboard Open dashboard Given user is logged in When user opens dashboard Then dashboard is displayed",
+            )
+        ]
 
     def tearDown(self) -> None:
         self.store.close()
@@ -69,6 +82,14 @@ class EmbeddingsStoreTestCase(unittest.TestCase):
         results = self.store.search_similar(self.project_root, "dashboard", top_k=3)
 
         self.assertEqual(results, [])
+
+    def test_index_and_search_returns_similar_scenarios(self) -> None:
+        self.store.index_scenarios(self.project_root, self.scenarios)
+
+        results = self.store.get_top_k_scenarios(self.project_root, "open dashboard", top_k=1)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0][0].scenario_name, "Open dashboard")
 
 
 if __name__ == "__main__":

@@ -29,6 +29,8 @@ import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
 import ru.sber.aitestplugin.model.ChatToolDecisionResponseDto
 import ru.sber.aitestplugin.model.GenerateFeatureRequestDto
 import ru.sber.aitestplugin.model.GenerateFeatureResponseDto
+import ru.sber.aitestplugin.model.GenerationPreviewRequestDto
+import ru.sber.aitestplugin.model.GenerationPreviewResponseDto
 import ru.sber.aitestplugin.model.DeleteMemoryItemResponseDto
 import ru.sber.aitestplugin.model.GenerationRuleCreateRequestDto
 import ru.sber.aitestplugin.model.GenerationRuleDto
@@ -36,6 +38,8 @@ import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
 import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
+import ru.sber.aitestplugin.model.ReviewLearningRequestDto
+import ru.sber.aitestplugin.model.ReviewLearningResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.StepDefinitionDto
@@ -172,6 +176,14 @@ class HttpBackendClient(
 
     override fun applyFeature(request: ApplyFeatureRequestDto): ApplyFeatureResponseDto =
         post("/platform/feature/apply-feature", request)
+
+    override fun previewGenerationPlan(
+        request: GenerationPreviewRequestDto
+    ): GenerationPreviewResponseDto = post("/platform/feature/preview-generation", request)
+
+    override fun reviewApplyFeature(
+        request: ReviewLearningRequestDto
+    ): ReviewLearningResponseDto = post("/platform/feature/review-apply", request)
 
     override fun createChatSession(request: ChatSessionCreateRequestDto): ChatSessionCreateResponseDto =
         post("/sessions", request)

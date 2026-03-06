@@ -12,7 +12,10 @@ data class FeatureResultDto(
     val stepDetails: List<Map<String, Any?>> = emptyList(),
     val parameterFillSummary: Map<String, Int> = emptyMap(),
     val fileStatus: Map<String, Any?>? = null,
-    val quality: QualityReportDto? = null
+    val quality: QualityReportDto? = null,
+    val planId: String? = null,
+    val selectedScenarioId: String? = null,
+    val warnings: List<String> = emptyList()
 )
 
 data class StepsSummaryDto(
@@ -38,6 +41,12 @@ data class QualityMetricsDto(
     val ambiguousCount: Int = 0,
     val llmRerankedCount: Int = 0,
     val normalizationSplitCount: Int = 0,
+    val expectedResultCount: Int = 0,
+    val expectedResultCoverage: Double = 0.0,
+    val assertionCount: Int = 0,
+    val missingAssertionCount: Int = 0,
+    val weakMatchCount: Int = 0,
+    val logicalCompleteness: Boolean = false,
     val qualityScore: Int = 0
 )
 
@@ -46,6 +55,7 @@ data class QualityReportDto(
     val passed: Boolean = false,
     val score: Int = 0,
     val failures: List<QualityFailureDto> = emptyList(),
+    val warnings: List<QualityFailureDto> = emptyList(),
     val criticIssues: List<String> = emptyList(),
     val metrics: QualityMetricsDto = QualityMetricsDto()
 )

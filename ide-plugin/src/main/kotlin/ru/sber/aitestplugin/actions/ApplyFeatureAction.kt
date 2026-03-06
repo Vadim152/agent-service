@@ -12,6 +12,9 @@ import com.intellij.openapi.project.Project
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.model.ApplyFeatureRequestDto
 import ru.sber.aitestplugin.model.ApplyFeatureResponseDto
+import ru.sber.aitestplugin.model.FEATURE_REVIEW_METADATA_KEY
+import ru.sber.aitestplugin.model.ReviewLearningRequestDto
+import ru.sber.aitestplugin.model.ReviewLearningResponseDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.dialogs.ApplyFeatureDialog
 import ru.sber.aitestplugin.ui.dialogs.FeatureDialogStateStorage
@@ -66,6 +69,7 @@ class ApplyFeatureAction : AnAction() {
 
         stateStorage.saveApplyOptions(dialogOptions)
 
+        val reviewMetadata = e.getData(CommonDataKeys.VIRTUAL_FILE)?.getUserData(FEATURE_REVIEW_METADATA_KEY)
         val request = ApplyFeatureRequestDto(
             projectRoot = projectRoot,
             targetPath = dialogOptions.targetPath,
@@ -76,10 +80,26 @@ class ApplyFeatureAction : AnAction() {
 
         ProgressManager.getInstance().run(object : Task.Backgroundable(project, "Applying feature", true) {
             private var response: ApplyFeatureResponseDto? = null
+            private var reviewResponse: ReviewLearningResponseDto? = null
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Sending feature to backend..."
-                response = backendClient.applyFeature(request)
+                if (reviewMetadata != null) {
+                    reviewResponse = backendClient.reviewApplyFeature(
+                        ReviewLearningRequestDto(
+                            projectRoot = reviewMetadata.projectRoot,
+                            planId = reviewMetadata.planId,
+                            targetPath = dialogOptions.targetPath ?: reviewMetadata.targetPath.orEmpty(),
+                            originalFeatureText = reviewMetadata.originalFeatureText,
+                            editedFeatureText = featureText,
+                            overwriteExisting = dialogOptions.overwriteExisting,
+                            selectedScenarioId = reviewMetadata.selectedScenarioId
+                        )
+                    )
+                    response = reviewResponse?.fileStatus
+                } else {
+                    response = backendClient.applyFeature(request)
+                }
             }
 
             override fun onSuccess() {
@@ -90,7 +110,10 @@ class ApplyFeatureAction : AnAction() {
                     "rejected_outside_project" -> "Feature path is outside current project: ${responseData.targetPath}"
                     else -> "Feature created at ${responseData.targetPath}"
                 }
-                val fullMessage = listOfNotNull(message, responseData.message).joinToString(": ")
+                val learningSuffix = reviewResponse?.learning?.let {
+                    "review learning: rewrites=${it.rewriteRulesSaved}, aliases=${it.aliasCandidatesSaved}"
+                }
+                val fullMessage = listOfNotNull(message, responseData.message, learningSuffix).joinToString(": ")
                 val notificationType = if (status == "rejected_outside_project") NotificationType.ERROR else NotificationType.INFORMATION
                 notify(project, fullMessage, notificationType)
             }

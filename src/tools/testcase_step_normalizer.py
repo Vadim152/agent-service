@@ -147,7 +147,15 @@ def normalize_test_steps(
                     strategy=str(meta.get("strategy") or "rule"),
                     source_section=step.section,
                 )
-            normalized_steps.append(TestStep(order=order, text=chunk, section=section))
+            normalized_steps.append(
+                TestStep(
+                    order=order,
+                    text=chunk,
+                    section=section,
+                    intent_type=step.intent_type,
+                    source_text=step.source_text or step.text,
+                )
+            )
             order += 1
 
     report = {

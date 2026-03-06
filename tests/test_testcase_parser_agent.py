@@ -46,3 +46,25 @@ def test_parser_agent_uses_llm_only_when_heuristic_has_no_steps() -> None:
     assert result["normalization"]["llmParseUsed"] is True
     assert len(result["steps"]) == 2
     assert llm.called is True
+
+
+def test_parser_agent_builds_canonical_sections_for_free_form_case() -> None:
+    agent = TestcaseParserAgent()
+
+    result = agent.parse_testcase(
+        """
+        Preconditions:
+        1. user is logged in
+        Steps:
+        2. user opens dashboard
+        Expected result:
+        3. dashboard is displayed
+        """.strip()
+    )
+
+    canonical = result["canonical"]
+    assert canonical["preconditions"][0]["text"] == "user is logged in"
+    assert canonical["actions"][0]["text"] == "user opens dashboard"
+    assert canonical["expected_results"][0]["text"] == "dashboard is displayed"
+    assert result["steps"][0]["section"] == "precondition"
+    assert result["steps"][-1]["section"] == "expected_result"

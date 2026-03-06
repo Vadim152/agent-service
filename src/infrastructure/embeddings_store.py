@@ -24,8 +24,8 @@ os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb
 
-from domain.enums import StepKeyword, StepPatternType
-from domain.models import StepDefinition, StepImplementation, StepParameter
+from domain.enums import ScenarioType, StepIntentType, StepKeyword, StepPatternType
+from domain.models import ScenarioCatalogEntry, StepDefinition, StepImplementation, StepParameter
 from tools.cucumber_expression import cucumber_expression_to_regex
 
 
@@ -60,20 +60,20 @@ class EmbeddingsStore:
     def __del__(self) -> None:  # pragma: no cover - best-effort cleanup
         self.close()
 
-    def _project_collection_name(self, project_root: str) -> str:
+    def _project_collection_name(self, project_root: str, prefix: str = "steps") -> str:
         project_hash = hashlib.sha1(project_root.encode("utf-8")).hexdigest()
-        return f"steps_{project_hash}"
+        return f"{prefix}_{project_hash}"
 
-    def _get_collection(self, project_root: str):
-        name = self._project_collection_name(project_root)
+    def _get_collection(self, project_root: str, prefix: str = "steps"):
+        name = self._project_collection_name(project_root, prefix=prefix)
         return self._client.get_or_create_collection(
             name=name,
-            metadata={"project_root": project_root},
+            metadata={"project_root": project_root, "prefix": prefix},
             embedding_function=self._embedding_function,
         )
 
-    def _collection_exists(self, project_root: str) -> bool:
-        name = self._project_collection_name(project_root)
+    def _collection_exists(self, project_root: str, prefix: str = "steps") -> bool:
+        name = self._project_collection_name(project_root, prefix=prefix)
         return any(collection.name == name for collection in self._client.list_collections())
 
     def _build_document(self, step: StepDefinition) -> str:
@@ -95,7 +95,30 @@ class EmbeddingsStore:
             parts.extend(step.examples)
         if step.language:
             parts.append(step.language)
+        if step.step_type:
+            parts.append(step.step_type.value)
+        if step.aliases:
+            parts.extend(step.aliases)
+        if step.domain:
+            parts.append(step.domain)
         return " \n".join(parts)
+
+    @staticmethod
+    def _build_scenario_document(scenario: ScenarioCatalogEntry) -> str:
+        parts = [
+            scenario.name,
+            scenario.feature_path,
+            scenario.scenario_name,
+        ]
+        if scenario.description:
+            parts.append(scenario.description)
+        if scenario.tags:
+            parts.extend(scenario.tags)
+        parts.extend(scenario.background_steps)
+        parts.extend(scenario.steps)
+        if scenario.document:
+            parts.append(scenario.document)
+        return " \n".join(part for part in parts if part)
 
     def _step_from_metadata(self, metadata: dict) -> StepDefinition:
         pattern = metadata["pattern"]
@@ -130,6 +153,35 @@ class EmbeddingsStore:
             ),
             summary=metadata.get("summary") or None,
             examples=[ex for ex in (metadata.get("examples") or "").split("\n") if ex],
+            step_type=StepIntentType(metadata["step_type"]) if metadata.get("step_type") else None,
+            usage_count=int(metadata.get("usage_count") or 0),
+            linked_scenario_ids=[
+                item for item in (metadata.get("linked_scenario_ids") or "").split(",") if item
+            ],
+            sample_scenario_refs=[
+                item for item in (metadata.get("sample_scenario_refs") or "").split("\n") if item
+            ],
+            aliases=[item for item in (metadata.get("aliases") or "").split("\n") if item],
+            domain=metadata.get("domain") or None,
+        )
+
+    @staticmethod
+    def _scenario_from_metadata(metadata: dict) -> ScenarioCatalogEntry:
+        return ScenarioCatalogEntry(
+            id=str(metadata.get("id", "")),
+            name=str(metadata.get("name", "")),
+            feature_path=str(metadata.get("feature_path", "")),
+            scenario_name=str(metadata.get("scenario_name", "")),
+            tags=[item for item in (metadata.get("tags") or "").split(",") if item],
+            background_steps=[
+                item for item in (metadata.get("background_steps") or "").split("\n") if item
+            ],
+            steps=[item for item in (metadata.get("steps") or "").split("\n") if item],
+            scenario_type=ScenarioType(
+                metadata.get("scenario_type", ScenarioType.STANDARD.value)
+            ),
+            document=metadata.get("document") or None,
+            description=metadata.get("description") or None,
         )
 
     def index_steps(self, project_root: str, steps: list[StepDefinition]) -> None:
@@ -137,7 +189,7 @@ class EmbeddingsStore:
         if not steps:
             return None
 
-        collection = self._get_collection(project_root)
+        collection = self._get_collection(project_root, prefix="steps")
         documents = [self._build_document(step) for step in steps]
         metadata = [
             {
@@ -167,13 +219,50 @@ class EmbeddingsStore:
                 "method_name": step.implementation.method_name if step.implementation else "",
                 "summary": step.summary or "",
                 "examples": "\n".join(step.examples),
+                "step_type": step.step_type.value if step.step_type else "",
+                "usage_count": int(step.usage_count or 0),
+                "linked_scenario_ids": ",".join(step.linked_scenario_ids),
+                "sample_scenario_refs": "\n".join(step.sample_scenario_refs),
+                "aliases": "\n".join(step.aliases),
+                "domain": step.domain or "",
             }
             for step in steps
         ]
-        ids = [f"{self._project_collection_name(project_root)}:{step.id}" for step in steps]
+        ids = [
+            f"{self._project_collection_name(project_root, prefix='steps')}:{step.id}"
+            for step in steps
+        ]
 
         collection.upsert(ids=ids, documents=documents, metadatas=metadata)
 
+        return None
+
+    def index_scenarios(self, project_root: str, scenarios: list[ScenarioCatalogEntry]) -> None:
+        if not scenarios:
+            return None
+
+        collection = self._get_collection(project_root, prefix="scenarios")
+        documents = [self._build_scenario_document(scenario) for scenario in scenarios]
+        metadata = [
+            {
+                "id": scenario.id,
+                "name": scenario.name,
+                "feature_path": scenario.feature_path,
+                "scenario_name": scenario.scenario_name,
+                "tags": ",".join(scenario.tags),
+                "background_steps": "\n".join(scenario.background_steps),
+                "steps": "\n".join(scenario.steps),
+                "scenario_type": scenario.scenario_type.value,
+                "document": scenario.document or "",
+                "description": scenario.description or "",
+            }
+            for scenario in scenarios
+        ]
+        ids = [
+            f"{self._project_collection_name(project_root, prefix='scenarios')}:{scenario.id}"
+            for scenario in scenarios
+        ]
+        collection.upsert(ids=ids, documents=documents, metadatas=metadata)
         return None
 
     @staticmethod
@@ -219,10 +308,10 @@ class EmbeddingsStore:
         if top_k <= 0:
             return []
 
-        if not self._collection_exists(project_root):
+        if not self._collection_exists(project_root, prefix="steps"):
             return []
 
-        collection = self._get_collection(project_root)
+        collection = self._get_collection(project_root, prefix="steps")
         results = collection.query(query_texts=[query], n_results=top_k, include=["metadatas", "distances"])
 
         metadatas: list[list[dict]] | None = results.get("metadatas")
@@ -242,11 +331,43 @@ class EmbeddingsStore:
 
         return list(zip(definitions, scores))
 
+    def get_top_k_scenarios(
+        self, project_root: str, query: str, top_k: int = 3
+    ) -> list[tuple[ScenarioCatalogEntry, float]]:
+        if top_k <= 0:
+            return []
+
+        if not self._collection_exists(project_root, prefix="scenarios"):
+            return []
+
+        collection = self._get_collection(project_root, prefix="scenarios")
+        results = collection.query(
+            query_texts=[query],
+            n_results=top_k,
+            include=["metadatas", "distances"],
+        )
+        metadatas: list[list[dict]] | None = results.get("metadatas")
+        distances: list[list[float]] | None = results.get("distances")
+        if not metadatas or not metadatas[0]:
+            return []
+
+        scenarios = [self._scenario_from_metadata(metadata) for metadata in metadatas[0]]
+        scores: list[float] = []
+        if distances and distances[0]:
+            for distance in distances[0]:
+                similarity = 1 / (1 + distance) if distance is not None else 0.0
+                scores.append(similarity)
+        else:
+            scores = [0.0 for _ in scenarios]
+
+        return list(zip(scenarios, scores))
+
     def clear(self, project_root: str) -> None:
         """Очищает индекс эмбеддингов для указанного проекта."""
-        name = self._project_collection_name(project_root)
-        if self._collection_exists(project_root):
-            self._client.delete_collection(name)
+        for prefix in ("steps", "scenarios"):
+            name = self._project_collection_name(project_root, prefix=prefix)
+            if self._collection_exists(project_root, prefix=prefix):
+                self._client.delete_collection(name)
 
         return None
 

@@ -61,6 +61,36 @@ class MemoryService:
             result[step_id] = round(raw_boost * decay_factor, 4)
         return result
 
+    def get_step_aliases(self, project_root: str) -> dict[str, list[str]]:
+        payload = self._repository.load(project_root)
+        aliases = payload.get("stepAliases", {})
+        if not isinstance(aliases, dict):
+            return {}
+        result: dict[str, list[str]] = {}
+        for step_id, values in aliases.items():
+            if isinstance(values, list):
+                items = [str(item).strip() for item in values if str(item).strip()]
+            elif values:
+                items = [str(values).strip()]
+            else:
+                items = []
+            if items:
+                result[str(step_id)] = items
+        return result
+
+    def get_scenario_preferences(self, project_root: str) -> dict[str, float]:
+        payload = self._repository.load(project_root)
+        preferences = payload.get("scenarioPreferences", {})
+        if not isinstance(preferences, dict):
+            return {}
+        result: dict[str, float] = {}
+        for key, value in preferences.items():
+            try:
+                result[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return result
+
     def record_feedback(
         self,
         *,
@@ -95,6 +125,94 @@ class MemoryService:
         if preference_key:
             prefs = payload.setdefault("preferences", {})
             prefs[preference_key] = preference_value
+
+        return self._repository.save(project_root, payload)
+
+    def record_generation_review(
+        self,
+        *,
+        project_root: str,
+        plan_id: str | None = None,
+        selected_scenario_id: str | None = None,
+        accepted_step_ids: list[str] | None = None,
+        rejected_step_ids: list[str] | None = None,
+        step_overrides: list[dict[str, Any]] | None = None,
+        alias_candidates: list[dict[str, Any]] | None = None,
+        rewrite_rules: list[dict[str, Any]] | None = None,
+        review_meta: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = self._repository.load(project_root)
+
+        scenario_preferences = payload.setdefault("scenarioPreferences", {})
+        if selected_scenario_id:
+            current = float(scenario_preferences.get(selected_scenario_id, 0.0))
+            scenario_preferences[selected_scenario_id] = round(current + 0.1, 4)
+
+        aliases = payload.setdefault("stepAliases", {})
+        for item in alias_candidates or []:
+            if not isinstance(item, dict):
+                continue
+            step_id = str(item.get("stepId") or "").strip()
+            alias = str(item.get("alias") or "").strip()
+            if not step_id or not alias:
+                continue
+            stored = aliases.setdefault(step_id, [])
+            if alias not in stored:
+                stored.append(alias)
+
+        feedback = payload.setdefault("feedback", [])
+        for step_id in accepted_step_ids or []:
+            feedback.append(
+                {
+                    "stepId": str(step_id),
+                    "accepted": True,
+                    "delta": 0.05,
+                    "note": "review_accept",
+                    "scoringVersion": "v2",
+                    "createdAt": _utcnow(),
+                }
+            )
+            boosts = payload.setdefault("stepBoosts", {})
+            boosts[str(step_id)] = round(max(-0.5, min(0.5, float(boosts.get(step_id, 0.0)) + 0.05)), 4)
+        for step_id in rejected_step_ids or []:
+            feedback.append(
+                {
+                    "stepId": str(step_id),
+                    "accepted": False,
+                    "delta": -0.05,
+                    "note": "review_reject",
+                    "scoringVersion": "v2",
+                    "createdAt": _utcnow(),
+                }
+            )
+            boosts = payload.setdefault("stepBoosts", {})
+            boosts[str(step_id)] = round(max(-0.5, min(0.5, float(boosts.get(step_id, 0.0)) - 0.05)), 4)
+        if len(feedback) > 500:
+            payload["feedback"] = feedback[-500:]
+
+        history = payload.setdefault("reviewHistory", [])
+        history.append(
+            {
+                "planId": plan_id,
+                "selectedScenarioId": selected_scenario_id,
+                "acceptedStepIds": list(accepted_step_ids or []),
+                "rejectedStepIds": list(rejected_step_ids or []),
+                "stepOverrides": list(step_overrides or []),
+                "aliasCandidates": list(alias_candidates or []),
+                "rewriteRuleCount": len(rewrite_rules or []),
+                "reviewMeta": dict(review_meta or {}),
+                "createdAt": _utcnow(),
+            }
+        )
+        if len(history) > 200:
+            payload["reviewHistory"] = history[-200:]
+
+        rules = payload.setdefault("rewriteRules", [])
+        for rule in rewrite_rules or []:
+            if isinstance(rule, dict):
+                rules.append(rule)
+        if len(rules) > 500:
+            payload["rewriteRules"] = rules[-500:]
 
         return self._repository.save(project_root, payload)
 

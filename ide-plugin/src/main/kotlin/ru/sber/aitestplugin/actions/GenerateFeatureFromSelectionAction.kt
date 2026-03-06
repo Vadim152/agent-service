@@ -25,6 +25,8 @@ import com.intellij.ui.JBColor
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.zephyrAuthValidationError
 import ru.sber.aitestplugin.model.GenerateFeatureOptionsDto
+import ru.sber.aitestplugin.model.FEATURE_REVIEW_METADATA_KEY
+import ru.sber.aitestplugin.model.FeatureReviewMetadata
 import ru.sber.aitestplugin.model.FeatureResultDto
 import ru.sber.aitestplugin.model.QualityReportDto
 import ru.sber.aitestplugin.model.RunCreateRequestDto
@@ -102,6 +104,8 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             private var fileStatus: Map<String, Any?>? = null
             private var quality: QualityReportDto? = null
             private var featureResult: FeatureResultDto? = null
+            private var planId: String? = dialog.planId()
+            private var selectedScenarioId: String? = dialog.selectedScenarioId()
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Creating run..."
@@ -112,9 +116,11 @@ class GenerateFeatureFromSelectionAction : AnAction() {
                         input = mapOf(
                             "testCaseText" to selectedText,
                             "targetPath" to dialogOptions.targetPath,
-                            "createFile" to options.createFile,
-                            "overwriteExisting" to options.overwriteExisting,
-                            "language" to dialogOptions.language
+                            "createFile" to false,
+                            "overwriteExisting" to false,
+                            "language" to dialogOptions.language,
+                            "planId" to planId,
+                            "selectedScenarioId" to selectedScenarioId
                         ),
                         profile = "quick",
                         source = "ide-plugin"
@@ -143,7 +149,18 @@ class GenerateFeatureFromSelectionAction : AnAction() {
             }
 
             override fun onSuccess() {
-                val file = resolveFeatureFile(projectRoot, resultTargetPath, featureText)
+                val file = resolveFeatureFile(projectRoot, resultTargetPath, featureText, fileStatus)
+                file.putUserData(
+                    FEATURE_REVIEW_METADATA_KEY,
+                    FeatureReviewMetadata(
+                        projectRoot = projectRoot,
+                        targetPath = dialogOptions.targetPath,
+                        overwriteExisting = dialogOptions.overwriteExisting,
+                        planId = planId ?: featureResult?.planId,
+                        selectedScenarioId = selectedScenarioId ?: featureResult?.selectedScenarioId,
+                        originalFeatureText = featureText
+                    )
+                )
                 FileEditorManager.getInstance(project).openFile(file, true)
                 highlightUnmappedSteps(project, file, unmappedSteps)
                 updateToolWindowUnmapped(project, unmappedSteps)
@@ -172,8 +189,16 @@ class GenerateFeatureFromSelectionAction : AnAction() {
     private fun resolveFeatureFile(
         projectRoot: String,
         targetPath: String?,
-        featureText: String
+        featureText: String,
+        fileStatus: Map<String, Any?>?
     ): VirtualFile {
+        val status = fileStatus?.get("status")?.toString()?.lowercase()
+        if (status !in setOf("created", "overwritten")) {
+            val previewName = targetPath?.substringAfterLast('/', "generated.feature")
+                ?.substringAfterLast('\\', "generated.feature")
+                ?: "generated.feature"
+            return LightVirtualFile(previewName, featureText)
+        }
         val normalizedTarget = targetPath?.takeIf { it.isNotBlank() }
         val filePath = normalizedTarget?.let { toAbsolutePath(projectRoot, it) }
 

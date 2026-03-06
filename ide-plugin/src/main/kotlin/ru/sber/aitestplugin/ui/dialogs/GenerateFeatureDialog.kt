@@ -12,11 +12,14 @@ import com.intellij.ui.dsl.builder.Align
 import com.intellij.ui.dsl.builder.AlignX
 import com.intellij.ui.dsl.builder.panel
 import com.intellij.util.ui.JBUI
-import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
+import ru.sber.aitestplugin.model.GenerationPreviewRequestDto
+import ru.sber.aitestplugin.model.GenerationPreviewResponseDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
+import ru.sber.aitestplugin.model.SimilarScenarioDto
 import ru.sber.aitestplugin.services.BackendClient
 import ru.sber.aitestplugin.ui.UiStrings
 import javax.swing.JButton
+import javax.swing.JComboBox
 import javax.swing.JComponent
 
 class GenerateFeatureDialog(
@@ -27,83 +30,128 @@ class GenerateFeatureDialog(
     private val testCaseText: String
 ) : DialogWrapper(project) {
     private val targetPathField = JBTextField(defaults.targetPath ?: "")
-    private val createFileCheckbox = JBCheckBox(UiStrings.dialogCreateFile, defaults.createFile)
+    private val createFileCheckbox = JBCheckBox(UiStrings.dialogCreateFile, false)
     private val overwriteCheckbox = JBCheckBox(UiStrings.dialogOverwriteFile, defaults.overwriteExisting)
     private val defaultLanguage = defaults.language
-    private val memoryStatusLabel = javax.swing.JLabel(UiStrings.dialogLoadingPreview)
-    private val memoryPreviewArea = JBTextArea().apply {
+    private val previewStatusLabel = javax.swing.JLabel(UiStrings.dialogLoadingPreview)
+    private val previewArea = JBTextArea().apply {
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
         border = JBUI.Borders.empty(8)
         background = JBColor.PanelBackground
         foreground = JBColor.foreground()
-        rows = 8
+        rows = 14
     }
+    private val scenarioSelector = JComboBox<String>()
     private val refreshPreviewButton = JButton(UiStrings.dialogRefreshPreview)
-    private var latestPreview: GenerationResolvePreviewResponseDto? = null
+    private var latestPreview: GenerationPreviewResponseDto? = null
+    private var similarScenarios: List<SimilarScenarioDto> = emptyList()
 
     init {
         title = UiStrings.generateFeatureTitle
-        refreshPreviewButton.addActionListener { loadMemoryPreviewAsync() }
+        createFileCheckbox.isEnabled = false
+        createFileCheckbox.toolTipText = "Draft is created in the editor. Save to disk via Apply after review."
+        scenarioSelector.isEnabled = false
+        scenarioSelector.addActionListener {
+            previewStatusLabel.text = buildGenerationPreviewStatus(latestPreview, selectedScenario())
+            latestPreview?.let { preview ->
+                previewArea.text = formatGenerationPreview(preview, selectedScenario())
+            }
+        }
+        refreshPreviewButton.addActionListener { loadPreviewAsync() }
         init()
-        loadMemoryPreviewAsync()
+        loadPreviewAsync()
     }
 
     override fun createCenterPanel(): JComponent = buildGenerateFeatureFormPanel(
         targetPathField = targetPathField,
         createFileCheckbox = createFileCheckbox,
         overwriteCheckbox = overwriteCheckbox,
-        memoryStatusLabel = memoryStatusLabel,
-        memoryPreviewArea = memoryPreviewArea,
+        previewStatusLabel = previewStatusLabel,
+        scenarioSelector = scenarioSelector,
+        previewArea = previewArea,
         refreshPreviewButton = refreshPreviewButton,
     )
 
     fun targetPath(): String? = targetPathField.text.trim().takeIf { it.isNotEmpty() }
 
-    fun shouldCreateFile(): Boolean = createFileCheckbox.isSelected
+    fun shouldCreateFile(): Boolean = false
 
     fun shouldOverwriteExisting(): Boolean = overwriteCheckbox.isSelected
 
     fun selectedOptions(): GenerateFeatureDialogOptions = GenerateFeatureDialogOptions(
         targetPath = targetPath(),
-        createFile = shouldCreateFile(),
+        createFile = false,
         overwriteExisting = shouldOverwriteExisting(),
         language = defaultLanguage,
     )
 
-    private fun loadMemoryPreviewAsync() {
-        memoryStatusLabel.text = UiStrings.dialogLoadingPreview
-        memoryPreviewArea.text = ""
+    fun selectedScenarioId(): String? = selectedScenario()?.scenarioId ?: latestPreview?.generationPlan?.selectedScenarioId
+
+    fun planId(): String? = latestPreview?.planId
+
+    private fun selectedScenario(): SimilarScenarioDto? {
+        val index = scenarioSelector.selectedIndex
+        return if (index in similarScenarios.indices) similarScenarios[index] else null
+    }
+
+    private fun loadPreviewAsync() {
+        previewStatusLabel.text = UiStrings.dialogLoadingPreview
+        previewArea.text = ""
+        scenarioSelector.removeAllItems()
+        scenarioSelector.isEnabled = false
         refreshPreviewButton.isEnabled = false
         ApplicationManager.getApplication().executeOnPooledThread {
-            val request = GenerationResolvePreviewRequestDto(
+            val request = GenerationPreviewRequestDto(
                 projectRoot = projectRoot,
-                text = testCaseText,
+                testCaseText = testCaseText,
                 language = defaultLanguage,
                 qualityPolicy = DEFAULT_QUALITY_POLICY,
             )
-            runCatching { backendClient.resolveGenerationPreview(request) }
+            runCatching { backendClient.previewGenerationPlan(request) }
                 .onSuccess { preview ->
                     ApplicationManager.getApplication().invokeLater {
                         refreshPreviewButton.isEnabled = true
                         latestPreview = preview
-                        if (targetPathField.text.trim().isEmpty() && !preview.targetPath.isNullOrBlank()) {
-                            targetPathField.text = preview.targetPath
+                        similarScenarios = preview.similarScenarios
+                        if (targetPathField.text.trim().isEmpty()) {
+                            val memoryPath = preview.memoryPreview?.get("targetPath")?.toString()
+                            if (!memoryPath.isNullOrBlank()) {
+                                targetPathField.text = memoryPath
+                            }
                         }
-                        memoryStatusLabel.text = buildMemoryPreviewStatus(preview)
-                        memoryPreviewArea.text = formatMemoryPreview(preview)
+                        populateScenarioSelector(preview)
+                        previewStatusLabel.text = buildGenerationPreviewStatus(preview, selectedScenario())
+                        previewArea.text = formatGenerationPreview(preview, selectedScenario())
                     }
                 }
                 .onFailure { ex ->
                     ApplicationManager.getApplication().invokeLater {
                         refreshPreviewButton.isEnabled = true
                         latestPreview = null
-                        memoryStatusLabel.text = UiStrings.dialogPreviewUnavailable
-                        memoryPreviewArea.text = ex.message?.trim().takeUnless { it.isNullOrBlank() }
-                            ?: "Backend не вернул данные предпросмотра. Генерацию можно продолжить без них."
+                        similarScenarios = emptyList()
+                        previewStatusLabel.text = UiStrings.dialogPreviewUnavailable
+                        previewArea.text = ex.message?.trim().takeUnless { it.isNullOrBlank() }
+                            ?: "Backend did not return a generation preview. You can still run draft generation."
                     }
                 }
+        }
+    }
+
+    private fun populateScenarioSelector(preview: GenerationPreviewResponseDto) {
+        scenarioSelector.removeAllItems()
+        similarScenarios = preview.similarScenarios
+        similarScenarios.forEach { item ->
+            val marker = if (item.recommended) "Recommended" else "Candidate"
+            scenarioSelector.addItem("$marker: ${item.name} (${String.format("%.2f", item.score)})")
+        }
+        val selectedIndex = similarScenarios.indexOfFirst { it.recommended }.takeIf { it >= 0 } ?: 0
+        if (similarScenarios.isNotEmpty()) {
+            scenarioSelector.selectedIndex = selectedIndex
+            scenarioSelector.isEnabled = true
+        } else {
+            scenarioSelector.isEnabled = false
         }
     }
 
@@ -116,8 +164,9 @@ internal fun buildGenerateFeatureFormPanel(
     targetPathField: JBTextField,
     createFileCheckbox: JBCheckBox,
     overwriteCheckbox: JBCheckBox,
-    memoryStatusLabel: javax.swing.JLabel,
-    memoryPreviewArea: JBTextArea,
+    previewStatusLabel: javax.swing.JLabel,
+    scenarioSelector: JComboBox<String>,
+    previewArea: JBTextArea,
     refreshPreviewButton: JButton,
 ): JComponent = panel {
     row(UiStrings.dialogTargetPath) {
@@ -132,12 +181,15 @@ internal fun buildGenerateFeatureFormPanel(
     row {
         cell(overwriteCheckbox)
     }
-    group(UiStrings.dialogMemoryPreview) {
+    group("Preview") {
         row {
-            cell(memoryStatusLabel)
+            cell(previewStatusLabel)
+        }
+        row("Base scenario") {
+            cell(scenarioSelector).resizableColumn().align(AlignX.FILL)
         }
         row {
-            cell(JBScrollPane(memoryPreviewArea))
+            cell(JBScrollPane(previewArea))
                 .resizableColumn()
                 .align(Align.FILL)
         }
@@ -145,6 +197,103 @@ internal fun buildGenerateFeatureFormPanel(
             cell(refreshPreviewButton)
         }
     }
+}
+
+internal fun buildGenerateFeatureFormPanel(
+    targetPathField: JBTextField,
+    createFileCheckbox: JBCheckBox,
+    overwriteCheckbox: JBCheckBox,
+    memoryStatusLabel: javax.swing.JLabel,
+    memoryPreviewArea: JBTextArea,
+    refreshPreviewButton: JButton,
+): JComponent = buildGenerateFeatureFormPanel(
+    targetPathField = targetPathField,
+    createFileCheckbox = createFileCheckbox,
+    overwriteCheckbox = overwriteCheckbox,
+    previewStatusLabel = memoryStatusLabel,
+    scenarioSelector = JComboBox(),
+    previewArea = memoryPreviewArea,
+    refreshPreviewButton = refreshPreviewButton,
+)
+
+internal fun buildGenerationPreviewStatus(
+    preview: GenerationPreviewResponseDto?,
+    selectedScenario: SimilarScenarioDto?
+): String {
+    if (preview == null) {
+        return "Preview is unavailable."
+    }
+    val scenarioPart = selectedScenario?.name ?: "no base scenario"
+    val warnings = preview.warnings.size
+    return "Plan ${preview.planId ?: "-"}; base: $scenarioPart; warnings: $warnings"
+}
+
+internal fun formatGenerationPreview(
+    preview: GenerationPreviewResponseDto,
+    selectedScenario: SimilarScenarioDto?
+): String {
+    val lines = mutableListOf<String>()
+    preview.canonicalTestCase?.let { canonical ->
+        lines += "Canonical testcase"
+        lines += "Title: ${canonical.title}"
+        lines += "Preconditions: ${canonical.preconditions.size}"
+        lines += "Actions: ${canonical.actions.size}"
+        lines += "Expected results: ${canonical.expectedResults.size}"
+        if (canonical.testData.isNotEmpty()) {
+            lines += "Test data: ${canonical.testData.joinToString(", ")}"
+        }
+        lines += ""
+    }
+
+    lines += "Similar scenarios"
+    if (preview.similarScenarios.isEmpty()) {
+        lines += "No local .feature scenarios matched."
+    } else {
+        preview.similarScenarios.forEachIndexed { index, item ->
+            val marker = if (item.recommended) "recommended" else "candidate"
+            lines += "${index + 1}. [$marker] ${item.name} (${String.format("%.2f", item.score)})"
+            if (item.matchedFragments.isNotEmpty()) {
+                lines += "   matched: ${item.matchedFragments.joinToString(" | ")}"
+            }
+        }
+    }
+
+    lines += ""
+    lines += "Generation plan"
+    lines += "Selected scenario: ${selectedScenario?.name ?: preview.generationPlan.selectedScenarioId ?: "-"}"
+    lines += "Candidate background steps: ${preview.generationPlan.candidateBackground.size}"
+    lines += "Planned steps: ${preview.generationPlan.items.size}"
+    if (preview.generationPlan.items.isNotEmpty()) {
+        preview.generationPlan.items.forEach { item ->
+            val selected = item.selectedStepId ?: "unmatched"
+            val confidence = item.selectedConfidence?.let { String.format("%.2f", it) } ?: "-"
+            lines += "${item.order}. [${item.intentType}] ${item.text}"
+            lines += "   selected: $selected (confidence: $confidence)"
+        }
+    }
+
+    if (preview.warnings.isNotEmpty()) {
+        lines += ""
+        lines += "Warnings"
+        preview.warnings.forEach { warning ->
+            lines += "- $warning"
+        }
+    }
+
+    if (preview.quality != null) {
+        lines += ""
+        lines += "Quality gate"
+        lines += "Score: ${preview.quality.score}"
+        lines += "Passed: ${preview.quality.passed}"
+        if (preview.quality.failures.isNotEmpty()) {
+            lines += "Failures: ${preview.quality.failures.joinToString { it.code }}"
+        }
+        if (preview.quality.warnings.isNotEmpty()) {
+            lines += "Quality warnings: ${preview.quality.warnings.joinToString { it.code }}"
+        }
+    }
+
+    return lines.joinToString("\n")
 }
 
 internal fun buildMemoryPreviewStatus(preview: GenerationResolvePreviewResponseDto): String {

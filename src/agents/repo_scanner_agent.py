@@ -4,18 +4,21 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 from zipfile import ZipFile
 
-from domain.enums import StepPatternType
-from domain.models import StepDefinition, StepImplementation
+from domain.enums import StepIntentType, StepKeyword, StepPatternType
+from domain.models import ScenarioCatalogEntry, StepDefinition, StepImplementation
 from infrastructure.embeddings_store import EmbeddingsStore
 from infrastructure.fs_repo import FsRepository
 from infrastructure.llm_client import LLMClient
+from infrastructure.scenario_index_store import ScenarioIndexStore
 from infrastructure.step_index_store import StepIndexStore
 from tools.cucumber_expression import cucumber_expression_to_regex
+from tools.scenario_catalog import extract_scenarios
 from tools.step_extractor import StepExtractor
 
 logger = logging.getLogger(__name__)
@@ -28,11 +31,14 @@ class RepoScannerAgent:
         self,
         step_index_store: StepIndexStore,
         embeddings_store: EmbeddingsStore,
+        scenario_index_store: ScenarioIndexStore | None = None,
         llm_client: LLMClient | None = None,
         file_patterns: list[str] | None = None,
+        feature_patterns: list[str] | None = None,
     ) -> None:
         self.step_index_store = step_index_store
         self.embeddings_store = embeddings_store
+        self.scenario_index_store = scenario_index_store
         self.llm_client = llm_client
         self.file_patterns = file_patterns or [
             "**/*Steps.java",
@@ -48,6 +54,7 @@ class RepoScannerAgent:
             "**/*StepDefinition.groovy",
             "**/*StepDefinition.py",
         ]
+        self.feature_patterns = feature_patterns or ["**/*.feature"]
 
     def scan_repository(
         self,
@@ -62,6 +69,8 @@ class RepoScannerAgent:
         for root in roots:
             steps.extend(self._extract_steps_from_root(project_root, root))
         steps = self._deduplicate_steps(steps)
+        scenarios = self._extract_scenarios(project_root)
+        self._apply_scenario_metadata(steps, scenarios)
 
         logger.debug("[RepoScannerAgent] Steps found: %s", len(steps))
 
@@ -71,13 +80,19 @@ class RepoScannerAgent:
 
         self.step_index_store.save_steps(project_root, steps)
         self.embeddings_store.index_steps(project_root, steps)
+        if self.scenario_index_store:
+            self.scenario_index_store.save_scenarios(project_root, scenarios)
+        if hasattr(self.embeddings_store, "index_scenarios"):
+            self.embeddings_store.index_scenarios(project_root, scenarios)
 
         updated_at = datetime.now(tz=timezone.utc).isoformat()
         result = {
             "projectRoot": project_root,
             "stepsCount": len(steps),
+            "scenariosCount": len(scenarios),
             "updatedAt": updated_at,
             "sampleSteps": steps[:50],
+            "sampleScenarios": scenarios[:20],
         }
         logger.info("[RepoScannerAgent] Scan completed %s. Steps: %s", project_root, len(steps))
         return result
@@ -167,6 +182,11 @@ class RepoScannerAgent:
                     )
         return steps
 
+    def _extract_scenarios(self, project_root: str) -> list[ScenarioCatalogEntry]:
+        project_path = Path(project_root).expanduser().resolve()
+        fs_repo = FsRepository(str(project_path))
+        return extract_scenarios(fs_repo, self.feature_patterns)
+
     def _matches_pattern(self, relative_path: str) -> bool:
         normalized = relative_path.replace("\\", "/")
         pure = PurePosixPath(normalized)
@@ -200,6 +220,129 @@ class RepoScannerAgent:
             seen.add(signature)
             deduped.append(step)
         return deduped
+
+    def _apply_scenario_metadata(
+        self,
+        steps: list[StepDefinition],
+        scenarios: list[ScenarioCatalogEntry],
+    ) -> None:
+        for step in steps:
+            if step.step_type is None:
+                step.step_type = self._infer_step_type(step)
+            step.usage_count = 0
+            step.linked_scenario_ids = []
+            step.sample_scenario_refs = []
+            if step.aliases is None:
+                step.aliases = []
+
+        linked_ids: dict[str, set[str]] = {step.id: set() for step in steps}
+        sample_refs: dict[str, list[str]] = {step.id: [] for step in steps}
+        aliases: dict[str, list[str]] = {step.id: list(step.aliases) for step in steps}
+
+        for scenario in scenarios:
+            scenario_ref = f"{scenario.feature_path}:{scenario.scenario_name}"
+            for raw_line in [*scenario.background_steps, *scenario.steps]:
+                matched_step = self._match_step_for_catalog(raw_line, steps)
+                if matched_step is None:
+                    continue
+                matched_step.usage_count += 1
+                linked_ids[matched_step.id].add(scenario.id)
+                if scenario_ref not in sample_refs[matched_step.id]:
+                    sample_refs[matched_step.id].append(scenario_ref)
+                alias = self._scenario_alias_candidate(raw_line, matched_step)
+                if alias and alias not in aliases[matched_step.id]:
+                    aliases[matched_step.id].append(alias)
+
+        for step in steps:
+            step.linked_scenario_ids = sorted(linked_ids.get(step.id, set()))
+            step.sample_scenario_refs = sample_refs.get(step.id, [])[:5]
+            step.aliases = aliases.get(step.id, [])[:10]
+
+    @staticmethod
+    def _infer_step_type(step: StepDefinition) -> StepIntentType:
+        if step.keyword is StepKeyword.GIVEN:
+            return StepIntentType.SETUP
+        if step.keyword is StepKeyword.THEN:
+            return StepIntentType.ASSERTION
+        lowered = step.pattern.casefold()
+        if any(token in lowered for token in ("open", "navigate", "перей", "откры")):
+            return StepIntentType.NAVIGATION
+        return StepIntentType.ACTION
+
+    def _match_step_for_catalog(
+        self,
+        raw_line: str,
+        steps: list[StepDefinition],
+    ) -> StepDefinition | None:
+        keyword, line_text = self._split_gherkin_line(raw_line)
+        normalized_line = self._normalize_step_text(line_text)
+        if not normalized_line:
+            return None
+
+        fallback: StepDefinition | None = None
+        fallback_score = 0
+        for step in steps:
+            if keyword is not None and keyword not in {StepKeyword.AND, StepKeyword.BUT}:
+                if step.keyword not in {keyword, StepKeyword.AND, StepKeyword.BUT}:
+                    continue
+            if self._line_matches_step(step, line_text):
+                return step
+            score = self._token_overlap_score(
+                normalized_line,
+                self._normalize_step_text(step.pattern),
+            )
+            if score > fallback_score:
+                fallback = step
+                fallback_score = score
+        return fallback if fallback_score >= 0.8 else None
+
+    def _line_matches_step(self, step: StepDefinition, line_text: str) -> bool:
+        regex = step.regex or (
+            cucumber_expression_to_regex(step.pattern)
+            if step.pattern_type is StepPatternType.CUCUMBER_EXPRESSION
+            else step.pattern
+        )
+        try:
+            if regex and re.search(regex, line_text):
+                return True
+        except re.error:
+            pass
+        return self._normalize_step_text(step.pattern) == self._normalize_step_text(line_text)
+
+    def _scenario_alias_candidate(self, raw_line: str, step: StepDefinition) -> str | None:
+        _, line_text = self._split_gherkin_line(raw_line)
+        normalized_line = self._normalize_step_text(line_text)
+        normalized_pattern = self._normalize_step_text(step.pattern)
+        if not normalized_line or normalized_line == normalized_pattern:
+            return None
+        return line_text.strip()
+
+    @staticmethod
+    def _split_gherkin_line(line: str) -> tuple[StepKeyword | None, str]:
+        match = re.match(
+            r"^\s*(Given|When|Then|And|But|Дано|Когда|Тогда|И|Но)\b\s*(?P<text>.+)$",
+            line.strip(),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None, line.strip()
+        keyword_raw = match.group(1)
+        return StepKeyword.from_string(keyword_raw), match.group("text").strip()
+
+    @staticmethod
+    def _normalize_step_text(text: str) -> str:
+        return " ".join(re.findall(r"\w+", (text or "").casefold()))
+
+    @staticmethod
+    def _token_overlap_score(left: str, right: str) -> float:
+        left_tokens = {token for token in left.split() if token}
+        right_tokens = {token for token in right.split() if token}
+        if not left_tokens or not right_tokens:
+            return 0.0
+        union = len(left_tokens | right_tokens)
+        if union == 0:
+            return 0.0
+        return len(left_tokens & right_tokens) / union
 
     def _enrich_step_with_llm(self, step: StepDefinition) -> None:
         """Adds compact summary/examples with LLM where available."""
