@@ -270,6 +270,11 @@ class ScanStepsRequest(ApiBaseModel):
         alias="additionalRoots",
         description="Дополнительные корни для сканирования шагов (каталоги или source jars)",
     )
+    provided_steps: list[StepDefinitionDto] = Field(
+        default_factory=list,
+        alias="providedSteps",
+        description="Шаги, собранные plugin-side из binary library roots",
+    )
 
 
 class ScanStepsResponse(ApiBaseModel):

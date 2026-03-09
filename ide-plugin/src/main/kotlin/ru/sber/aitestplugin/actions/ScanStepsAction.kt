@@ -13,6 +13,7 @@ import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.services.HttpBackendClient
 import ru.sber.aitestplugin.ui.toolwindow.AiToolWindowPanel
 import ru.sber.aitestplugin.ui.toolwindow.ToolWindowIds
+import ru.sber.aitestplugin.util.BinaryLibraryStepCollector
 import ru.sber.aitestplugin.util.StepScanRootsResolver
 
 /**
@@ -37,7 +38,8 @@ class ScanStepsAction : AnAction() {
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Calling backend..."
-                response = backendClient.scanSteps(projectRoot, additionalRoots)
+                val binarySteps = BinaryLibraryStepCollector.collect(project).steps
+                response = backendClient.scanSteps(projectRoot, additionalRoots, binarySteps)
             }
 
             override fun onSuccess() {

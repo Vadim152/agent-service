@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 class ScanState(TypedDict):
     project_root: str
     additional_roots: list[str]
+    provided_steps: list[Any]
     result: dict[str, Any]
 
 
@@ -198,6 +199,7 @@ class Orchestrator:
                 result = self.repo_scanner_agent.scan_repository(
                     state["project_root"],
                     additional_roots=state.get("additional_roots", []),
+                    provided_steps=state.get("provided_steps", []),
                 )
             except TypeError:
                 result = self.repo_scanner_agent.scan_repository(state["project_root"])
@@ -487,12 +489,14 @@ class Orchestrator:
         self,
         project_root: str,
         additional_roots: list[str] | None = None,
+        provided_steps: list[Any] | None = None,
     ) -> dict[str, Any]:
         logger.info("[Orchestrator] Start steps scan: %s", project_root)
         state = self._scan_graph.invoke(
             {
                 "project_root": project_root,
                 "additional_roots": list(additional_roots or []),
+                "provided_steps": list(provided_steps or []),
             }
         )
         result = state["result"]

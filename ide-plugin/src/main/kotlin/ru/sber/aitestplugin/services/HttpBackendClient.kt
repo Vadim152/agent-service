@@ -88,8 +88,16 @@ class HttpBackendClient(
         .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
     private val clientsByTimeoutMs = ConcurrentHashMap<Int, OkHttpClient>()
 
-    override fun scanSteps(projectRoot: String, additionalRoots: List<String>): ScanStepsResponseDto {
-        val request = ScanStepsRequestDto(projectRoot = projectRoot, additionalRoots = additionalRoots)
+    override fun scanSteps(
+        projectRoot: String,
+        additionalRoots: List<String>,
+        providedSteps: List<StepDefinitionDto>
+    ): ScanStepsResponseDto {
+        val request = ScanStepsRequestDto(
+            projectRoot = projectRoot,
+            additionalRoots = additionalRoots,
+            providedSteps = providedSteps
+        )
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
         return post("/platform/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
     }

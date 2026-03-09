@@ -79,6 +79,44 @@ def _to_step_dto(step_definitions: Iterable[StepDefinition]) -> list[StepDefinit
     ]
 
 
+def _from_step_dto(step: StepDefinitionDto) -> StepDefinition:
+    return StepDefinition(
+        id=step.id,
+        keyword=step.keyword,
+        pattern=step.pattern,
+        regex=step.regex,
+        code_ref=step.code_ref,
+        pattern_type=step.pattern_type,
+        parameters=[
+            {
+                "name": param.name,
+                "type": param.type,
+                "placeholder": param.placeholder,
+            }
+            for param in step.parameters
+        ],
+        tags=list(step.tags or []),
+        language=step.language,
+        implementation={
+            "file": step.implementation.file,
+            "line": step.implementation.line,
+            "class_name": step.implementation.class_name,
+            "method_name": step.implementation.method_name,
+        }
+        if step.implementation
+        else None,
+        summary=step.summary,
+        doc_summary=step.doc_summary,
+        examples=list(step.examples or []),
+        step_type=step.step_type,
+        usage_count=step.usage_count,
+        linked_scenario_ids=list(step.linked_scenario_ids),
+        sample_scenario_refs=list(step.sample_scenario_refs),
+        aliases=list(step.aliases),
+        domain=step.domain,
+    )
+
+
 def _preview_body(raw_body: bytes, limit: int = 512) -> str:
     """Возвращает безопасный префикс тела запроса для логов."""
 
@@ -178,6 +216,7 @@ async def scan_steps(
     parsed_model: ScanStepsRequest | None = None
     parsed_json: dict | None = None
     additional_roots: list[str] = []
+    provided_steps: list[StepDefinition] = []
     if raw_body:
         try:
             parsed_json_candidate = json.loads(raw_body)
@@ -192,10 +231,24 @@ async def scan_steps(
                 parsed_model = None
             if parsed_model:
                 additional_roots = list(parsed_model.additional_roots or [])
+                provided_steps = [
+                    _from_step_dto(item) for item in (parsed_model.provided_steps or [])
+                ]
             else:
                 raw_additional = parsed_json_candidate.get("additionalRoots") or parsed_json_candidate.get("additional_roots")
                 if isinstance(raw_additional, list):
                     additional_roots = [str(item) for item in raw_additional if str(item).strip()]
+                raw_provided = parsed_json_candidate.get("providedSteps") or parsed_json_candidate.get("provided_steps")
+                if isinstance(raw_provided, list):
+                    for item in raw_provided:
+                        if not isinstance(item, dict):
+                            continue
+                        try:
+                            provided_steps.append(
+                                _from_step_dto(StepDefinitionDto.model_validate(item))
+                            )
+                        except Exception:
+                            continue
 
     project_root, extraction_details = await _extract_project_root(
         request, parsed_model, raw_body, parsed_json
@@ -251,7 +304,11 @@ async def scan_steps(
         extraction_details,
         _preview_body(raw_body),
     )
-    result = orchestrator.scan_steps(project_root, additional_roots=additional_roots)
+    result = orchestrator.scan_steps(
+        project_root,
+        additional_roots=additional_roots,
+        provided_steps=provided_steps,
+    )
 
     sample_steps_payload = result.get("sampleSteps") or result.get("sample_steps")
     if sample_steps_payload:

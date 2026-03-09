@@ -3,6 +3,8 @@ from __future__ import annotations
 from zipfile import ZipFile
 
 from agents.repo_scanner_agent import RepoScannerAgent
+from domain.enums import StepKeyword, StepPatternType
+from domain.models import StepDefinition, StepImplementation, StepParameter
 
 
 class _StepIndexStoreStub:
@@ -100,3 +102,38 @@ def test_scan_repository_ignores_binary_only_jars(tmp_path) -> None:
     patterns = [step.pattern for step in step_store.saved_steps]
     assert patterns == ["open local app"]
     assert result["stepsCount"] == 1
+
+
+def test_scan_repository_merges_plugin_provided_steps(tmp_path) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "LocalSteps.kt").write_text(_step_source("open local app"), encoding="utf-8")
+
+    provided_step = StepDefinition(
+        id="dep[plugin]:binary-step",
+        keyword=StepKeyword.GIVEN,
+        pattern="open dependency app",
+        regex=None,
+        code_ref="dep[plugin]:binary-steps.jar!/cucumber/steps/CommonActionsSteps.class#openDependencyApp",
+        pattern_type=StepPatternType.CUCUMBER_EXPRESSION,
+        parameters=[StepParameter(name="screenName", type="String")],
+        implementation=StepImplementation(
+            file="dep[plugin]:binary-steps.jar!/cucumber/steps/CommonActionsSteps.class",
+            line=None,
+            class_name="cucumber.steps.CommonActionsSteps",
+            method_name="openDependencyApp",
+        ),
+    )
+
+    step_store = _StepIndexStoreStub()
+    embeddings_store = _EmbeddingsStoreStub()
+    scanner = RepoScannerAgent(step_store, embeddings_store)
+
+    result = scanner.scan_repository(
+        str(project_root),
+        provided_steps=[provided_step],
+    )
+
+    patterns = {step.pattern for step in step_store.saved_steps}
+    assert patterns == {"open local app", "open dependency app"}
+    assert result["stepsCount"] == 2

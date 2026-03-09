@@ -30,6 +30,7 @@ import ru.sber.aitestplugin.ui.components.SectionCard
 import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
 import ru.sber.aitestplugin.ui.theme.PluginUiTheme
 import ru.sber.aitestplugin.ui.theme.PluginUiTokens
+import ru.sber.aitestplugin.util.BinaryLibraryStepCollector
 import ru.sber.aitestplugin.util.StepScanRootsResolver
 import java.awt.BorderLayout
 import java.awt.Component
@@ -468,7 +469,8 @@ class AiTestPluginSettingsConfigurable(
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Обращение к сервису..."
                 val additionalRoots = StepScanRootsResolver.resolveAdditionalRoots(project, projectRoot)
-                val response = backendClient.scanSteps(projectRoot, additionalRoots)
+                val binarySteps = BinaryLibraryStepCollector.collect(project).steps
+                val response = backendClient.scanSteps(projectRoot, additionalRoots, binarySteps)
                 responseSteps = response.sampleSteps.orEmpty()
                 responseUnmapped = response.unmappedSteps
                 val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", несопоставленных: ${responseUnmapped.size}"

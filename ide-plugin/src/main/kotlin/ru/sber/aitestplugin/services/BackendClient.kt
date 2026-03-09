@@ -40,11 +40,15 @@ import ru.sber.aitestplugin.model.RunResultResponseDto
 import ru.sber.aitestplugin.model.RunStatusResponseDto
 
 /**
- * Абстракция клиента, обращающегося к backend-сервису agent-service.
- * Методы предполагают выполнение в фоновых задачах, чтобы не блокировать UI.
+ * РђР±СЃС‚СЂР°РєС†РёСЏ РєР»РёРµРЅС‚Р°, РѕР±СЂР°С‰Р°СЋС‰РµРіРѕСЃСЏ Рє backend-СЃРµСЂРІРёСЃСѓ agent-service.
+ * РњРµС‚РѕРґС‹ РїСЂРµРґРїРѕР»Р°РіР°СЋС‚ РІС‹РїРѕР»РЅРµРЅРёРµ РІ С„РѕРЅРѕРІС‹С… Р·Р°РґР°С‡Р°С…, С‡С‚РѕР±С‹ РЅРµ Р±Р»РѕРєРёСЂРѕРІР°С‚СЊ UI.
  */
 interface BackendClient {
-    fun scanSteps(projectRoot: String, additionalRoots: List<String> = emptyList()): ScanStepsResponseDto
+    fun scanSteps(
+        projectRoot: String,
+        additionalRoots: List<String> = emptyList(),
+        providedSteps: List<StepDefinitionDto> = emptyList()
+    ): ScanStepsResponseDto
 
     fun listSteps(projectRoot: String): List<StepDefinitionDto>
 

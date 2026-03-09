@@ -71,6 +71,7 @@ class RepoScannerAgent:
         self,
         project_root: str,
         additional_roots: list[str] | None = None,
+        provided_steps: list[StepDefinition] | None = None,
     ) -> dict[str, Any]:
         """Scans one project and optional dependency roots, then rebuilds index."""
 
@@ -79,6 +80,13 @@ class RepoScannerAgent:
         steps: list[StepDefinition] = []
         for root in roots:
             steps.extend(self._extract_steps_from_root(project_root, root))
+        if provided_steps:
+            logger.info(
+                "[RepoScannerAgent] Merging %s plugin-provided steps for %s",
+                len(provided_steps),
+                project_root,
+            )
+            steps.extend(list(provided_steps))
         steps = self._deduplicate_steps(steps)
         scenarios = self._extract_scenarios(project_root)
         self._apply_scenario_metadata(steps, scenarios)

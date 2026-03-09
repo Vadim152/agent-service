@@ -40,6 +40,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.ow2.asm:asm:9.7.1")
     testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.11.4")
 
     intellijPlatform {
@@ -51,6 +52,7 @@ dependencies {
             }
         }
         bundledPlugin("com.intellij.java")
+        testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
         jetbrainsRuntime()
     }
 }
