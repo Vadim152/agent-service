@@ -93,13 +93,21 @@ class HttpBackendClient(
         additionalRoots: List<String>,
         providedSteps: List<StepDefinitionDto>
     ): ScanStepsResponseDto {
+        val settings = settingsProvider()
         val request = ScanStepsRequestDto(
             projectRoot = projectRoot,
             additionalRoots = additionalRoots,
             providedSteps = providedSteps
         )
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
-        return post("/platform/steps/scan-steps?projectRoot=$encodedProjectRoot", request)
+        logger.info(
+            "Starting scanSteps for projectRoot=$projectRoot, additionalRoots=${additionalRoots.size}, providedSteps=${providedSteps.size}, timeoutMs=${settings.scanStepsTimeoutMs}"
+        )
+        return post(
+            "/platform/steps/scan-steps?projectRoot=$encodedProjectRoot",
+            request,
+            timeoutMs = settings.scanStepsTimeoutMs
+        )
     }
 
     override fun listSteps(projectRoot: String): List<StepDefinitionDto> {

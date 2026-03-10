@@ -3,6 +3,7 @@ package ru.sber.aitestplugin.config
 import com.intellij.icons.AllIcons
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
@@ -31,6 +32,7 @@ import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
 import ru.sber.aitestplugin.ui.theme.PluginUiTheme
 import ru.sber.aitestplugin.ui.theme.PluginUiTokens
 import ru.sber.aitestplugin.util.BinaryLibraryStepCollector
+import ru.sber.aitestplugin.util.ScanStepsTimeoutSupport
 import ru.sber.aitestplugin.util.StepScanRootsResolver
 import java.awt.BorderLayout
 import java.awt.Component
@@ -53,6 +55,7 @@ class AiTestPluginSettingsConfigurable(
     project: Project? = null,
     backendClient: BackendClient? = null
 ) : Configurable {
+    private val logger = Logger.getInstance(AiTestPluginSettingsConfigurable::class.java)
     private val project: Project = project ?: ProjectManager.getInstance().defaultProject
     private val settingsService = AiTestPluginSettingsService.getInstance(this.project)
     private val backendClient: BackendClient = backendClient ?: HttpBackendClient(this.project)
@@ -469,8 +472,11 @@ class AiTestPluginSettingsConfigurable(
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Обращение к сервису..."
                 val additionalRoots = StepScanRootsResolver.resolveAdditionalRoots(project, projectRoot)
-                val binarySteps = BinaryLibraryStepCollector.collect(project).steps
-                val response = backendClient.scanSteps(projectRoot, additionalRoots, binarySteps)
+                val binaryScan = BinaryLibraryStepCollector.collect(project)
+                logger.info(
+                    "Settings scan request projectRoot=$projectRoot, additionalRoots=${additionalRoots.size}, binaryClassRoots=${binaryScan.classRoots.size}, providedSteps=${binaryScan.steps.size}, timeoutMs=${settingsService.settings.scanStepsTimeoutMs}"
+                )
+                val response = backendClient.scanSteps(projectRoot, additionalRoots, binaryScan.steps)
                 responseSteps = response.sampleSteps.orEmpty()
                 responseUnmapped = response.unmappedSteps
                 val unmappedMessage = if (responseUnmapped.isEmpty()) "" else ", несопоставленных: ${responseUnmapped.size}"
@@ -484,6 +490,13 @@ class AiTestPluginSettingsConfigurable(
             }
 
             override fun onThrowable(error: Throwable) {
+                if (ScanStepsTimeoutSupport.isTimeout(error)) {
+                    val timeoutMessage = ScanStepsTimeoutSupport.userMessage(settingsService.settings.scanStepsTimeoutMs)
+                    statusLabel.icon = AllIcons.General.Error
+                    statusLabel.text = timeoutMessage
+                    notify(timeoutMessage, NotificationType.ERROR)
+                    return
+                }
                 val message = error.message ?: "Непредвиденная ошибка"
                 statusLabel.icon = AllIcons.General.Error
                 statusLabel.text = "Сканирование не удалось: $message"

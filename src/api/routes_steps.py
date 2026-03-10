@@ -299,9 +299,11 @@ async def scan_steps(
         )
 
     logger.info(
-        "API: запуск сканирования шагов для %s (details: %s, body=%s)",
+        "API: запуск сканирования шагов для %s (details: %s, additional_roots=%s, provided_steps=%s, body=%s)",
         project_root,
         extraction_details,
+        len(additional_roots),
+        len(provided_steps),
         _preview_body(raw_body),
     )
     result = orchestrator.scan_steps(
@@ -343,10 +345,12 @@ async def scan_steps(
         unmapped_steps=unmapped_steps,
     )
     logger.info(
-        "API: сканирование завершено для %s, шагов: %s, unmapped: %s",
+        "API: сканирование завершено для %s, шагов: %s, unmapped: %s, additional_roots: %s, provided_steps: %s",
         response.project_root,
         response.steps_count,
         len(response.unmapped_steps),
+        len(additional_roots),
+        len(provided_steps),
     )
     return response
 

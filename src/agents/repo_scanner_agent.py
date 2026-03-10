@@ -75,7 +75,12 @@ class RepoScannerAgent:
     ) -> dict[str, Any]:
         """Scans one project and optional dependency roots, then rebuilds index."""
 
-        logger.info("[RepoScannerAgent] Scan started: %s", project_root)
+        logger.info(
+            "[RepoScannerAgent] Scan started: %s (additional_roots=%s, provided_steps=%s)",
+            project_root,
+            len(additional_roots or []),
+            len(provided_steps or []),
+        )
         roots = self._build_scan_roots(project_root, additional_roots)
         steps: list[StepDefinition] = []
         for root in roots:
@@ -113,7 +118,13 @@ class RepoScannerAgent:
             "sampleSteps": steps[:50],
             "sampleScenarios": scenarios[:20],
         }
-        logger.info("[RepoScannerAgent] Scan completed %s. Steps: %s", project_root, len(steps))
+        logger.info(
+            "[RepoScannerAgent] Scan completed %s. Steps: %s (additional_roots=%s, provided_steps=%s)",
+            project_root,
+            len(steps),
+            len(additional_roots or []),
+            len(provided_steps or []),
+        )
         return result
 
     def _build_scan_roots(self, project_root: str, additional_roots: list[str] | None) -> list[str]:
