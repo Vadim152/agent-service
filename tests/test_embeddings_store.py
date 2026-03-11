@@ -7,7 +7,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(PROJECT_ROOT / "src"))
 
 from domain.enums import ScenarioType, StepKeyword
-from domain.models import ScenarioCatalogEntry, StepDefinition
+from domain.models import ScenarioCatalogEntry, StepDefinition, StepImplementation, StepParameter
 from infrastructure.embeddings_store import EmbeddingsStore
 
 
@@ -90,6 +90,36 @@ class EmbeddingsStoreTestCase(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0][0].scenario_name, "Open dashboard")
+
+    def test_index_steps_sanitizes_optional_metadata_for_chroma(self) -> None:
+        steps = [
+            StepDefinition(
+                id="dep-step",
+                keyword=StepKeyword.WHEN,
+                pattern="open dependency app",
+                regex=None,
+                code_ref="dep[plugin]:binary-steps.jar!/steps/CommonSteps.class#openDependencyApp",
+                parameters=[StepParameter(name="screenName", type="String", placeholder=None)],
+                tags=[],
+                language=None,
+                implementation=StepImplementation(
+                    file="dep[plugin]:binary-steps.jar!/steps/CommonSteps.class",
+                    line=None,
+                    class_name=None,
+                    method_name="openDependencyApp",
+                ),
+                summary=None,
+                doc_summary=None,
+                domain=None,
+            )
+        ]
+
+        self.store.index_steps(self.project_root, steps)
+
+        result = self.store.get_top_k(self.project_root, "dependency", top_k=1)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0][0].pattern, "open dependency app")
 
 
 if __name__ == "__main__":

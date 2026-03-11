@@ -18,7 +18,10 @@ from typing import Iterable, List
 
 # Disable Chroma telemetry to avoid outbound calls and keep usage local-only.
 os.environ.setdefault(
-    "CHROMA_TELEMETRY_IMPL", "chromadb.telemetry.impl.noop.NoopTelemetry"
+    "CHROMA_TELEMETRY_IMPL", "infrastructure.chroma_telemetry.NoOpProductTelemetry"
+)
+os.environ.setdefault(
+    "CHROMA_PRODUCT_TELEMETRY_IMPL", "infrastructure.chroma_telemetry.NoOpProductTelemetry"
 )
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
@@ -33,11 +36,11 @@ class EmbeddingsStore:
     """Слой работы с векторным хранилищем."""
 
     def __init__(self, persist_directory: str | Path = ".chroma") -> None:
+        self._closed = False
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
         self._client = chromadb.PersistentClient(path=str(self.persist_directory))
         self._embedding_function = _LocalEmbeddingFunction()
-        self._closed = False
 
     def close(self) -> None:
         """Releases underlying Chroma resources (important for Windows file locks)."""
@@ -192,7 +195,8 @@ class EmbeddingsStore:
         collection = self._get_collection(project_root, prefix="steps")
         documents = [self._build_document(step) for step in steps]
         metadata = [
-            {
+            self._sanitize_metadata(
+                {
                 "id": step.id,
                 "keyword": step.keyword.value,
                 "pattern": step.pattern,
@@ -225,7 +229,8 @@ class EmbeddingsStore:
                 "sample_scenario_refs": "\n".join(step.sample_scenario_refs),
                 "aliases": "\n".join(step.aliases),
                 "domain": step.domain or "",
-            }
+                }
+            )
             for step in steps
         ]
         ids = [
@@ -244,7 +249,8 @@ class EmbeddingsStore:
         collection = self._get_collection(project_root, prefix="scenarios")
         documents = [self._build_scenario_document(scenario) for scenario in scenarios]
         metadata = [
-            {
+            self._sanitize_metadata(
+                {
                 "id": scenario.id,
                 "name": scenario.name,
                 "feature_path": scenario.feature_path,
@@ -255,7 +261,8 @@ class EmbeddingsStore:
                 "scenario_type": scenario.scenario_type.value,
                 "document": scenario.document or "",
                 "description": scenario.description or "",
-            }
+                }
+            )
             for scenario in scenarios
         ]
         ids = [
@@ -296,6 +303,22 @@ class EmbeddingsStore:
             for name in (metadata.get("parameters") or "").split(",")
             if name
         ]
+
+    @staticmethod
+    def _sanitize_metadata(metadata: dict[str, object]) -> dict[str, str | int | float | bool]:
+        sanitized: dict[str, str | int | float | bool] = {}
+        for key, value in metadata.items():
+            if value is None:
+                sanitized[key] = ""
+            elif isinstance(value, bool):
+                sanitized[key] = value
+            elif isinstance(value, int):
+                sanitized[key] = value
+            elif isinstance(value, float):
+                sanitized[key] = value
+            else:
+                sanitized[key] = str(value)
+        return sanitized
 
     def search_similar(self, project_root: str, query: str, top_k: int = 5) -> List[StepDefinition]:
         """Возвращает наиболее похожие шаги по текстовому запросу."""
