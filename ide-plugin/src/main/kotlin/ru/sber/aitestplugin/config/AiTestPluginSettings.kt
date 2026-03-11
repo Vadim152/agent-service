@@ -1,7 +1,7 @@
 ﻿package ru.sber.aitestplugin.config
 
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManager
+import ru.sber.aitestplugin.util.resolveIdeProject
 
 data class AiTestPluginSettings(
     var backendUrl: String = DEFAULT_BACKEND_URL,
@@ -42,9 +42,7 @@ data class AiTestPluginSettings(
         const val DEFAULT_ZEPHYR_JIRA_INSTANCE: String = "Sigma"
 
         fun current(project: Project? = null): AiTestPluginSettings {
-            val resolvedProject = project
-                ?: ProjectManager.getInstance().openProjects.firstOrNull()
-                ?: ProjectManager.getInstance().defaultProject
+            val resolvedProject = resolveIdeProject(project)
             return AiTestPluginSettingsService.getInstance(resolvedProject).settings
         }
     }

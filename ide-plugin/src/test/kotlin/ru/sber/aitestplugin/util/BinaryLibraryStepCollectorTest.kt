@@ -41,18 +41,40 @@ class BinaryLibraryStepCollectorTest : BasePlatformTestCase() {
         assertEquals("String", step.parameters!!.single().type)
     }
 
-    private fun buildBinaryLibraryJar(): Path {
+    fun testCollectsStepsFromCompiledBinaryJarWithRussianAnnotations() {
+        val jarPath = buildBinaryLibraryJar(annotationInternalName = "io/cucumber/java/ru/Когда")
+        val localJar = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(jarPath)
+        assertNotNull(localJar)
+        val jarRoot = JarFileSystem.getInstance().getJarRootForLocalFile(localJar!!)
+        assertNotNull(jarRoot)
+
+        val result = ReadAction.compute<BinaryLibraryScanResult, RuntimeException> {
+            BinaryLibraryStepCollector.collectFromRoots(project, listOf(jarRoot!!))
+        }
+
+        assertEquals(1, result.steps.size)
+        val step = result.steps.single()
+        assertEquals("When", step.keyword)
+        assertEquals("open dependency app", step.pattern)
+        assertNotNull(step.implementation)
+        assertEquals("cucumber.steps.commons.CommonActionsSteps", step.implementation!!.className)
+        assertEquals("openDependencyApp", step.implementation!!.methodName)
+    }
+
+    private fun buildBinaryLibraryJar(
+        annotationInternalName: String = "io/cucumber/java/en/Given",
+    ): Path {
         val workspace = Files.createTempDirectory("binary-library-steps")
         val outputRoot = Files.createDirectories(workspace.resolve("out"))
         val jarPath = workspace.resolve("binary-steps.jar")
 
         writeClass(
-            outputRoot.resolve("io/cucumber/java/en/Given.class"),
-            buildGivenAnnotationClass()
+            outputRoot.resolve("$annotationInternalName.class"),
+            buildStepAnnotationClass(annotationInternalName)
         )
         writeClass(
             outputRoot.resolve("cucumber/steps/commons/CommonActionsSteps.class"),
-            buildStepClass()
+            buildStepClass(annotationInternalName)
         )
 
         jarCompiledClasses(outputRoot, jarPath)
@@ -64,12 +86,12 @@ class BinaryLibraryStepCollectorTest : BasePlatformTestCase() {
         Files.write(target, bytes)
     }
 
-    private fun buildGivenAnnotationClass(): ByteArray {
+    private fun buildStepAnnotationClass(annotationInternalName: String): ByteArray {
         val writer = ClassWriter(0)
         writer.visit(
             Opcodes.V17,
             Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE or Opcodes.ACC_ANNOTATION,
-            "io/cucumber/java/en/Given",
+            annotationInternalName,
             null,
             "java/lang/Object",
             arrayOf("java/lang/annotation/Annotation")
@@ -95,7 +117,7 @@ class BinaryLibraryStepCollectorTest : BasePlatformTestCase() {
         return writer.toByteArray()
     }
 
-    private fun buildStepClass(): ByteArray {
+    private fun buildStepClass(annotationInternalName: String): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
         writer.visit(
             Opcodes.V17,
@@ -122,7 +144,7 @@ class BinaryLibraryStepCollectorTest : BasePlatformTestCase() {
             null
         )
         method.visitParameter("screenName", 0)
-        val annotation = method.visitAnnotation("Lio/cucumber/java/en/Given;", true)
+        val annotation = method.visitAnnotation("L$annotationInternalName;", true)
         annotation.visit("value", "open dependency app")
         annotation.visitEnd()
         method.visitCode()

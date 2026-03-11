@@ -7,7 +7,6 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManager
 import ru.sber.aitestplugin.config.AiTestPluginSettings
 import ru.sber.aitestplugin.config.AiTestPluginSettingsService
 import ru.sber.aitestplugin.config.toZephyrAuthDto
@@ -53,6 +52,7 @@ import ru.sber.aitestplugin.model.RunArtifactsResponseDto
 import ru.sber.aitestplugin.model.RunEventResponseDto
 import ru.sber.aitestplugin.model.RunResultResponseDto
 import ru.sber.aitestplugin.model.RunStatusResponseDto
+import ru.sber.aitestplugin.util.resolveIdeProject
 import java.net.URI
 import java.net.URLEncoder
 import com.fasterxml.jackson.databind.JsonNode
@@ -71,9 +71,7 @@ import java.util.concurrent.ConcurrentHashMap
 class HttpBackendClient(
     private val project: Project? = null,
     private val settingsProvider: () -> AiTestPluginSettings = {
-        val resolvedProject = project
-            ?: ProjectManager.getInstance().openProjects.firstOrNull()
-            ?: ProjectManager.getInstance().defaultProject
+        val resolvedProject = resolveIdeProject(project)
         AiTestPluginSettingsService.getInstance(resolvedProject).settings
     }
 ) : BackendClient {

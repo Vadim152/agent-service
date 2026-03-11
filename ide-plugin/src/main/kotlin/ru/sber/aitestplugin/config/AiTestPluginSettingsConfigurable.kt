@@ -9,7 +9,6 @@ import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.Messages
 import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.JBSplitter
@@ -32,6 +31,7 @@ import ru.sber.aitestplugin.ui.dialogs.MemoryManagerDialog
 import ru.sber.aitestplugin.ui.theme.PluginUiTheme
 import ru.sber.aitestplugin.ui.theme.PluginUiTokens
 import ru.sber.aitestplugin.util.BinaryLibraryStepCollector
+import ru.sber.aitestplugin.util.resolveIdeProject
 import ru.sber.aitestplugin.util.ScanStepsTimeoutSupport
 import ru.sber.aitestplugin.util.StepScanRootsResolver
 import java.awt.BorderLayout
@@ -56,7 +56,7 @@ class AiTestPluginSettingsConfigurable(
     backendClient: BackendClient? = null
 ) : Configurable {
     private val logger = Logger.getInstance(AiTestPluginSettingsConfigurable::class.java)
-    private val project: Project = project ?: ProjectManager.getInstance().defaultProject
+    private val project: Project = resolveIdeProject(project)
     private val settingsService = AiTestPluginSettingsService.getInstance(this.project)
     private val backendClient: BackendClient = backendClient ?: HttpBackendClient(this.project)
 
@@ -471,10 +471,11 @@ class AiTestPluginSettingsConfigurable(
 
             override fun run(indicator: ProgressIndicator) {
                 indicator.text = "Обращение к сервису..."
-                val additionalRoots = StepScanRootsResolver.resolveAdditionalRoots(project, projectRoot)
-                val binaryScan = BinaryLibraryStepCollector.collect(project)
+                val ideProject = resolveIdeProject(project, projectRoot)
+                val additionalRoots = StepScanRootsResolver.resolveAdditionalRoots(ideProject, projectRoot)
+                val binaryScan = BinaryLibraryStepCollector.collect(ideProject)
                 logger.info(
-                    "Settings scan request projectRoot=$projectRoot, additionalRoots=${additionalRoots.size}, binaryClassRoots=${binaryScan.classRoots.size}, providedSteps=${binaryScan.steps.size}, timeoutMs=${settingsService.settings.scanStepsTimeoutMs}"
+                    "Settings scan request projectRoot=$projectRoot, ideProjectBasePath=${ideProject.basePath}, ideProjectDefault=${ideProject.isDefault}, additionalRoots=${additionalRoots.size}, binaryClassRoots=${binaryScan.classRoots.size}, providedSteps=${binaryScan.steps.size}, timeoutMs=${settingsService.settings.scanStepsTimeoutMs}"
                 )
                 val response = backendClient.scanSteps(projectRoot, additionalRoots, binaryScan.steps)
                 responseSteps = response.sampleSteps.orEmpty()

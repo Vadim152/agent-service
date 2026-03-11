@@ -36,11 +36,31 @@ object BinaryLibraryStepCollector {
         "io.cucumber.java.en.Then" to "Then",
         "io.cucumber.java.en.And" to "And",
         "io.cucumber.java.en.But" to "But",
+        "io.cucumber.java.ru.Дано" to "Given",
+        "io.cucumber.java.ru.Пусть" to "Given",
+        "io.cucumber.java.ru.Допустим" to "Given",
+        "io.cucumber.java.ru.Когда" to "When",
+        "io.cucumber.java.ru.Если" to "When",
+        "io.cucumber.java.ru.Тогда" to "Then",
+        "io.cucumber.java.ru.То" to "Then",
+        "io.cucumber.java.ru.И" to "And",
+        "io.cucumber.java.ru.Но" to "But",
+        "io.cucumber.java.ru.А" to "But",
         "cucumber.api.java.en.Given" to "Given",
         "cucumber.api.java.en.When" to "When",
         "cucumber.api.java.en.Then" to "Then",
         "cucumber.api.java.en.And" to "And",
         "cucumber.api.java.en.But" to "But",
+        "cucumber.api.java.ru.Дано" to "Given",
+        "cucumber.api.java.ru.Пусть" to "Given",
+        "cucumber.api.java.ru.Допустим" to "Given",
+        "cucumber.api.java.ru.Когда" to "When",
+        "cucumber.api.java.ru.Если" to "When",
+        "cucumber.api.java.ru.Тогда" to "Then",
+        "cucumber.api.java.ru.То" to "Then",
+        "cucumber.api.java.ru.И" to "And",
+        "cucumber.api.java.ru.Но" to "But",
+        "cucumber.api.java.ru.А" to "But",
     )
 
     fun collect(project: Project): BinaryLibraryScanResult {
@@ -190,6 +210,16 @@ object BinaryLibraryStepCollector {
             "Then" -> "Then"
             "And" -> "And"
             "But" -> "But"
+            "Дано" -> "Given"
+            "Пусть" -> "Given"
+            "Допустим" -> "Given"
+            "Когда" -> "When"
+            "Если" -> "When"
+            "Тогда" -> "Then"
+            "То" -> "Then"
+            "И" -> "And"
+            "Но" -> "But"
+            "А" -> "But"
             else -> null
         }
     }
