@@ -105,6 +105,8 @@ def extract_canonical_intent(
     llm_client: Any | None = None,
 ) -> dict[str, Any]:
     canonical = scenario.get("canonical") if isinstance(scenario, dict) else {}
+    if not isinstance(canonical, dict):
+        canonical = {}
     action_steps = [
         str(item.get("text", "")).strip()
         for item in canonical.get("actions", [])

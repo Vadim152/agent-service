@@ -124,7 +124,7 @@ class OpenCodeAdapterStateStore:
         *,
         after: int = 0,
         limit: int | None = None,
-    ) -> tuple[list[dict[str, Any]], int, bool, int, bool]:
+    ) -> tuple[list[dict[str, Any]], int, bool, int, bool] | tuple[list[dict[str, Any]], int]:
         with self._lock:
             bounded_limit = max(1, min(int(limit or self._max_events_per_run), self._max_events_per_run))
             next_cursor = self._next_event_index_locked(backend_run_id)
@@ -136,6 +136,8 @@ class OpenCodeAdapterStateStore:
             floor = max(0, int(after))
             stale = floor < oldest_cursor and floor < next_cursor
             if stale:
+                if limit is None:
+                    return [], next_cursor
                 return [], next_cursor, False, oldest_cursor, True
             rows = self._conn.execute(
                 """
@@ -162,6 +164,8 @@ class OpenCodeAdapterStateStore:
                 response_cursor = int(items[-1]["index"]) + 1
             else:
                 response_cursor = next_cursor
+            if limit is None:
+                return items, response_cursor
             return items, response_cursor, has_more, oldest_cursor, False
 
     def record_pending_approvals(self, backend_run_id: str, approvals: list[dict[str, Any]]) -> list[dict[str, Any]]:

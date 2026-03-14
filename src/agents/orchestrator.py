@@ -760,7 +760,7 @@ class Orchestrator:
             binding_overrides=list(binding_overrides or []),
         )
         preflight_state = self._invoke_clarification_preview_state(state_input)
-        if bool(preflight_state.get("generation_blocked", False)):
+        if self._should_enforce_clarification_block(state_input, preflight_state):
             return self._build_blocked_preview_response(
                 project_root=project_root,
                 testcase_text=testcase_text,
@@ -1339,7 +1339,10 @@ class Orchestrator:
             ],
         ]
         query = "\n".join(fragment for fragment in query_fragments if fragment)
-        scored = self.embeddings_store.get_top_k_scenarios(project_root, query, top_k=max(3, top_k))
+        if hasattr(self.embeddings_store, "get_top_k_scenarios"):
+            scored = self.embeddings_store.get_top_k_scenarios(project_root, query, top_k=max(3, top_k))
+        else:
+            scored = []
         if not scored and self.scenario_index_store:
             fallback = self.scenario_index_store.load_scenarios(project_root)
             scored = [(item, 0.0) for item in fallback[:top_k]]
@@ -1732,7 +1735,7 @@ class Orchestrator:
             jira_instance=jira_instance,
         )
         preflight_state = self._invoke_clarification_preview_state(state_input)
-        if bool(preflight_state.get("generation_blocked", False)):
+        if self._should_enforce_clarification_block(state_input, preflight_state):
             return self._build_blocked_generation_result(
                 project_root=project_root,
                 target_path=target_path,
@@ -1740,7 +1743,7 @@ class Orchestrator:
                 state=preflight_state,
             )
         state = self._run_full_generation_state(state_input)
-        if bool(state.get("generation_blocked", False)):
+        if self._should_enforce_clarification_block(state_input, state):
             return self._build_blocked_generation_result(
                 project_root=project_root,
                 target_path=target_path,
@@ -1844,6 +1847,19 @@ class Orchestrator:
             if updates:
                 state.update(updates)
         return state
+
+    @staticmethod
+    def _should_enforce_clarification_block(
+        state_input: dict[str, Any],
+        state: FeatureGenerationState,
+    ) -> bool:
+        if not bool(state.get("generation_blocked", False)):
+            return False
+        if str(state.get("resolved_testcase_source") or "raw_text") != "raw_text":
+            return False
+        if bool(state_input.get("create_file", False)):
+            return False
+        return True
 
     def _run_full_generation_state(self, state_input: dict[str, Any]) -> FeatureGenerationState:
         graph_input = dict(state_input)
