@@ -17,7 +17,8 @@ class ChatComposerPanel(
     runtimeSelector: JComboBox<*>,
     inputArea: JBTextArea,
     sendButton: JButton,
-    statusComponent: JComponent
+    statusComponent: JComponent,
+    controlsComponent: JComponent? = null
 ) : JPanel(BorderLayout()) {
     init {
         isOpaque = false
@@ -48,6 +49,7 @@ class ChatComposerPanel(
                     JPanel(BorderLayout()).apply {
                         isOpaque = false
                         border = JBUI.Borders.emptyTop(6)
+                        controlsComponent?.let { add(it, BorderLayout.WEST) }
                         add(JPanel(FlowLayout(FlowLayout.RIGHT, 0, 0)).apply {
                             isOpaque = false
                             add(sendButton)

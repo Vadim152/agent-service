@@ -44,7 +44,9 @@ data class ChatMessageRequestDto(
     val messageId: String? = null,
     val role: String = "user",
     val content: String,
-    val attachments: List<Map<String, Any?>> = emptyList()
+    val displayText: String? = null,
+    val attachments: List<Map<String, Any?>> = emptyList(),
+    val metadata: Map<String, Any?> = emptyMap()
 )
 
 data class ChatMessageAcceptedResponseDto(

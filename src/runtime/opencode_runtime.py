@@ -18,6 +18,170 @@ def _utcnow() -> str:
 
 
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "needs_attention", "cancelled"}
+WAITING_INPUT_STATUSES = {"needs_attention", "waiting_input"}
+_QUESTION_HINTS = (
+    "choose",
+    "select",
+    "pick",
+    "which option",
+    "which variant",
+    "what should",
+    "would you like",
+    "вариант",
+    "выбери",
+    "выберите",
+    "уточни",
+    "уточните",
+    "напиши свой",
+    "свой вариант",
+)
+_CHOICE_PREFIXES = ("- ", "* ", "• ", "1. ", "2. ", "3. ", "4. ", "a) ", "b) ", "c) ", "a. ", "b. ", "c. ")
+
+
+def _empty_usage_totals() -> dict[str, Any]:
+    return {
+        "tokens": {
+            "input": 0,
+            "output": 0,
+            "reasoning": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+        },
+        "cost": 0.0,
+    }
+
+
+def _merge_usage_totals(base: dict[str, Any] | None, delta: dict[str, Any] | None) -> dict[str, Any]:
+    merged = json.loads(json.dumps(base or _empty_usage_totals()))
+    addition = delta or {}
+    merged_tokens = dict(merged.get("tokens") or {})
+    delta_tokens = dict(addition.get("tokens") or {})
+    for key in ("input", "output", "reasoning", "cacheRead", "cacheWrite"):
+        merged_tokens[key] = int(merged_tokens.get(key, 0) or 0) + int(delta_tokens.get(key, 0) or 0)
+    merged["tokens"] = merged_tokens
+    merged["cost"] = float(merged.get("cost", 0.0) or 0.0) + float(addition.get("cost", 0.0) or 0.0)
+    return merged
+
+
+def _is_question_text(text: str) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if "?" in normalized:
+        return True
+    return any(hint in lowered for hint in _QUESTION_HINTS)
+
+
+def _extract_choices_from_text(text: str) -> list[str]:
+    choices: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if lowered.startswith("or "):
+            candidate = line[3:].strip()
+            if candidate:
+                choices.append(candidate)
+            continue
+        if any(lowered.startswith(prefix) for prefix in _CHOICE_PREFIXES):
+            candidate = line[3:].strip()
+            if candidate:
+                choices.append(candidate)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for choice in choices:
+        key = choice.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(choice)
+    return deduped[:6]
+
+
+def _extract_choices_from_payload(payload: Any) -> list[str]:
+    if isinstance(payload, dict):
+        for key in ("choices", "options", "variants", "suggestions"):
+            value = payload.get(key)
+            if not isinstance(value, list):
+                continue
+            choices: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    candidate = item.strip()
+                elif isinstance(item, dict):
+                    candidate = str(
+                        item.get("label")
+                        or item.get("title")
+                        or item.get("name")
+                        or item.get("value")
+                        or item.get("text")
+                        or ""
+                    ).strip()
+                else:
+                    candidate = ""
+                if candidate:
+                    choices.append(candidate)
+            if choices:
+                return choices[:6]
+        for value in payload.values():
+            extracted = _extract_choices_from_payload(value)
+            if extracted:
+                return extracted
+        return []
+    if isinstance(payload, list):
+        for item in payload:
+            extracted = _extract_choices_from_payload(item)
+            if extracted:
+                return extracted
+    return []
+
+
+def _extract_question_metadata(message: str, *payloads: Any) -> dict[str, Any] | None:
+    text = str(message or "").strip()
+    if not text:
+        return None
+    choices: list[str] = []
+    for payload in payloads:
+        choices = _extract_choices_from_payload(payload)
+        if choices:
+            break
+    if not choices:
+        choices = _extract_choices_from_text(text)
+    if not _is_question_text(text) and not choices:
+        return None
+    return {
+        "question": True,
+        "choices": choices,
+        "allowCustomAnswer": True,
+    }
+
+
+def _status_requires_user_input(payload: dict[str, Any], current_action: str | None = None) -> bool:
+    raw_status = str(payload.get("status") or "").strip().lower()
+    if raw_status in WAITING_INPUT_STATUSES:
+        return True
+    for key in ("needsInput", "awaitingInput", "waitingForInput", "requiresUserInput"):
+        if bool(payload.get(key)):
+            return True
+    message = str(payload.get("message") or current_action or "").strip()
+    lowered = message.lower()
+    if not lowered:
+        return False
+    return "awaiting your answer" in lowered or "waiting for your answer" in lowered or _is_question_text(message)
+
+
+def _build_plan_mode_prompt(prompt: str) -> str:
+    normalized = str(prompt or "").strip()
+    if not normalized:
+        return normalized
+    return (
+        "Planning mode is enabled. Analyze the request, ask clarifying questions when needed, "
+        "and propose options or a step-by-step plan. Do not execute changes, run destructive actions, "
+        "or apply patches until the user explicitly asks you to proceed.\n\n"
+        f"User request:\n{normalized}"
+    )
 
 
 class OpenCodeRunDriver:
@@ -118,7 +282,16 @@ class OpenCodeRunDriver:
         existing_session = self._session_state_store.get_session(session_id) if session_id else None
         existing_limits = dict((existing_session or {}).get("limits") or {})
         default_context_window = int(existing_limits.get("contextWindow") or 200_000)
-        totals = _extract_status_totals(status_payload) or (existing_session or {}).get("totals")
+        session_totals = dict((existing_session or {}).get("usage_totals_lifetime") or (existing_session or {}).get("totals") or _empty_usage_totals())
+        usage_totals = _extract_status_totals(status_payload)
+        accounted_run_ids = [
+            str(item).strip()
+            for item in ((existing_session or {}).get("usage_accounted_run_ids") or [])
+            if str(item).strip()
+        ]
+        if usage_totals is not None and normalized_status in TERMINAL_RUN_STATUSES and run_id not in accounted_run_ids:
+            session_totals = _merge_usage_totals(session_totals, usage_totals)
+            accounted_run_ids.append(run_id)
         limits = _extract_status_limits(status_payload, default_context_window=default_context_window) or (existing_session or {}).get("limits")
         attempts = self._merge_attempt_artifacts(run, status_payload)
         self._run_state_store.patch_job(
@@ -140,8 +313,13 @@ class OpenCodeRunDriver:
             status=normalized_status,
             current_action=current_action,
             backend_session_id=backend_session_id,
-            totals=totals,
+            totals=session_totals,
             limits=limits,
+            waiting_for_input=_status_requires_user_input(status_payload, current_action),
+            extra_changes={
+                "usage_totals_lifetime": session_totals,
+                "usage_accounted_run_ids": accounted_run_ids,
+            },
         )
         last_progress_action = str(run.get("last_progress_action") or "")
         if session_id and current_action and normalized_status not in TERMINAL_RUN_STATUSES and current_action != last_progress_action:
@@ -318,12 +496,25 @@ class OpenCodeRunDriver:
             return
         status = str(run.get("status") or "failed")
         message = self._build_terminal_message(run, status_payload)
+        question_metadata = _extract_question_metadata(
+            message,
+            status_payload,
+            status_payload.get("output"),
+            status_payload.get("result"),
+        )
+        message_metadata = {
+            "runId": run["run_id"],
+            "backendRunId": run.get("backend_run_id"),
+            "status": status,
+        }
+        if question_metadata is not None:
+            message_metadata.update(question_metadata)
         self._session_state_store.append_message(
             session_id,
-            role="assistant" if status == "succeeded" else "system",
+            role="assistant" if status == "succeeded" or question_metadata is not None else "system",
             content=message,
             run_id=str(run["run_id"]),
-            metadata={"runId": run["run_id"], "backendRunId": run.get("backend_run_id"), "status": status},
+            metadata=message_metadata,
         )
         self._clear_pending_approvals(session_id=session_id, backend_run_id=str(run.get("backend_run_id") or ""))
         self._session_state_store.append_event(
@@ -331,10 +522,21 @@ class OpenCodeRunDriver:
             f"run.{status}",
             {"sessionId": session_id, "runId": run["run_id"], "status": status},
         )
+        if question_metadata is not None:
+            self._session_state_store.append_event(
+                session_id,
+                "opencode.question.asked",
+                {
+                    "sessionId": session_id,
+                    "runId": run["run_id"],
+                    "message": message,
+                    "choices": list(question_metadata.get("choices") or []),
+                },
+            )
         self._session_state_store.update_session(
             session_id,
-            activity="idle" if status in {"succeeded", "cancelled"} else "error",
-            current_action="Idle" if status in {"succeeded", "cancelled"} else "OpenCode failed",
+            activity="waiting_input" if question_metadata is not None else ("idle" if status in {"succeeded", "cancelled"} else "error"),
+            current_action="Waiting for your answer" if question_metadata is not None else ("Idle" if status in {"succeeded", "cancelled"} else "OpenCode failed"),
             active_run_status=status,
             active_run_backend=run.get("backend"),
             backend_session_id=run.get("backend_session_id"),
@@ -359,15 +561,19 @@ class OpenCodeRunDriver:
         backend_session_id: str | None,
         totals: dict[str, Any] | None = None,
         limits: dict[str, Any] | None = None,
+        waiting_for_input: bool = False,
+        extra_changes: dict[str, Any] | None = None,
     ) -> None:
         if not session_id:
             return
         activity = "waiting_permission" if self._session_state_store.list_pending_tool_calls(session_id=session_id) else ("idle" if status in {"succeeded", "cancelled"} else "busy")
+        if waiting_for_input:
+            activity = "waiting_input"
         if status == "failed":
             activity = "error"
         changes: dict[str, Any] = {
             "activity": activity,
-            "current_action": current_action,
+            "current_action": "Waiting for your answer" if activity == "waiting_input" else current_action,
             "active_run_id": run_id,
             "active_run_status": status,
             "active_run_backend": "opencode-adapter",
@@ -377,6 +583,8 @@ class OpenCodeRunDriver:
             changes["totals"] = totals
         if limits is not None:
             changes["limits"] = limits
+        if extra_changes:
+            changes.update(extra_changes)
         self._session_state_store.update_session(
             session_id,
             **changes,
@@ -597,7 +805,7 @@ class OpenCodeSessionRuntime:
             payload["session_id"],
             activity="idle",
             current_action="Idle",
-            totals={"tokens": {"input": 0, "output": 0, "reasoning": 0, "cacheRead": 0, "cacheWrite": 0}, "cost": 0.0},
+            totals=_empty_usage_totals(),
             limits={"contextWindow": self._context_window, "used": 0, "percent": 0.0},
             diff={"summary": {"files": 0, "additions": 0, "deletions": 0}, "files": []},
             zephyr_auth=zephyr_auth,
@@ -605,6 +813,8 @@ class OpenCodeSessionRuntime:
             active_run_id=None,
             active_run_status=None,
             active_run_backend="opencode-adapter",
+            usage_totals_lifetime=_empty_usage_totals(),
+            usage_accounted_run_ids=[],
         )
         try:
             adapter_session = await asyncio.to_thread(
@@ -672,18 +882,42 @@ class OpenCodeSessionRuntime:
         session = self.state_store.get_session(session_id)
         return session is not None and str(session.get("runtime", self.name)) == self.name
 
-    async def process_message(self, *, session_id: str, run_id: str, message_id: str, content: str) -> None:
+    async def process_message(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        message_id: str,
+        content: str,
+        display_text: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
         if self._run_service is None:
             raise ChatRuntimeError("OpenCode runtime is not initialized", status_code=503)
         lock = self._session_lock(session_id)
         async with lock:
             session = self._require_session(session_id)
-            self.state_store.append_message(session_id, role="user", content=content, run_id=run_id, message_id=message_id)
+            message_metadata = dict(metadata or {})
+            prompt = _build_plan_mode_prompt(content) if bool(message_metadata.get("planMode")) else content
+            self.state_store.append_message(
+                session_id,
+                role="user",
+                content=display_text or content,
+                run_id=run_id,
+                message_id=message_id,
+                metadata=message_metadata,
+            )
             self.state_store.append_event(session_id, "message.received", {"sessionId": session_id, "runId": run_id})
             created = self._run_service.create_run(
                 plugin="opencode",
                 project_root=str(session.get("project_root", "")),
-                input_payload={"prompt": content, "messageId": message_id, "backendSessionId": session.get("backend_session_id")},
+                input_payload={
+                    "prompt": prompt,
+                    "displayText": display_text or content,
+                    "messageId": message_id,
+                    "metadata": message_metadata,
+                    "backendSessionId": session.get("backend_session_id"),
+                },
                 session_id=session_id,
                 profile=str(session.get("profile", "quick")),
                 source=str(session.get("source", "ide-plugin")),
@@ -711,6 +945,7 @@ class OpenCodeSessionRuntime:
         prompt: str,
         display_text: str,
         raw_input: str | None = None,
+        message_metadata: dict[str, Any] | None = None,
     ) -> None:
         if self._run_service is None:
             raise ChatRuntimeError("OpenCode runtime is not initialized", status_code=503)
@@ -719,13 +954,15 @@ class OpenCodeSessionRuntime:
         lock = self._session_lock(session_id)
         async with lock:
             session = self._require_session(session_id)
+            metadata = {"commandId": command_id, "rawInput": raw_input or "", **dict(message_metadata or {})}
+            effective_prompt = _build_plan_mode_prompt(prompt) if bool(metadata.get("planMode")) else prompt
             self.state_store.append_message(
                 session_id,
                 role="user",
                 content=display_text,
                 run_id=run_id,
                 message_id=message_id,
-                metadata={"commandId": command_id, "rawInput": raw_input or ""},
+                metadata=metadata,
             )
             self.state_store.append_event(
                 session_id,
@@ -736,11 +973,12 @@ class OpenCodeSessionRuntime:
                 plugin="opencode",
                 project_root=str(session.get("project_root", "")),
                 input_payload={
-                    "prompt": prompt,
+                    "prompt": effective_prompt,
                     "messageId": message_id,
                     "commandId": command_id,
                     "displayText": display_text,
                     "rawInput": raw_input,
+                    "metadata": metadata,
                     "backendSessionId": session.get("backend_session_id"),
                 },
                 session_id=session_id,
@@ -939,12 +1177,14 @@ class OpenCodeSessionRuntime:
             activity = "busy"
         elif status_value in {"failed", "error"}:
             activity = "error"
+        elif status_value in WAITING_INPUT_STATUSES or _status_requires_user_input(payload):
+            activity = "waiting_input"
         if self.state_store.list_pending_tool_calls(session_id=session_id):
             activity = "waiting_permission"
         self.state_store.update_session(
             session_id,
             backend_session_id=payload.get("backendSessionId") or payload.get("backend_session_id"),
-            current_action=str(payload.get("currentAction") or payload.get("current_action") or "Idle"),
+            current_action="Waiting for your answer" if activity == "waiting_input" else str(payload.get("currentAction") or payload.get("current_action") or "Idle"),
             activity=activity,
         )
 

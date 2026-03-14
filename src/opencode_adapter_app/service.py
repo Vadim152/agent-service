@@ -362,12 +362,13 @@ class OpenCodeAdapterService:
                 provider_id=provider_id,
                 model_id=model_id,
             )
+        compacted_at = utcnow().isoformat()
         updated = self._state_store.upsert_session_mapping(
             external_session_id,
             status="idle",
             current_action="Idle",
-            last_compaction_at=utcnow().isoformat(),
-            last_activity_at=utcnow().isoformat(),
+            last_compaction_at=compacted_at,
+            last_activity_at=compacted_at,
             last_provider_id=provider_id,
             last_model_id=model_id,
         )

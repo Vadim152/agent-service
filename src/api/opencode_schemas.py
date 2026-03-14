@@ -34,6 +34,7 @@ class OpenCodeCommandExecutionRequest(ApiBaseModel):
     project_root: str | None = Field(default=None, alias="projectRoot")
     arguments: list[str] = Field(default_factory=list)
     raw_input: str | None = Field(default=None, alias="rawInput")
+    message_metadata: dict[str, Any] = Field(default_factory=dict, alias="messageMetadata")
 
 
 class OpenCodeCommandExecutionResponse(ApiBaseModel):

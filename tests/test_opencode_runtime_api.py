@@ -298,8 +298,18 @@ class _FakeOpenCodeAdapter:
         backend_run_id = f"oc-{len(self.runs) + 1}"
         prompt = str(payload.get("prompt") or "")
         needs_approval = "approval" in prompt.lower()
+        needs_clarification = "choose variant" in prompt.lower() or "clarify" in prompt.lower()
         session_id = str(payload.get("sessionId") or "")
         backend_session_id = str(payload.get("backendSessionId") or self.sessions[session_id]["backendSessionId"])
+        usage_totals = {
+            "tokens": {"input": 120, "output": 80, "reasoning": 20, "cacheRead": 0, "cacheWrite": 0},
+            "cost": 0.0,
+        }
+        if "second run" in prompt.lower():
+            usage_totals = {
+                "tokens": {"input": 150, "output": 90, "reasoning": 30, "cacheRead": 0, "cacheWrite": 0},
+                "cost": 0.0,
+            }
         self.runs[backend_run_id] = {
             "backendRunId": backend_run_id,
             "backendSessionId": backend_session_id,
@@ -307,8 +317,11 @@ class _FakeOpenCodeAdapter:
             "status": "running",
             "currentAction": "Executing OpenCode run",
             "prompt": prompt,
+            "displayText": str(payload.get("displayText") or ""),
             "polls": 0,
             "approved": not needs_approval,
+            "needsClarification": needs_clarification,
+            "usageTotals": usage_totals,
             "pendingApprovals": [
                 {
                     "approvalId": f"{backend_run_id}-approval",
@@ -336,10 +349,7 @@ class _FakeOpenCodeAdapter:
     def get_run(self, backend_run_id: str) -> dict[str, object]:
         run = self.runs[backend_run_id]
         run["polls"] = int(run.get("polls", 0)) + 1
-        usage_totals = {
-            "tokens": {"input": 120, "output": 80, "reasoning": 20, "cacheRead": 0, "cacheWrite": 0},
-            "cost": 0.0,
-        }
+        usage_totals = dict(run.get("usageTotals") or {})
         usage_limits = {"contextWindow": 200000, "used": 220, "percent": 0.0011}
         if bool(run.get("cancelled")):
             self.sessions[str(run["externalSessionId"])]["status"] = "idle"
@@ -367,6 +377,22 @@ class _FakeOpenCodeAdapter:
                 "limits": usage_limits,
             }
         if int(run.get("polls", 0)) >= 2:
+            if bool(run.get("needsClarification")):
+                self.sessions[str(run["externalSessionId"])]["status"] = "needs_attention"
+                self.sessions[str(run["externalSessionId"])]["currentAction"] = "Waiting for user input"
+                return {
+                    "backendRunId": backend_run_id,
+                    "backendSessionId": run["backendSessionId"],
+                    "status": "needs_attention",
+                    "currentAction": "Waiting for user input",
+                    "output": {
+                        "message": "Which variant should I use?",
+                        "choices": ["Variant A", "Variant B"],
+                    },
+                    "pendingApprovals": [],
+                    "totals": usage_totals,
+                    "limits": usage_limits,
+                }
             self.sessions[str(run["externalSessionId"])]["status"] = "idle"
             self.sessions[str(run["externalSessionId"])]["currentAction"] = "Idle"
             return {
@@ -541,6 +567,56 @@ def test_opencode_message_creates_delegated_run_and_updates_history() -> None:
     progress_events = [item for item in history["events"] if item["eventType"] == "opencode.run.progress"]
     assert progress_events
     assert any(str(item.get("payload", {}).get("message", "")).strip() for item in progress_events)
+
+
+def test_opencode_session_totals_accumulate_across_runs_without_double_counting() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    first = client.post(f"/sessions/{session_id}/messages", json={"content": "first run"})
+    assert first.status_code == 200
+    _wait_until(lambda: client.get(f"/sessions/{session_id}/status").json().get("activeRunStatus") == "succeeded")
+    first_status = client.get(f"/sessions/{session_id}/status").json()
+    assert first_status["totals"]["tokens"]["input"] == 120
+    assert first_status["totals"]["tokens"]["output"] == 80
+
+    second = client.post(f"/sessions/{session_id}/messages", json={"content": "second run"})
+    assert second.status_code == 200
+    _wait_until(lambda: client.get(f"/sessions/{session_id}/status").json().get("activeRunStatus") == "succeeded")
+    second_status = client.get(f"/sessions/{session_id}/status").json()
+    assert second_status["totals"]["tokens"]["input"] == 270
+    assert second_status["totals"]["tokens"]["output"] == 170
+    assert second_status["totals"]["tokens"]["reasoning"] == 50
+
+    refreshed_status = client.get(f"/sessions/{session_id}/status").json()
+    assert refreshed_status["totals"]["tokens"]["input"] == 270
+    assert refreshed_status["totals"]["tokens"]["output"] == 170
+
+
+def test_opencode_question_completion_sets_waiting_input_and_choice_metadata() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.post(f"/sessions/{session_id}/messages", json={"content": "please clarify and choose variant"})
+    assert response.status_code == 200
+    _wait_until(lambda: client.get(f"/sessions/{session_id}/status").json().get("activity") == "waiting_input")
+
+    status_payload = client.get(f"/sessions/{session_id}/status").json()
+    assert status_payload["activity"] == "waiting_input"
+    assert status_payload["currentAction"] == "Waiting for your answer"
+
+    history = client.get(f"/sessions/{session_id}/history").json()
+    question_messages = [item for item in history["messages"] if item["role"] == "assistant" and item["metadata"].get("question")]
+    assert question_messages
+    question = question_messages[-1]
+    assert question["content"] == "Which variant should I use?"
+    assert question["metadata"]["choices"] == ["Variant A", "Variant B"]
+    assert any(item["eventType"] == "opencode.question.asked" for item in history["events"])
+
+    follow_up = client.post(f"/sessions/{session_id}/messages", json={"content": "Variant B"})
+    assert follow_up.status_code == 200
 
 
 def test_opencode_approval_flow_uses_policy_endpoint() -> None:

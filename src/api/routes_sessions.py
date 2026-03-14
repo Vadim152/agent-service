@@ -224,6 +224,8 @@ async def send_message(
             run_id=run_id,
             message_id=payload.message_id or uuid.uuid4().hex,
             content=payload.content,
+            display_text=payload.display_text,
+            metadata=payload.metadata,
         )
 
     registry = getattr(request.app.state, "task_registry", None)

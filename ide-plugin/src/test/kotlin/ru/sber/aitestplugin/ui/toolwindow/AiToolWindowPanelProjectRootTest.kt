@@ -1,7 +1,11 @@
 package ru.sber.aitestplugin.ui.toolwindow
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import ru.sber.aitestplugin.model.ChatMessageDto
+import java.time.Instant
 
 class AiToolWindowPanelProjectRootTest {
 
@@ -83,5 +87,63 @@ class AiToolWindowPanelProjectRootTest {
         )
 
         assertEquals(240, result)
+    }
+
+    @Test
+    fun `status details prepend planning mode tag`() {
+        val result = buildStatusDetails(
+            connectionDetails = "ok",
+            planModeEnabled = true
+        )
+
+        assertEquals("Планирование | ok", result)
+    }
+
+    @Test
+    fun `extractLatestPendingQuestion returns newest unanswered clarification with choices`() {
+        val question = extractLatestPendingQuestion(
+            listOf(
+                ChatMessageDto(
+                    messageId = "m1",
+                    role = "assistant",
+                    content = "Which variant should I use?",
+                    metadata = mapOf(
+                        "question" to true,
+                        "choices" to listOf("Variant A", "Variant B"),
+                        "allowCustomAnswer" to true
+                    ),
+                    createdAt = Instant.parse("2026-03-15T10:00:00Z")
+                )
+            )
+        )
+
+        assertNotNull(question)
+        assertEquals("Which variant should I use?", question?.title)
+        assertEquals(listOf("Variant A", "Variant B"), question?.choices)
+        assertTrue(question?.allowCustomAnswer == true)
+    }
+
+    @Test
+    fun `extractLatestPendingQuestion returns null after user reply`() {
+        val question = extractLatestPendingQuestion(
+            listOf(
+                ChatMessageDto(
+                    messageId = "m1",
+                    role = "assistant",
+                    content = "Which variant should I use?",
+                    metadata = mapOf("question" to true, "choices" to listOf("Variant A")),
+                    createdAt = Instant.parse("2026-03-15T10:00:00Z")
+                ),
+                ChatMessageDto(
+                    messageId = "m2",
+                    role = "user",
+                    content = "Variant A",
+                    metadata = emptyMap(),
+                    createdAt = Instant.parse("2026-03-15T10:01:00Z")
+                )
+            )
+        )
+
+        assertEquals(null, question)
     }
 }

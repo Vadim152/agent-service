@@ -52,7 +52,9 @@ class ChatMessageRequest(ApiBaseModel):
     message_id: str | None = Field(default=None, alias="messageId")
     role: Literal["user"] = "user"
     content: str
+    display_text: str | None = Field(default=None, alias="displayText")
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatMessageAcceptedResponse(ApiBaseModel):

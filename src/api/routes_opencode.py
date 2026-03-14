@@ -231,6 +231,7 @@ async def _dispatch_prompt_command(
             prompt=prompt,
             display_text=display_text,
             raw_input=suffix or None,
+            message_metadata=payload.message_metadata,
         )
     except ChatRuntimeError as exc:
         raise _runtime_to_http_error(exc, request) from exc

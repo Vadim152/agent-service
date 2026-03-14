@@ -25,11 +25,11 @@ class AgentEventLogFormatterTest {
         val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
         val text = lines.map { it.text }
 
-        assertTrue(text.any { it.startsWith("[Step] Scanning files") })
-        assertTrue(text.any { it.startsWith("[Change] Updated session-diff.json") })
-        assertTrue(text.any { it.startsWith("[Command] /diff") })
-        assertTrue(text.any { it.startsWith("[Approval] Approval required") })
-        assertTrue(text.any { it.startsWith("[Status] Failed: Boom") })
+        assertTrue(text.any { it == "Scanning files" })
+        assertTrue(text.any { it == "Updated session-diff.json" })
+        assertTrue(text.any { it == "Executed /diff" })
+        assertTrue(text.any { it == "Approval required" })
+        assertTrue(text.any { it == "Failed: Boom" })
         assertTrue(text.none { it.contains("Request accepted", ignoreCase = true) })
         assertTrue(text.none { it.contains("Run started", ignoreCase = true) })
         assertTrue(text.none { it.contains("succeeded", ignoreCase = true) })
@@ -46,7 +46,7 @@ class AgentEventLogFormatterTest {
         val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
 
         assertEquals(1, lines.size)
-        assertEquals("[Step] Reading project (x2)", lines[0].text)
+        assertEquals("Reading project (x2)", lines[0].text)
     }
 
     @Test
@@ -69,7 +69,7 @@ class AgentEventLogFormatterTest {
         val events = listOf(
             AgentEventLogFormatter.TimelineItem(
                 kind = AgentEventLogFormatter.TimelineKind.AGENT_EVENT,
-                text = "[Status] Run started",
+                text = "Run started",
                 createdAt = now,
                 stableKey = "e-1"
             )
@@ -175,5 +175,23 @@ class AgentEventLogFormatterTest {
 
         assertEquals(1, lines.size)
         assertTrue(lines.first().text.contains("Applying patch to src/App.kt"))
+    }
+
+    @Test
+    fun `buildAgentEventLines surfaces clarification question as readable bubble`() {
+        val now = Instant.parse("2026-03-05T10:00:00Z")
+        val events = listOf(
+            ChatEventDto(
+                "opencode.question.asked",
+                mapOf("message" to "Which variant should I use?"),
+                now,
+                0
+            )
+        )
+
+        val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
+
+        assertEquals(1, lines.size)
+        assertEquals("Which variant should I use?", lines.first().text)
     }
 }

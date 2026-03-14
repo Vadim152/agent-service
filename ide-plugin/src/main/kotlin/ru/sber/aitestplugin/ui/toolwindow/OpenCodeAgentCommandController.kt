@@ -28,7 +28,8 @@ internal class OpenCodeAgentCommandController(
     fun executeSlashCommand(
         sessionId: String?,
         projectRoot: String,
-        input: String
+        input: String,
+        messageMetadata: Map<String, Any?> = emptyMap()
     ): OpenCodeCommandExecutionResponseDto {
         val parsed = parseSlashInput(input)
             ?: throw IllegalArgumentException("Slash command is required")
@@ -38,7 +39,8 @@ internal class OpenCodeAgentCommandController(
                 sessionId = sessionId,
                 projectRoot = projectRoot.takeIf { it.isNotBlank() },
                 arguments = parsed.arguments,
-                rawInput = parsed.rawInput
+                rawInput = parsed.rawInput,
+                messageMetadata = messageMetadata
             )
         )
     }

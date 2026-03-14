@@ -587,6 +587,8 @@ class ChatAgentRuntime:
         run_id: str,
         message_id: str,
         content: str,
+        display_text: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         lock = self._session_lock(session_id)
         async with lock:
@@ -600,9 +602,10 @@ class ChatAgentRuntime:
             self.state_store.append_message(
                 session_id,
                 role="user",
-                content=content,
+                content=display_text or content,
                 run_id=run_id,
                 message_id=message_id or str(uuid.uuid4()),
+                metadata=dict(metadata or {}),
             )
             self.state_store.append_event(
                 session_id,

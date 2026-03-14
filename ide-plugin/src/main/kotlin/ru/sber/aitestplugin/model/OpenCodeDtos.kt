@@ -25,7 +25,8 @@ data class OpenCodeCommandExecutionRequestDto(
     val sessionId: String? = null,
     val projectRoot: String? = null,
     val arguments: List<String> = emptyList(),
-    val rawInput: String? = null
+    val rawInput: String? = null,
+    val messageMetadata: Map<String, Any?> = emptyMap()
 )
 
 data class OpenCodeCommandExecutionResponseDto(

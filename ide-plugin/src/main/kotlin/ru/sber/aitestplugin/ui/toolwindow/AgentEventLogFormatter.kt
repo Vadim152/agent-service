@@ -27,12 +27,12 @@ internal object AgentEventLogFormatter {
         APPLYING_CHANGES("Applying changes")
     }
 
-    private enum class EventCategory(val title: String) {
-        STATUS("Status"),
-        STEP("Step"),
-        CHANGE("Change"),
-        COMMAND("Command"),
-        APPROVAL("Approval")
+    private enum class EventCategory {
+        STATUS,
+        STEP,
+        CHANGE,
+        COMMAND,
+        APPROVAL
     }
 
     fun buildAgentEventLines(events: List<ChatEventDto>, maxLines: Int): List<TimelineItem> {
@@ -53,7 +53,7 @@ internal object AgentEventLogFormatter {
             val title = if (compactLine.count > 1) "${compactLine.title} (x${compactLine.count})" else compactLine.title
             TimelineItem(
                 kind = TimelineKind.AGENT_EVENT,
-                text = "[${compactLine.category.title}] $title",
+                text = title,
                 createdAt = compactLine.createdAt,
                 stableKey = compactLine.stableKey
             )
@@ -120,11 +120,13 @@ internal object AgentEventLogFormatter {
             "opencode.run.awaiting_approval", "permission.requested" ->
                 compact(EventCategory.APPROVAL, "Approval required", event)
             "approval.decision", "permission.approved", "permission.rejected" ->
-                compact(EventCategory.APPROVAL, "Approval decision sent", event)
+                compact(EventCategory.APPROVAL, "Approval submitted", event)
             "opencode.run.artifact_published" ->
                 compact(EventCategory.CHANGE, artifactMessage(event.payload), event)
             "command.executed", "opencode.command.executed" ->
                 compact(EventCategory.COMMAND, commandMessage(event.payload), event)
+            "opencode.question.asked" ->
+                compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Waiting for your answer", event)
             "opencode.run.progress", "run.progress" ->
                 compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Working", event)
             "opencode.run.failed", "run.failed" ->
@@ -153,7 +155,7 @@ internal object AgentEventLogFormatter {
         val command = payload["command"]?.toString()?.trim().orEmpty()
             .ifBlank { rawPayload?.get("command")?.toString()?.trim().orEmpty() }
             .ifBlank { payload["commandId"]?.toString()?.trim().orEmpty() }
-        return if (command.isNotBlank()) "/$command" else "Tool command executed"
+        return if (command.isNotBlank()) "Executed /$command" else "Executed command"
     }
 
     private fun resolveDetail(payload: Map<String, Any?>): String {

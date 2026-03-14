@@ -67,6 +67,7 @@ import javax.swing.BoxLayout
 import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultListModel
 import javax.swing.JButton
+import javax.swing.JCheckBox
 import javax.swing.JComboBox
 import javax.swing.JList
 import javax.swing.JPanel
@@ -107,6 +108,7 @@ class AiToolWindowPanel(
     private val inputArea = JBTextArea(4, 20)
     private val sendButton = JButton()
     private val runtimeSelector = JComboBox(RuntimeMode.values())
+    private val planModeCheckBox = JCheckBox("Планирование")
     private val statusLabel = JBLabel(UiStrings.connecting)
     private val statusBadge = StatusBadge(UiStrings.connecting, false)
     private val traceToggleButton = JButton()
@@ -121,6 +123,7 @@ class AiToolWindowPanel(
     private var selectedRuntime: RuntimeMode = RuntimeMode.CHAT
     private var sessionId: String? = null
     private val sessionIdsByRuntime = mutableMapOf<RuntimeMode, String>()
+    private val agentPlanModeBySessionId = mutableMapOf<String, Boolean>()
     private var streamSessionId: String? = null
     private var streamCall: Call? = null
     private var slashPopup: JBPopup? = null
@@ -336,6 +339,7 @@ class AiToolWindowPanel(
             sessionId = sessionIdsByRuntime[target]
             latestActivity = "idle"
             connectionDetails = null
+            syncPlanModeCheckboxFromSession()
             updateStatusLabel()
             ensureSessionAsync(forceNew = false)
             if (target == RuntimeMode.AGENT) {
@@ -343,9 +347,22 @@ class AiToolWindowPanel(
             }
         }
 
+        planModeCheckBox.isOpaque = false
+        planModeCheckBox.foreground = theme.secondaryText
+        planModeCheckBox.isVisible = selectedRuntime == RuntimeMode.AGENT
+        planModeCheckBox.addActionListener {
+            persistPlanModeState(planModeCheckBox.isSelected)
+            updateStatusLabel()
+        }
+
         statusLabel.foreground = theme.secondaryText
         statusLabel.border = JBUI.Borders.empty(6, 6, 0, 6)
-        return ChatComposerPanel(runtimeSelector, inputArea, sendButton, statusLabel)
+        val controls = JPanel(FlowLayout(FlowLayout.LEFT, 0, 0)).apply {
+            isOpaque = false
+            add(planModeCheckBox)
+        }
+        syncPlanModeCheckboxFromSession()
+        return ChatComposerPanel(runtimeSelector, inputArea, sendButton, statusLabel, controls)
     }
 
     private fun onSendOrStop() {
@@ -387,7 +404,16 @@ class AiToolWindowPanel(
                 return@executeOnPooledThread
             }
             try {
-                backendClient.sendChatMessage(active, ChatMessageRequestDto(content = message))
+                val request = if (selectedRuntime == RuntimeMode.AGENT) {
+                    ChatMessageRequestDto(
+                        content = message,
+                        displayText = message,
+                        metadata = buildAgentMessageMetadata()
+                    )
+                } else {
+                    ChatMessageRequestDto(content = message)
+                }
+                backendClient.sendChatMessage(active, request)
                 SwingUtilities.invokeLater {
                     inputArea.text = ""
                     suppressSlashPopupUntilReset = false
@@ -436,7 +462,12 @@ class AiToolWindowPanel(
         ApplicationManager.getApplication().executeOnPooledThread {
             val projectRoot = currentRuntimeProjectRoot(selectedRuntime)
             try {
-                val response = openCodeController.executeSlashCommand(sessionId, projectRoot, input)
+                val response = openCodeController.executeSlashCommand(
+                    sessionId = sessionId,
+                    projectRoot = projectRoot,
+                    input = input,
+                    messageMetadata = buildAgentMessageMetadata()
+                )
                 SwingUtilities.invokeLater {
                     inputArea.text = ""
                     suppressSlashPopupUntilReset = false
@@ -480,6 +511,32 @@ class AiToolWindowPanel(
         return resolveRuntimeProjectRootValue(mode.backendValue, project.basePath)
     }
 
+    private fun currentPlanModeEnabled(): Boolean =
+        selectedRuntime == RuntimeMode.AGENT && planModeCheckBox.isSelected
+
+    private fun persistPlanModeState(enabled: Boolean) {
+        if (selectedRuntime != RuntimeMode.AGENT) return
+        sessionId?.takeIf { it.isNotBlank() }?.let { activeSession ->
+            agentPlanModeBySessionId[activeSession] = enabled
+        }
+    }
+
+    private fun syncPlanModeCheckboxFromSession() {
+        planModeCheckBox.isVisible = selectedRuntime == RuntimeMode.AGENT
+        val selected = sessionId?.let { agentPlanModeBySessionId[it] } ?: false
+        if (planModeCheckBox.isSelected != selected) {
+            planModeCheckBox.isSelected = selected
+        }
+    }
+
+    private fun buildAgentMessageMetadata(): Map<String, Any?> {
+        val metadata = linkedMapOf<String, Any?>()
+        if (currentPlanModeEnabled()) {
+            metadata["planMode"] = true
+        }
+        return metadata
+    }
+
     private fun ensureSessionBlocking(forceNew: Boolean): String? {
         synchronized(sessionStateLock) {
             if (!forceNew) {
@@ -519,6 +576,7 @@ class AiToolWindowPanel(
                 )
                 sessionId = created.sessionId
                 sessionIdsByRuntime[selectedRuntime] = created.sessionId
+                syncPlanModeCheckboxFromSession()
                 latestActivity = "idle"
                 streamReconnectAttempt = 0
                 streamFromIndex = 0
@@ -532,7 +590,7 @@ class AiToolWindowPanel(
                         timelineLines.clear()
                         lastRenderedServerTailKey = null
                         renderTimeline()
-                        renderPendingApprovals(emptyList())
+                        renderPendingApprovals(emptyList(), null)
                     }
                 }
                 created.sessionId
@@ -552,6 +610,7 @@ class AiToolWindowPanel(
         runtimeSelector.selectedItem = selectedRuntime
         sessionId = targetSession.sessionId
         sessionIdsByRuntime[selectedRuntime] = targetSession.sessionId
+        syncPlanModeCheckboxFromSession()
         initialSessionRequested = true
         initialSessionReady = true
         latestActivity = "idle"
@@ -562,7 +621,7 @@ class AiToolWindowPanel(
         timelineLines.clear()
         lastRenderedServerTailKey = null
         renderTimeline()
-        renderPendingApprovals(emptyList())
+        renderPendingApprovals(emptyList(), null)
         streamReconnectAttempt = 0
         streamFromIndex = 0
         showChatScreen()
@@ -639,7 +698,7 @@ class AiToolWindowPanel(
             .map { message ->
                 val lineKind = when (message.role.lowercase()) {
                     "user" -> UiLineKind.USER
-                    "assistant" -> UiLineKind.ASSISTANT
+                    "assistant" -> if (message.metadata["question"] == true) UiLineKind.QUESTION else UiLineKind.ASSISTANT
                     else -> UiLineKind.SYSTEM
                 }
                 val stableKey = message.messageId.ifBlank {
@@ -667,6 +726,7 @@ class AiToolWindowPanel(
         } else {
             emptyList()
         }
+        val questionKeys = serverLines.filter { it.kind == UiLineKind.QUESTION }.mapTo(linkedSetOf()) { it.stableKey }
 
         val localLines = timelineLines.filter { it.source == UiLineSource.LOCAL_SYSTEM }
         val progressLine = timelineLines.firstOrNull { it.source == UiLineSource.PROGRESS }
@@ -677,6 +737,7 @@ class AiToolWindowPanel(
                         kind = when (line.kind) {
                             UiLineKind.USER -> AgentEventLogFormatter.TimelineKind.USER
                             UiLineKind.ASSISTANT -> AgentEventLogFormatter.TimelineKind.ASSISTANT
+                            UiLineKind.QUESTION -> AgentEventLogFormatter.TimelineKind.ASSISTANT
                             UiLineKind.SYSTEM -> AgentEventLogFormatter.TimelineKind.SYSTEM
                             UiLineKind.PROGRESS, UiLineKind.AGENT_EVENT -> AgentEventLogFormatter.TimelineKind.AGENT_EVENT
                         },
@@ -697,7 +758,7 @@ class AiToolWindowPanel(
                 UiLine(
                     kind = when (item.kind) {
                         AgentEventLogFormatter.TimelineKind.USER -> UiLineKind.USER
-                        AgentEventLogFormatter.TimelineKind.ASSISTANT -> UiLineKind.ASSISTANT
+                        AgentEventLogFormatter.TimelineKind.ASSISTANT -> if (item.stableKey in questionKeys) UiLineKind.QUESTION else UiLineKind.ASSISTANT
                         AgentEventLogFormatter.TimelineKind.SYSTEM -> UiLineKind.SYSTEM
                         AgentEventLogFormatter.TimelineKind.AGENT_EVENT -> UiLineKind.AGENT_EVENT
                     },
@@ -717,7 +778,7 @@ class AiToolWindowPanel(
             progressLine?.let { add(it) }
         }
         replaceTimelineModelIncrementally(targetLines)
-        renderPendingApprovals(history.pendingPermissions)
+        renderPendingApprovals(history.pendingPermissions, extractLatestPendingQuestion(history.messages))
         scrollToBottomIfNeeded(shouldStickToBottom)
         val currentTailKey = serverLines.lastOrNull()?.stableKey
         if (forceScrollToBottom && currentTailKey != null && currentTailKey != lastRenderedServerTailKey) {
@@ -747,6 +808,7 @@ class AiToolWindowPanel(
             latestTokenTotal = null
         }
         runtimeSelector.selectedItem = selectedRuntime
+        syncPlanModeCheckboxFromSession()
         updateTraceToggleState()
         updateSendButtonState()
 
@@ -763,7 +825,10 @@ class AiToolWindowPanel(
         updateStatusLabel()
     }
 
-    private fun renderPendingApprovals(pending: List<ChatPendingPermissionDto>) {
+    private fun renderPendingApprovals(
+        pending: List<ChatPendingPermissionDto>,
+        questionCard: AgentQuestionCard?
+    ) {
         approvalPanel.removeAll()
         pending.forEach { permission ->
             val row = JPanel(BorderLayout()).apply {
@@ -783,6 +848,35 @@ class AiToolWindowPanel(
                 add(actionButton("\u0420\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c \u0432\u0441\u0435\u0433\u0434\u0430") { submitApproval(permission, "approve_always") })
                 add(actionButton("\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c") { submitApproval(permission, "reject") })
             }, BorderLayout.EAST)
+            approvalPanel.add(row)
+        }
+        questionCard?.let { question ->
+            val row = JPanel(BorderLayout()).apply {
+                border = JBUI.Borders.compound(
+                    BorderFactory.createLineBorder(theme.containerBorder, 1, true),
+                    JBUI.Borders.empty(8)
+                )
+                background = theme.containerBackground
+                isOpaque = true
+            }
+            row.add(
+                JBLabel(question.title).apply {
+                    foreground = theme.primaryText
+                },
+                BorderLayout.CENTER
+            )
+            row.add(
+                JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
+                    isOpaque = false
+                    question.choices.forEach { choice ->
+                        add(actionButton(choice) { submitMessage(choice) })
+                    }
+                    if (question.allowCustomAnswer) {
+                        add(actionButton("Свой вариант") { inputArea.requestFocusInWindow() })
+                    }
+                },
+                BorderLayout.EAST
+            )
             approvalPanel.add(row)
         }
         approvalPanel.revalidate()
@@ -922,6 +1016,7 @@ class AiToolWindowPanel(
             "busy" -> UiStrings.statusBusy
             "retry" -> UiStrings.statusRetry
             "waiting_permission" -> UiStrings.statusWaitingApproval
+            "waiting_input" -> "Ожидание ответа"
             "error" -> UiStrings.statusError
             else -> UiStrings.statusIdle
         }
@@ -935,7 +1030,7 @@ class AiToolWindowPanel(
             runtimeText = runtimeText,
             activityText = activityText,
             connectionText = connectionText,
-            details = connectionDetails,
+            details = buildStatusDetails(connectionDetails, currentPlanModeEnabled()),
             contextPercent = latestContextPercent.takeIf { selectedRuntime == RuntimeMode.AGENT },
             tokenTotal = latestTokenTotal.takeIf { selectedRuntime == RuntimeMode.AGENT }
         )
@@ -1123,6 +1218,7 @@ class AiToolWindowPanel(
         response.sessionId?.takeIf { it.isNotBlank() }?.let { activeSession ->
             sessionId = activeSession
             sessionIdsByRuntime[selectedRuntime] = activeSession
+            syncPlanModeCheckboxFromSession()
             initialSessionRequested = true
             initialSessionReady = true
             if (selectedRuntime == RuntimeMode.AGENT) {
@@ -1310,6 +1406,7 @@ class AiToolWindowPanel(
     private enum class UiLineKind {
         USER,
         AGENT_EVENT,
+        QUESTION,
         ASSISTANT,
         SYSTEM,
         PROGRESS
@@ -1384,6 +1481,19 @@ class AiToolWindowPanel(
             }
             UiLineKind.ASSISTANT -> {
                 row.add(textArea, BorderLayout.CENTER)
+            }
+            UiLineKind.QUESTION -> {
+                val bubble = JPanel(BorderLayout()).apply {
+                    isOpaque = true
+                    background = theme.containerBackground
+                    border = JBUI.Borders.compound(
+                        RoundedLineBorder(theme.controlBorder, 1, 14),
+                        JBUI.Borders.empty()
+                    )
+                    add(textArea, BorderLayout.CENTER)
+                    maximumSize = Dimension(contentWidth, Int.MAX_VALUE)
+                }
+                row.add(bubble, BorderLayout.WEST)
             }
             UiLineKind.AGENT_EVENT -> {
                 val bubble = JPanel(BorderLayout()).apply {
@@ -1491,6 +1601,52 @@ class AiToolWindowPanel(
             }
         }
     }
+}
+
+internal data class AgentQuestionCard(
+    val title: String,
+    val choices: List<String>,
+    val allowCustomAnswer: Boolean
+)
+
+internal fun buildStatusDetails(connectionDetails: String?, planModeEnabled: Boolean): String? {
+    val chunks = mutableListOf<String>()
+    if (planModeEnabled) {
+        chunks += "Планирование"
+    }
+    connectionDetails?.takeIf { it.isNotBlank() }?.let { chunks += it }
+    return chunks.takeIf { it.isNotEmpty() }?.joinToString(" | ")
+}
+
+internal fun extractQuestionChoices(metadata: Map<String, Any?>): List<String> {
+    val rawChoices = metadata["choices"] as? List<*> ?: return emptyList()
+    return rawChoices
+        .mapNotNull { item ->
+            when (item) {
+                is String -> item.trim()
+                is Map<*, *> -> item["label"]?.toString()?.trim()
+                else -> item?.toString()?.trim()
+            }?.takeIf { it.isNotBlank() }
+        }
+        .distinctBy { it.lowercase() }
+}
+
+internal fun extractLatestPendingQuestion(messages: List<ru.sber.aitestplugin.model.ChatMessageDto>): AgentQuestionCard? {
+    val indexedQuestion = messages.withIndex().lastOrNull { (_, message) ->
+        message.role.equals("assistant", ignoreCase = true) && message.metadata["question"] == true
+    } ?: return null
+    val hasUserReplyAfter = messages.drop(indexedQuestion.index + 1).any { message ->
+        message.role.equals("user", ignoreCase = true)
+    }
+    if (hasUserReplyAfter) {
+        return null
+    }
+    val choices = extractQuestionChoices(indexedQuestion.value.metadata)
+    return AgentQuestionCard(
+        title = indexedQuestion.value.content,
+        choices = choices,
+        allowCustomAnswer = indexedQuestion.value.metadata["allowCustomAnswer"] != false
+    )
 }
 
 internal fun resolveRuntimeProjectRootValue(runtime: String, projectBasePath: String?): String {

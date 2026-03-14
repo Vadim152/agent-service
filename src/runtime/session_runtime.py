@@ -34,6 +34,8 @@ class SessionRuntime(Protocol):
         run_id: str,
         message_id: str,
         content: str,
+        display_text: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None: ...
 
     async def get_history(self, *, session_id: str, limit: int = 200) -> dict[str, Any]: ...
