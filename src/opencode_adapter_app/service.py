@@ -7,10 +7,42 @@ from pathlib import Path
 from typing import Any
 
 from opencode_adapter_app.errors import AdapterApiError
+from opencode_adapter_app.resource_discovery import (
+    collect_candidate_roots,
+    discover_resource_entries,
+    extract_agents,
+    extract_agents_from_raw_config,
+    extract_commands,
+    extract_commands_from_raw_config,
+    extract_mcps,
+    extract_mcps_from_raw_config,
+    extract_tool_details,
+    extract_tool_ids,
+    flatten_models_from_provider_payload,
+    flatten_models_from_raw_config,
+    load_json_file,
+    render_command_prompt,
+)
 from opencode_adapter_app.schemas import (
+    AdapterAgentDto,
+    AdapterAgentsResponse,
     AdapterApprovalDecisionRequest,
     AdapterApprovalDecisionResponse,
     AdapterApprovalStatusDto,
+    AdapterConfigSnapshotResponse,
+    AdapterCommandCatalogSummaryDto,
+    AdapterCommandDto,
+    AdapterCommandExecutionRequest,
+    AdapterCommandExecutionResponse,
+    AdapterCommandsResponse,
+    AdapterMcpDto,
+    AdapterMcpsResponse,
+    AdapterModelDto,
+    AdapterModelsResponse,
+    AdapterProviderDto,
+    AdapterProvidersResponse,
+    AdapterResourceEntryDto,
+    AdapterResourcesResponse,
     AdapterRunCancelResponse,
     AdapterRunCreateRequest,
     AdapterRunCreateResponse,
@@ -19,9 +51,13 @@ from opencode_adapter_app.schemas import (
     AdapterRunStatusResponse,
     AdapterSessionCommandRequest,
     AdapterSessionCommandResponse,
+    AdapterSessionDetailsResponse,
     AdapterSessionDiffResponse,
     AdapterSessionDto,
+    AdapterSessionEventsResponse,
     AdapterSessionEnsureRequest,
+    AdapterToolDto,
+    AdapterToolsResponse,
 )
 from opencode_adapter_app.state_store import OpenCodeAdapterStateStore, utcnow
 
@@ -36,10 +72,12 @@ class OpenCodeAdapterService:
         settings: Any,
         state_store: OpenCodeAdapterStateStore,
         process_supervisor: Any,
+        headless_server: Any | None = None,
     ) -> None:
         self._settings = settings
         self._state_store = state_store
         self._process_supervisor = process_supervisor
+        self._headless_server = headless_server
         self._id_counter = itertools.count(1)
 
     def ensure_session(self, request: AdapterSessionEnsureRequest) -> AdapterSessionDto:
@@ -459,6 +497,271 @@ class OpenCodeAdapterService:
             status_code=422,
         )
 
+    def list_commands(self, *, project_root: str | None = None) -> AdapterCommandsResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        raw_config = self._load_raw_config(normalized_project_root)
+        items = extract_commands_from_raw_config(raw_config)
+        if self._settings.runner_type != "raw_json_runner":
+            payload = self._server_request("GET", "/command", project_root=normalized_project_root)
+            items = extract_commands(payload)
+        updated_at = utcnow()
+        return AdapterCommandsResponse(
+            items=[AdapterCommandDto.model_validate(item) for item in items],
+            total=len(items),
+            updatedAt=updated_at,
+        )
+
+    def execute_command(
+        self,
+        command_id: str,
+        payload: AdapterCommandExecutionRequest,
+    ) -> AdapterCommandExecutionResponse:
+        commands = self.list_commands(project_root=payload.project_root).items
+        command = next((item for item in commands if item.name == command_id), None)
+        if command is None:
+            raise AdapterApiError(
+                "command_not_found",
+                f"Command not found: {command_id}",
+                status_code=404,
+            )
+        raw_command = command.model_dump(by_alias=True, mode="json")
+        prompt = render_command_prompt(
+            command=raw_command,
+            arguments=list(payload.arguments or []),
+            raw_input=payload.raw_input,
+        )
+        return AdapterCommandExecutionResponse(
+            commandId=command_id,
+            kind="prompt",
+            prompt=prompt,
+            result={"command": raw_command},
+            updatedAt=utcnow(),
+        )
+
+    def list_agents(self, *, project_root: str | None = None) -> AdapterAgentsResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        raw_config = self._load_raw_config(normalized_project_root)
+        items = extract_agents_from_raw_config(raw_config)
+        if self._settings.runner_type != "raw_json_runner":
+            payload = self._server_request("GET", "/agent", project_root=normalized_project_root)
+            items = extract_agents(payload)
+        return AdapterAgentsResponse(
+            items=[AdapterAgentDto.model_validate(item) for item in items],
+            total=len(items),
+            updatedAt=utcnow(),
+        )
+
+    def list_mcps(self, *, project_root: str | None = None) -> AdapterMcpsResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        raw_config = self._load_raw_config(normalized_project_root)
+        items = extract_mcps_from_raw_config(raw_config)
+        if self._settings.runner_type != "raw_json_runner":
+            payload = self._server_request("GET", "/mcp", project_root=normalized_project_root)
+            items = extract_mcps(payload)
+        return AdapterMcpsResponse(
+            items=[AdapterMcpDto.model_validate(item) for item in items],
+            total=len(items),
+            updatedAt=utcnow(),
+        )
+
+    def list_providers(self, *, project_root: str | None = None) -> AdapterProvidersResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        raw_config = self._load_raw_config(normalized_project_root)
+        providers, _ = flatten_models_from_raw_config(raw_config)
+        if self._settings.runner_type != "raw_json_runner":
+            payload = self._server_request("GET", "/provider", project_root=normalized_project_root)
+            providers, _ = flatten_models_from_provider_payload(payload)
+        return AdapterProvidersResponse(
+            items=[AdapterProviderDto.model_validate(item) for item in providers],
+            total=len(providers),
+            updatedAt=utcnow(),
+        )
+
+    def list_models(self, *, project_root: str | None = None) -> AdapterModelsResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        raw_config = self._load_raw_config(normalized_project_root)
+        _, models = flatten_models_from_raw_config(raw_config)
+        if self._settings.runner_type != "raw_json_runner":
+            payload = self._server_request("GET", "/provider", project_root=normalized_project_root)
+            _, models = flatten_models_from_provider_payload(payload)
+        return AdapterModelsResponse(
+            items=[AdapterModelDto.model_validate(item) for item in models],
+            total=len(models),
+            updatedAt=utcnow(),
+        )
+
+    def list_tools(self, *, project_root: str | None = None) -> AdapterToolsResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        items: list[dict[str, Any]] = []
+        if self._settings.runner_type != "raw_json_runner":
+            ids_payload = self._server_request("GET", "/experimental/tool/ids", project_root=normalized_project_root)
+            items = extract_tool_ids(ids_payload)
+            snapshot = self.get_config_snapshot(project_root=normalized_project_root)
+            provider_id, model_id = _split_model_identifier(snapshot.resolved_model)
+            if provider_id and model_id:
+                try:
+                    details_payload = self._server_request(
+                        "GET",
+                        "/experimental/tool",
+                        project_root=normalized_project_root,
+                        params={"provider": provider_id, "model": model_id},
+                    )
+                    detailed_items = extract_tool_details(details_payload)
+                    if detailed_items:
+                        items = detailed_items
+                except AdapterApiError:
+                    pass
+        return AdapterToolsResponse(
+            items=[AdapterToolDto.model_validate(item) for item in items],
+            total=len(items),
+            updatedAt=utcnow(),
+        )
+
+    def list_resources(
+        self,
+        kind: str,
+        *,
+        project_root: str | None = None,
+    ) -> AdapterResourcesResponse:
+        normalized_kind = str(kind or "").strip().lower()
+        if normalized_kind not in {"skill", "plugin", "hook"}:
+            raise AdapterApiError(
+                "validation_error",
+                f"Unsupported resource kind: {kind}",
+                status_code=422,
+            )
+        snapshot = self.get_config_snapshot(project_root=project_root)
+        roots = collect_candidate_roots(
+            project_root=project_root,
+            active_project_root=snapshot.active_project_root,
+            active_config_file=snapshot.active_config_file,
+            active_config_dir=snapshot.active_config_dir,
+        )
+        items = discover_resource_entries(normalized_kind, roots=roots)
+        return AdapterResourcesResponse(
+            kind=normalized_kind,
+            items=[AdapterResourceEntryDto.model_validate(item) for item in items],
+            total=len(items),
+            updatedAt=utcnow(),
+        )
+
+    def get_config_snapshot(self, *, project_root: str | None = None) -> AdapterConfigSnapshotResponse:
+        normalized_project_root = self._normalize_optional_project_root(project_root)
+        if normalized_project_root and self._settings.runner_type != "raw_json_runner" and self._headless_server is not None:
+            self._headless_server.ensure_started(project_root=normalized_project_root)
+        if self._headless_server is not None:
+            snapshot = self._headless_server.debug_snapshot()
+        else:
+            snapshot = {
+                "base_url": "",
+                "server_running": False,
+                "server_ready": False,
+                "active_project_root": normalized_project_root,
+                "active_config_file": self._settings.resolve_opencode_config_file(normalized_project_root),
+                "active_config_dir": self._settings.resolve_opencode_config_dir(normalized_project_root),
+                "resolved_providers": [],
+                "resolved_model": self._settings.resolve_forced_model(),
+                "raw_config": None,
+                "config_error": None,
+            }
+        if normalized_project_root and not snapshot.get("active_project_root"):
+            snapshot["active_project_root"] = normalized_project_root
+        if normalized_project_root and not snapshot.get("active_config_file"):
+            snapshot["active_config_file"] = self._settings.resolve_opencode_config_file(normalized_project_root)
+        if normalized_project_root and not snapshot.get("active_config_dir"):
+            snapshot["active_config_dir"] = self._settings.resolve_opencode_config_dir(normalized_project_root)
+        if snapshot.get("raw_config") is None:
+            raw_config = self._load_raw_config(normalized_project_root)
+            if raw_config is not None:
+                snapshot["raw_config"] = raw_config
+                configured_providers, configured_models = flatten_models_from_raw_config(raw_config)
+                if not snapshot.get("resolved_providers"):
+                    snapshot["resolved_providers"] = [item["providerId"] for item in configured_providers]
+                if not snapshot.get("resolved_model"):
+                    configured_model = str(raw_config.get("model") or "").strip()
+                    if configured_model:
+                        snapshot["resolved_model"] = configured_model
+                    elif configured_models:
+                        first = configured_models[0]
+                        snapshot["resolved_model"] = f"{first['providerId']}/{first['id']}"
+        return AdapterConfigSnapshotResponse.model_validate(
+            {
+                "activeProjectRoot": snapshot.get("active_project_root"),
+                "activeConfigFile": snapshot.get("active_config_file"),
+                "activeConfigDir": snapshot.get("active_config_dir"),
+                "resolvedProviders": snapshot.get("resolved_providers") or [],
+                "resolvedModel": snapshot.get("resolved_model"),
+                "rawConfig": snapshot.get("raw_config"),
+                "configError": snapshot.get("config_error"),
+                "serverRunning": bool(snapshot.get("server_running", False)),
+                "serverReady": bool(snapshot.get("server_ready", False)),
+                "baseUrl": str(snapshot.get("base_url") or ""),
+            }
+        )
+
+    def get_session_details(
+        self,
+        external_session_id: str,
+        *,
+        project_root: str | None = None,
+    ) -> AdapterSessionDetailsResponse:
+        mapping = self._require_session_mapping(external_session_id)
+        session = self.get_session(external_session_id)
+        commands = self.list_commands(project_root=project_root or mapping.get("project_root"))
+        mcps = self.list_mcps(project_root=project_root or mapping.get("project_root"))
+        agent_id = self._resolve_session_agent(mapping)
+        provider_id = str(mapping.get("last_provider_id") or "").strip() or None
+        model_id = str(mapping.get("last_model_id") or "").strip() or None
+        if not provider_id or not model_id:
+            configured_model = self.get_config_snapshot(
+                project_root=project_root or mapping.get("project_root")
+            ).resolved_model
+            configured_provider_id, configured_model_id = _split_model_identifier(configured_model)
+            provider_id = provider_id or configured_provider_id
+            model_id = model_id or configured_model_id
+        return AdapterSessionDetailsResponse(
+            session=session,
+            agentId=agent_id,
+            providerId=provider_id,
+            modelId=model_id,
+            pendingApprovalsCount=len(self._state_store.list_pending_approvals(str(mapping.get("last_backend_run_id") or "")))
+            if mapping.get("last_backend_run_id")
+            else 0,
+            mcpCount=mcps.total,
+            commandCatalog=AdapterCommandCatalogSummaryDto(
+                total=commands.total,
+                names=[item.name for item in commands.items],
+                updatedAt=commands.updated_at,
+            ),
+            updatedAt=_parse_iso_datetime(mapping.get("updated_at")) or utcnow(),
+        )
+
+    def list_session_events(
+        self,
+        external_session_id: str,
+        *,
+        after: int,
+        limit: int,
+    ) -> AdapterSessionEventsResponse:
+        mapping = self._require_session_mapping(external_session_id)
+        backend_run_id = str(mapping.get("last_backend_run_id") or "").strip()
+        if not backend_run_id:
+            return AdapterSessionEventsResponse(
+                externalSessionId=external_session_id,
+                items=[],
+                nextCursor=max(0, after),
+                hasMore=False,
+                updatedAt=_parse_iso_datetime(mapping.get("updated_at")) or utcnow(),
+            )
+        events = self.list_events(backend_run_id, after=after, limit=limit)
+        return AdapterSessionEventsResponse(
+            externalSessionId=external_session_id,
+            items=events.items,
+            nextCursor=events.next_cursor,
+            hasMore=events.has_more,
+            updatedAt=_parse_iso_datetime(mapping.get("updated_at")) or utcnow(),
+        )
+
     def _require_run(self, backend_run_id: str) -> dict[str, Any]:
         run = self._state_store.get_run(backend_run_id)
         if not run:
@@ -514,6 +817,12 @@ class OpenCodeAdapterService:
             raise AdapterApiError("validation_error", "projectRoot must not be empty", status_code=422)
         return str(Path(project_root).resolve())
 
+    def _normalize_optional_project_root(self, project_root: str | None) -> str | None:
+        raw = str(project_root or "").strip()
+        if not raw:
+            return None
+        return self._normalize_project_root(raw)
+
     def _resolve_provider_model(
         self,
         provider_id: str | None,
@@ -529,9 +838,68 @@ class OpenCodeAdapterService:
             return forced_provider or None, forced_model or None
         return resolved_provider, resolved_model
 
+    def _resolve_session_agent(self, mapping: dict[str, Any]) -> str | None:
+        backend_run_id = str(mapping.get("last_backend_run_id") or "").strip()
+        if backend_run_id:
+            run = self._state_store.get_run(backend_run_id) or {}
+            profile = str(run.get("profile") or run.get("config_profile") or "").strip()
+            if profile:
+                return self._settings.agent_map.get(profile, profile) or self._settings.default_agent
+        return self._settings.default_agent or None
+
+    def _load_raw_config(self, project_root: str | None) -> dict[str, Any] | None:
+        config_path = self._settings.resolve_opencode_config_file(project_root)
+        return load_json_file(config_path)
+
+    def _server_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        project_root: str | None = None,
+        params: dict[str, Any] | None = None,
+        json_payload: dict[str, Any] | None = None,
+        timeout_s: float = 30.0,
+    ) -> Any:
+        if self._headless_server is None or self._settings.runner_type == "raw_json_runner":
+            raise AdapterApiError(
+                "backend_unavailable",
+                "OpenCode headless server is not enabled for this adapter runtime.",
+                status_code=503,
+                retryable=False,
+            )
+        query = dict(params or {})
+        if project_root:
+            query.setdefault("directory", project_root)
+        try:
+            return self._headless_server.request(
+                method,
+                path,
+                params=query or None,
+                json_payload=json_payload,
+                timeout_s=timeout_s,
+            )
+        except Exception as exc:
+            raise AdapterApiError(
+                "backend_unavailable",
+                f"OpenCode server request failed: {exc}",
+                status_code=503,
+                retryable=True,
+            ) from exc
+
 
 def _normalized_path(path: str) -> str:
     return os.path.normcase(os.path.normpath(path))
+
+
+def _split_model_identifier(value: str | None) -> tuple[str | None, str | None]:
+    raw = str(value or "").strip()
+    if not raw or "/" not in raw:
+        return None, None
+    provider_id, model_id = raw.split("/", 1)
+    provider_id = provider_id.strip() or None
+    model_id = model_id.strip() or None
+    return provider_id, model_id
 
 
 def _parse_iso_datetime(value: str | datetime | None) -> datetime | None:

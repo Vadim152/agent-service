@@ -34,6 +34,7 @@ import ru.sber.aitestplugin.model.ChatSessionCreateRequestDto
 import ru.sber.aitestplugin.model.ChatSessionListItemDto
 import ru.sber.aitestplugin.model.ChatSessionStatusResponseDto
 import ru.sber.aitestplugin.model.ChatToolDecisionRequestDto
+import ru.sber.aitestplugin.model.OpenCodeCommandExecutionResponseDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
 import ru.sber.aitestplugin.model.UnmappedStepDto
 import ru.sber.aitestplugin.services.BackendClient
@@ -82,6 +83,7 @@ class AiToolWindowPanel(
 ) : JPanel(BorderLayout()) {
     private val logger = Logger.getInstance(AiToolWindowPanel::class.java)
     private val settings = AiTestPluginSettingsService.getInstance(project).settings
+    private val openCodeController = OpenCodeAgentCommandController(backendClient)
     private val refreshInFlight = AtomicBoolean(false)
     private val streamClient = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
     private val pollTimer = Timer(3000) { refreshControlPlaneAsync() }
@@ -89,24 +91,6 @@ class AiToolWindowPanel(
     private val autoScrollBottomThresholdPx = 48
     private val maxTraceLines = 30
     private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm").withZone(ZoneId.systemDefault())
-    private val supportedCommands = listOf("status", "diff", "compact", "abort", "help")
-    private val slashTemplates = listOf(
-        SlashTemplateItem(
-            key = "autotest",
-            title = "Сгенерировать автотест",
-            text = "Сгенерируй автотест по тесткейсу ниже и покажи preview feature + pipeline."
-        ),
-        SlashTemplateItem(
-            key = "unmapped",
-            title = "Проанализировать unmapped",
-            text = "Проанализируй unmapped шаги и предложи варианты сопоставления."
-        ),
-        SlashTemplateItem(
-            key = "save",
-            title = "Сгенерировать и сохранить",
-            text = "Сгенерируй автотест и предложи сохранить в targetPath=src/test/resources/features/generated.feature."
-        )
-    )
     private val sseIndexPattern = Regex("\"index\"\\s*:\\s*(\\d+)")
     private val theme = PluginUiTheme
 
@@ -354,6 +338,9 @@ class AiToolWindowPanel(
             connectionDetails = null
             updateStatusLabel()
             ensureSessionAsync(forceNew = false)
+            if (target == RuntimeMode.AGENT) {
+                refreshOpenCodeCatalogAsync()
+            }
         }
 
         statusLabel.foreground = theme.secondaryText
@@ -371,6 +358,10 @@ class AiToolWindowPanel(
 
     private fun submitInput(input: String) {
         if (input.isBlank()) return
+        if (selectedRuntime == RuntimeMode.AGENT && OpenCodeAgentCommandController.parseSlashInput(input) != null) {
+            submitOpenCodeSlashCommand(input)
+            return
+        }
         submitMessage(input)
     }
 
@@ -433,6 +424,41 @@ class AiToolWindowPanel(
         }
     }
 
+    private fun submitOpenCodeSlashCommand(input: String) {
+        if (isGenerating()) {
+            appendSystemLine("Дождитесь завершения текущего ответа.")
+            return
+        }
+        latestActivity = "busy"
+        upsertProgressLine("Выполняется OpenCode команда...")
+        updateSendButtonState()
+        updateStatusLabel()
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val projectRoot = currentRuntimeProjectRoot(selectedRuntime)
+            try {
+                val response = openCodeController.executeSlashCommand(sessionId, projectRoot, input)
+                SwingUtilities.invokeLater {
+                    inputArea.text = ""
+                    suppressSlashPopupUntilReset = false
+                    hideSlashPopup()
+                    forceScrollToBottom = true
+                    handleOpenCodeExecutionResponse(response)
+                    setConnectionState(ConnectionState.CONNECTED)
+                }
+                refreshControlPlaneAsync()
+            } catch (ex: Exception) {
+                logger.warn("Failed to execute OpenCode command", ex)
+                SwingUtilities.invokeLater {
+                    latestActivity = "idle"
+                    removeProgressLine()
+                    updateSendButtonState()
+                    updateStatusLabel()
+                    appendSystemLine("Не удалось выполнить OpenCode команду: ${ex.message}")
+                }
+            }
+        }
+    }
+
     private fun ensureSessionAsync(forceNew: Boolean) {
         if (forceNew) {
             initialSessionRequested = true
@@ -445,6 +471,7 @@ class AiToolWindowPanel(
                 setConnectionState(ConnectionState.CONNECTING, "\u0421\u0435\u0441\u0441\u0438\u044f ${active.take(8)}")
             }
             startEventStreamAsync(active)
+            refreshOpenCodeCatalogAsync()
             refreshControlPlaneAsync()
         }
     }
@@ -1007,6 +1034,13 @@ class AiToolWindowPanel(
             return
         }
 
+        if (selectedRuntime != RuntimeMode.AGENT) {
+            suppressSlashPopupUntilReset = false
+            lastSlashMatches = emptyList()
+            hideSlashPopup()
+            return
+        }
+
         val value = inputArea.text.trim()
         if (value.isBlank() || !value.startsWith("/")) {
             suppressSlashPopupUntilReset = false
@@ -1024,9 +1058,11 @@ class AiToolWindowPanel(
             return
         }
 
-        val matches = slashTemplates
-            .filter { it.key.startsWith(token) || it.title.lowercase().contains(token) }
-            .map { "/${it.key} - ${it.title}" }
+        val matchedCommands = openCodeController.filterSuggestions(token)
+        if (matchedCommands.isEmpty() && openCodeController.currentCatalog().isEmpty()) {
+            refreshOpenCodeCatalogAsync()
+        }
+        val matches = matchedCommands.map { OpenCodeAgentCommandController.renderSuggestion(it) }
         if (matches.isEmpty()) {
             lastSlashMatches = emptyList()
             hideSlashPopup()
@@ -1037,14 +1073,14 @@ class AiToolWindowPanel(
         }
 
         hideSlashPopup()
-        val step = object : BaseListPopupStep<String>("Шаблоны", matches) {
+        val step = object : BaseListPopupStep<String>("OpenCode", matches) {
             override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
                 if (selectedValue != null) {
                     val selectedKey = selectedValue.removePrefix("/").substringBefore(" ").trim()
-                    val templateText = slashTemplates.firstOrNull { it.key == selectedKey }?.text ?: ""
+                    val command = matchedCommands.firstOrNull { it.name == selectedKey } ?: return FINAL_CHOICE
                     isApplyingSlashSelection = true
                     suppressSlashPopupUntilReset = true
-                    inputArea.text = templateText
+                    inputArea.text = OpenCodeAgentCommandController.selectionText(command)
                     inputArea.caretPosition = inputArea.text.length
                     hideSlashPopup()
                 }
@@ -1067,6 +1103,169 @@ class AiToolWindowPanel(
         slashPopup = null
     }
 
+    private fun refreshOpenCodeCatalogAsync() {
+        if (selectedRuntime != RuntimeMode.AGENT) return
+        val projectRoot = currentRuntimeProjectRoot(RuntimeMode.AGENT)
+        if (projectRoot.isBlank()) return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            try {
+                openCodeController.refreshCatalog(projectRoot)
+            } catch (ex: Exception) {
+                logger.debug("Failed to refresh OpenCode command catalog", ex)
+            }
+        }
+    }
+
+    private fun handleOpenCodeExecutionResponse(response: OpenCodeCommandExecutionResponseDto) {
+        removeProgressLine()
+        updateSendButtonState()
+        updateStatusLabel()
+        response.sessionId?.takeIf { it.isNotBlank() }?.let { activeSession ->
+            sessionId = activeSession
+            sessionIdsByRuntime[selectedRuntime] = activeSession
+            initialSessionRequested = true
+            initialSessionReady = true
+            if (selectedRuntime == RuntimeMode.AGENT) {
+                startEventStreamAsync(activeSession)
+            }
+        }
+        when (response.kind.lowercase()) {
+            "run" -> {
+                latestActivity = "busy"
+                refreshControlPlaneAsync()
+            }
+            "native_action" -> handleNativeOpenCodeAction(response.nativeAction)
+            "catalog" -> showCommandCatalogPopup(response)
+            "status" -> showOpenCodeStatusPopup(response)
+            "resource" -> showOpenCodeResourcePopup(response)
+            else -> {
+                latestActivity = "idle"
+                val message = response.message?.takeIf { it.isNotBlank() }
+                    ?: response.result["message"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: "/${response.commandId} выполнена"
+                appendSystemLine(message)
+            }
+        }
+    }
+
+    private fun handleNativeOpenCodeAction(nativeAction: String?) {
+        when (nativeAction) {
+            "new_session" -> ensureSessionAsync(forceNew = true)
+            "open_history" -> {
+                showHistoryScreen()
+                loadSessionsHistoryAsync()
+            }
+            "open_editor" -> {
+                inputArea.requestFocusInWindow()
+                appendSystemLine("Команда /editor обрабатывается в IDE.")
+            }
+            else -> appendSystemLine("Команда выполнена.")
+        }
+    }
+
+    private fun showCommandCatalogPopup(response: OpenCodeCommandExecutionResponseDto) {
+        val commands = (response.result["commands"] as? List<*>)?.mapNotNull { item ->
+            item as? Map<*, *>
+        }.orEmpty()
+        if (commands.isEmpty()) {
+            appendSystemLine("Список команд пуст.")
+            return
+        }
+        val lines = commands.map { item ->
+            val name = item["name"]?.toString()?.trim().orEmpty()
+            val description = item["description"]?.toString()?.trim().orEmpty()
+            if (description.isBlank()) "/$name" else "/$name - $description"
+        }
+        showTextPopup("OpenCode команды", lines.joinToString("\n"))
+    }
+
+    private fun showOpenCodeStatusPopup(response: OpenCodeCommandExecutionResponseDto) {
+        val rawStatus = response.result["status"] as? Map<*, *> ?: run {
+            appendSystemLine("Статус OpenCode недоступен.")
+            return
+        }
+        val config = rawStatus["config"] as? Map<*, *> ?: emptyMap<String, Any?>()
+        val commandCatalog = rawStatus["commandCatalog"] as? Map<*, *> ?: emptyMap<String, Any?>()
+        val diffSummary = rawStatus["diffSummary"] as? Map<*, *> ?: emptyMap<String, Any?>()
+        val providerId = rawStatus["providerId"]?.toString()?.trim().orEmpty()
+        val modelId = rawStatus["modelId"]?.toString()?.trim().orEmpty()
+        val resolvedModel = config["resolvedModel"]?.toString()?.trim().orEmpty()
+        val effectiveModel = listOfNotNull(providerId.takeIf { it.isNotBlank() }, modelId.takeIf { it.isNotBlank() })
+            .joinToString("/")
+            .ifBlank { resolvedModel.ifBlank { "-" } }
+        val lines = listOf(
+            "Session: ${rawStatus["sessionId"] ?: "-"}",
+            "Activity: ${rawStatus["activity"] ?: "-"}",
+            "Action: ${rawStatus["currentAction"] ?: "-"}",
+            "Backend session: ${rawStatus["backendSessionId"] ?: "-"}",
+            "Agent: ${rawStatus["agentId"] ?: "-"}",
+            "Model: $effectiveModel",
+            "Config: ${config["activeConfigFile"] ?: "-"}",
+            "MCPs: ${rawStatus["mcpCount"] ?: 0}",
+            "Commands: ${commandCatalog["total"] ?: 0}",
+            "Diff: files=${diffSummary["files"] ?: 0}, +${diffSummary["additions"] ?: 0}, -${diffSummary["deletions"] ?: 0}"
+        )
+        showTextPopup("OpenCode status", lines.joinToString("\n"))
+    }
+
+    private fun showOpenCodeResourcePopup(response: OpenCodeCommandExecutionResponseDto) {
+        val resourceKind = response.result["resourceKind"]?.toString()?.ifBlank { "resource" } ?: "resource"
+        val items = (response.result["items"] as? List<*>)?.mapNotNull { item ->
+            item as? Map<*, *>
+        }.orEmpty()
+        if (items.isEmpty()) {
+            appendSystemLine("Список $resourceKind пуст.")
+            return
+        }
+        val labels = items.map { item ->
+            val name = item["name"]?.toString()?.trim().orEmpty()
+            val description = item["description"]?.toString()?.trim().orEmpty()
+            if (description.isBlank()) name else "$name - $description"
+        }
+        val step = object : BaseListPopupStep<String>(resourceKind.replaceFirstChar(Char::uppercase), labels) {
+            override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
+                val selectedIndex = labels.indexOf(selectedValue)
+                val item = items.getOrNull(selectedIndex) ?: return FINAL_CHOICE
+                val details = buildString {
+                    item["name"]?.let { appendLine("Name: $it") }
+                    item["path"]?.let { appendLine("Path: $it") }
+                    item["providerId"]?.let { appendLine("Provider: $it") }
+                    item["id"]?.let { appendLine("Id: $it") }
+                    item["transport"]?.let { appendLine("Transport: $it") }
+                    item["description"]?.let { appendLine("Description: $it") }
+                }.trim()
+                if (details.isNotBlank()) {
+                    showTextPopup(resourceKind, details)
+                }
+                return FINAL_CHOICE
+            }
+        }
+        val popup = JBPopupFactory.getInstance().createListPopup(step)
+        popup.show(RelativePoint.getSouthWestOf(inputArea))
+    }
+
+    private fun showTextPopup(title: String, text: String) {
+        val textArea = JBTextArea(text).apply {
+            isEditable = false
+            lineWrap = true
+            wrapStyleWord = true
+            rows = 12
+            columns = 56
+            border = JBUI.Borders.empty(8)
+            background = theme.containerBackground
+            foreground = theme.primaryText
+            caretColor = theme.primaryText
+        }
+        JBPopupFactory.getInstance()
+            .createComponentPopupBuilder(JBScrollPane(textArea), textArea)
+            .setRequestFocus(true)
+            .setResizable(true)
+            .setMovable(true)
+            .setTitle(title)
+            .createPopup()
+            .show(RelativePoint.getSouthWestOf(inputArea))
+    }
+
     private fun actionButton(text: String, action: () -> Unit): JButton = JButton(text).apply {
         foreground = theme.primaryText
         background = theme.controlBackground
@@ -1083,12 +1282,6 @@ class AiToolWindowPanel(
         val createdAt: Instant,
         val stableKey: String,
         val source: UiLineSource
-    )
-
-    private data class SlashTemplateItem(
-        val key: String,
-        val title: String,
-        val text: String
     )
 
     private enum class RuntimeMode(

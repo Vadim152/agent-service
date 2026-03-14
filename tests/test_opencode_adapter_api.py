@@ -144,6 +144,72 @@ def _wait_until(predicate, timeout_s: float = 5.0) -> None:
     raise AssertionError("Condition was not met before timeout")
 
 
+def _write_project_config(project_root: Path) -> None:
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "model": "gigachat/GigaChat-2",
+        "small_model": "gigachat/GigaChat",
+        "default_agent": "build",
+        "command": {
+            "init": {
+                "description": "Initialize current project",
+                "template": "Initialize this repository. $ARGUMENTS",
+                "source": "project",
+            },
+            "review": {
+                "description": "Review current repository changes",
+                "template": "Review the current changes. $ARGUMENTS",
+                "source": "project",
+            },
+        },
+        "agent": {
+            "build": {
+                "description": "Build agent",
+                "mode": "primary",
+                "permission": ["read", "write"],
+            }
+        },
+        "mcp": {
+            "filesystem": {
+                "enabled": True,
+                "transport": "stdio",
+                "description": "Filesystem MCP",
+            }
+        },
+        "provider": {
+            "gigachat": {
+                "name": "GigaChat",
+                "models": {
+                    "GigaChat": {
+                        "name": "GigaChat",
+                        "limit": {"context": 32768, "output": 8192},
+                    },
+                    "GigaChat-2": {
+                        "name": "GigaChat Lite",
+                        "limit": {"context": 32768, "output": 8192},
+                    },
+                },
+            }
+        },
+    }
+    project_root.joinpath("opencode.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
+    project_root.joinpath(".opencode", "skills", "demo-skill").mkdir(parents=True, exist_ok=True)
+    project_root.joinpath(".opencode", "skills", "demo-skill", "SKILL.md").write_text(
+        "# Demo skill\nPerforms a useful thing.\n",
+        encoding="utf-8",
+    )
+    project_root.joinpath(".opencode", "plugins").mkdir(parents=True, exist_ok=True)
+    project_root.joinpath(".opencode", "plugins", "local-plugin.md").write_text(
+        "# Local plugin\nPlugin description.\n",
+        encoding="utf-8",
+    )
+    project_root.joinpath(".opencode", "hooks").mkdir(parents=True, exist_ok=True)
+    project_root.joinpath(".opencode", "hooks", "pre-commit.sh").write_text(
+        "#!/bin/sh\necho hook\n",
+        encoding="utf-8",
+    )
+
+
 def test_create_run_reports_success_and_artifacts(tmp_path: Path) -> None:
     client = _build_client(tmp_path)
     project_root = tmp_path / "project"
@@ -609,3 +675,106 @@ def test_debug_runtime_reports_adapter_snapshot(tmp_path: Path) -> None:
     assert payload["resolvedProviders"] == []
     assert payload["resolvedModel"] is None
     assert payload["rawConfig"] is None
+
+
+def test_resource_catalog_and_config_snapshot_are_exposed(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_project_config(project_root)
+
+    commands = client.get("/v1/commands", params={"projectRoot": str(project_root)})
+    assert commands.status_code == 200
+    assert {item["name"] for item in commands.json()["items"]} == {"init", "review"}
+
+    providers = client.get("/v1/providers", params={"projectRoot": str(project_root)})
+    assert providers.status_code == 200
+    assert providers.json()["items"][0]["providerId"] == "gigachat"
+
+    models = client.get("/v1/models", params={"projectRoot": str(project_root)})
+    assert models.status_code == 200
+    assert {item["id"] for item in models.json()["items"]} == {"GigaChat", "GigaChat-2"}
+
+    agents = client.get("/v1/agents", params={"projectRoot": str(project_root)})
+    assert agents.status_code == 200
+    assert agents.json()["items"][0]["name"] == "build"
+
+    mcps = client.get("/v1/mcps", params={"projectRoot": str(project_root)})
+    assert mcps.status_code == 200
+    assert mcps.json()["items"][0]["name"] == "filesystem"
+
+    config = client.get("/v1/config", params={"projectRoot": str(project_root)})
+    assert config.status_code == 200
+    payload = config.json()
+    assert payload["activeConfigFile"] == str(project_root / "opencode.json")
+    assert payload["resolvedModel"] == "gigachat/GigaChat-2"
+    assert payload["resolvedProviders"] == ["gigachat"]
+
+    skills = client.get("/v1/resources/skill", params={"projectRoot": str(project_root)})
+    assert skills.status_code == 200
+    assert skills.json()["items"][0]["name"] == "demo-skill"
+
+    plugins = client.get("/v1/resources/plugin", params={"projectRoot": str(project_root)})
+    assert plugins.status_code == 200
+    assert plugins.json()["items"][0]["name"] == "local-plugin.md"
+
+    hooks = client.get("/v1/resources/hook", params={"projectRoot": str(project_root)})
+    assert hooks.status_code == 200
+    assert hooks.json()["items"][0]["name"] == "pre-commit.sh"
+
+
+def test_command_execute_session_details_and_session_events_are_exposed(tmp_path: Path) -> None:
+    client = _build_client(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_project_config(project_root)
+
+    ensured = client.post(
+        "/v1/sessions",
+        json={
+            "externalSessionId": "session-opencode",
+            "projectRoot": str(project_root),
+            "source": "ide-plugin",
+            "profile": "agent",
+        },
+    )
+    assert ensured.status_code == 200
+
+    executed = client.post(
+        "/v1/commands/review/execute",
+        json={
+            "projectRoot": str(project_root),
+            "sessionId": "session-opencode",
+            "rawInput": "focus on tests",
+        },
+    )
+    assert executed.status_code == 200
+    assert executed.json()["kind"] == "prompt"
+    assert "focus on tests" in executed.json()["prompt"]
+
+    created = client.post(
+        "/v1/runs",
+        json={
+            "runId": "run-opencode-review",
+            "sessionId": "session-opencode",
+            "projectRoot": str(project_root),
+            "prompt": "review the repo",
+        },
+    )
+    assert created.status_code == 200
+    backend_run_id = created.json()["backendRunId"]
+    _wait_until(lambda: client.get(f"/v1/runs/{backend_run_id}").json()["status"] == "succeeded")
+
+    details = client.get("/v1/sessions/session-opencode/details", params={"projectRoot": str(project_root)})
+    assert details.status_code == 200
+    details_payload = details.json()
+    assert details_payload["agentId"] == "build"
+    assert details_payload["providerId"] == "gigachat"
+    assert details_payload["modelId"] == "GigaChat-2"
+    assert details_payload["commandCatalog"]["total"] == 2
+
+    events = client.get("/v1/sessions/session-opencode/events", params={"after": 0, "limit": 50})
+    assert events.status_code == 200
+    event_types = [item["eventType"] for item in events.json()["items"]]
+    assert "run.started" in event_types
+    assert "run.finished" in event_types

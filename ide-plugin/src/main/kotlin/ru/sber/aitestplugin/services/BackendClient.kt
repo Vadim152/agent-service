@@ -25,6 +25,18 @@ import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
 import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
+import ru.sber.aitestplugin.model.OpenCodeAgentsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeCommandExecutionRequestDto
+import ru.sber.aitestplugin.model.OpenCodeCommandExecutionResponseDto
+import ru.sber.aitestplugin.model.OpenCodeCommandsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeConfigSnapshotDto
+import ru.sber.aitestplugin.model.OpenCodeMcpsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeModelsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeProvidersResponseDto
+import ru.sber.aitestplugin.model.OpenCodeResourcesResponseDto
+import ru.sber.aitestplugin.model.OpenCodeSessionEventsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeSessionStatusDto
+import ru.sber.aitestplugin.model.OpenCodeToolsResponseDto
 import ru.sber.aitestplugin.model.ReviewLearningRequestDto
 import ru.sber.aitestplugin.model.ReviewLearningResponseDto
 import ru.sber.aitestplugin.model.ScanStepsResponseDto
@@ -85,6 +97,28 @@ interface BackendClient {
     fun executeChatCommand(sessionId: String, request: ChatCommandRequestDto): ChatCommandResponseDto
 
     fun submitChatToolDecision(sessionId: String, request: ChatToolDecisionRequestDto): ChatToolDecisionResponseDto
+
+    fun listOpenCodeCommands(projectRoot: String): OpenCodeCommandsResponseDto
+
+    fun listOpenCodeAgents(projectRoot: String): OpenCodeAgentsResponseDto
+
+    fun listOpenCodeMcps(projectRoot: String): OpenCodeMcpsResponseDto
+
+    fun listOpenCodeProviders(projectRoot: String): OpenCodeProvidersResponseDto
+
+    fun listOpenCodeModels(projectRoot: String): OpenCodeModelsResponseDto
+
+    fun listOpenCodeTools(projectRoot: String): OpenCodeToolsResponseDto
+
+    fun listOpenCodeResources(kind: String, projectRoot: String): OpenCodeResourcesResponseDto
+
+    fun getOpenCodeConfig(projectRoot: String): OpenCodeConfigSnapshotDto
+
+    fun getOpenCodeSessionStatus(sessionId: String): OpenCodeSessionStatusDto
+
+    fun getOpenCodeSessionEvents(sessionId: String, after: Int = 0, limit: Int = 200): OpenCodeSessionEventsResponseDto
+
+    fun executeOpenCodeCommand(commandId: String, request: OpenCodeCommandExecutionRequestDto): OpenCodeCommandExecutionResponseDto
 
     fun listGenerationRules(projectRoot: String): GenerationRuleListResponseDto
 

@@ -173,6 +173,8 @@ class OpenCodeRunDriver:
             return
         cursor = run.get("sync_cursor", 0)
         session_id = str(run.get("session_id") or "").strip() or None
+        run_input = dict(run.get("input") or {})
+        run_command_id = str(run_input.get("commandId") or run_input.get("command_id") or "").strip() or None
         has_more = True
         next_cursor = cursor
         while has_more:
@@ -198,15 +200,23 @@ class OpenCodeRunDriver:
                 if not isinstance(item, dict):
                     continue
                 event_type = str(item.get("eventType") or item.get("type") or "run.progress")
-                event_payload = dict(item.get("payload") or {})
+                raw_payload = dict(item.get("payload") or {})
+                event_payload = dict(raw_payload)
                 event_payload.setdefault("runId", run_id)
                 event_payload.setdefault("backendRunId", backend_run_id)
+                event_payload.setdefault("source", "opencode-adapter")
+                event_payload.setdefault("rawType", event_type)
+                event_payload.setdefault("rawPayload", raw_payload)
+                command_id = str(raw_payload.get("commandId") or run_command_id or "").strip() or None
+                if command_id:
+                    event_payload.setdefault("commandId", command_id)
                 self._run_state_store.append_event(run_id, event_type, event_payload)
                 if session_id:
+                    session_payload = {"sessionId": session_id, **event_payload}
                     self._session_state_store.append_event(
                         session_id,
                         f"opencode.{event_type}",
-                        {"sessionId": session_id, **event_payload},
+                        session_payload,
                     )
             if not items:
                 break
@@ -690,6 +700,69 @@ class OpenCodeSessionRuntime:
                 active_run_backend="opencode-adapter",
             )
             self.state_store.append_event(session_id, "opencode.run_created", {"sessionId": session_id, "runId": created["run_id"]})
+
+    async def dispatch_command(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        message_id: str,
+        command_id: str,
+        prompt: str,
+        display_text: str,
+        raw_input: str | None = None,
+    ) -> None:
+        if self._run_service is None:
+            raise ChatRuntimeError("OpenCode runtime is not initialized", status_code=503)
+        if not str(prompt or "").strip():
+            raise ChatRuntimeError("Resolved OpenCode command prompt is empty", status_code=422)
+        lock = self._session_lock(session_id)
+        async with lock:
+            session = self._require_session(session_id)
+            self.state_store.append_message(
+                session_id,
+                role="user",
+                content=display_text,
+                run_id=run_id,
+                message_id=message_id,
+                metadata={"commandId": command_id, "rawInput": raw_input or ""},
+            )
+            self.state_store.append_event(
+                session_id,
+                "command.received",
+                {"sessionId": session_id, "runId": run_id, "command": command_id, "rawInput": raw_input or ""},
+            )
+            created = self._run_service.create_run(
+                plugin="opencode",
+                project_root=str(session.get("project_root", "")),
+                input_payload={
+                    "prompt": prompt,
+                    "messageId": message_id,
+                    "commandId": command_id,
+                    "displayText": display_text,
+                    "rawInput": raw_input,
+                    "backendSessionId": session.get("backend_session_id"),
+                },
+                session_id=session_id,
+                profile=str(session.get("profile", "quick")),
+                source=str(session.get("source", "ide-plugin")),
+                priority="normal",
+                idempotency_key=None,
+                requested_run_id=run_id,
+            )
+            self.state_store.update_session(
+                session_id,
+                activity="busy",
+                current_action=f"Executing /{command_id}",
+                active_run_id=created["run_id"],
+                active_run_status=created["status"],
+                active_run_backend="opencode-adapter",
+            )
+            self.state_store.append_event(
+                session_id,
+                "opencode.command.executed",
+                {"sessionId": session_id, "runId": created["run_id"], "command": command_id},
+            )
 
     async def get_history(self, *, session_id: str, limit: int = 200) -> dict[str, Any]:
         session = self._require_session(session_id)

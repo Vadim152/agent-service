@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from api.routes_opencode import router as opencode_router
 from api.routes_policy import router as policy_router
 from api.routes_runs import router as runs_router
 from api.routes_sessions import router as sessions_router
@@ -33,6 +34,26 @@ class _FakeOpenCodeAdapter:
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, object]] = {}
         self.sessions: dict[str, dict[str, object]] = {}
+        self.command_items = [
+            {
+                "name": "init",
+                "description": "Initialize project",
+                "source": "project",
+                "template": "Initialize the project. $ARGUMENTS",
+                "subtask": False,
+                "hints": [],
+                "raw": {"name": "init"},
+            },
+            {
+                "name": "review",
+                "description": "Review project changes",
+                "source": "project",
+                "template": "Review current changes. $ARGUMENTS",
+                "subtask": False,
+                "hints": [],
+                "raw": {"name": "review"},
+            },
+        ]
 
     def ensure_session(self, payload: dict[str, object]) -> dict[str, object]:
         external_session_id = str(payload.get("externalSessionId") or "")
@@ -46,6 +67,8 @@ class _FakeOpenCodeAdapter:
                 "lastBackendRunId": None,
                 "status": "idle",
                 "currentAction": "Idle",
+                "lastProviderId": "gigachat",
+                "lastModelId": "GigaChat-2",
                 "updatedAt": "2026-03-09T00:00:00+00:00",
             }
             self.sessions[external_session_id] = existing
@@ -102,6 +125,174 @@ class _FakeOpenCodeAdapter:
                 "updatedAt": "2026-03-09T00:00:03+00:00",
             }
         raise AssertionError(f"Unsupported fake session command: {command}")
+
+    def list_commands(self, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "items": list(self.command_items),
+            "total": len(self.command_items),
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def execute_command(self, command_id: str, payload: dict[str, object]) -> dict[str, object]:
+        command = next((item for item in self.command_items if item["name"] == command_id), None)
+        if command is None:
+            raise OpenCodeAdapterError(
+                f"Command not found: {command_id}",
+                status_code=404,
+                code="command_not_found",
+            )
+        raw_input = str(payload.get("rawInput") or "").strip()
+        prompt = str(command.get("template") or "").replace("$ARGUMENTS", raw_input).strip()
+        return {
+            "commandId": command_id,
+            "kind": "prompt",
+            "prompt": prompt,
+            "result": {"command": dict(command)},
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_agents(self, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "items": [
+                {
+                    "name": "build",
+                    "description": "Build agent",
+                    "mode": "primary",
+                    "native": False,
+                    "permissionCount": 2,
+                    "raw": {"name": "build"},
+                }
+            ],
+            "total": 1,
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_mcps(self, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "items": [
+                {
+                    "name": "filesystem",
+                    "enabled": True,
+                    "transport": "stdio",
+                    "description": "Filesystem MCP",
+                    "raw": {"name": "filesystem"},
+                }
+            ],
+            "total": 1,
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_providers(self, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "items": [
+                {
+                    "providerId": "gigachat",
+                    "name": "GigaChat",
+                    "modelCount": 1,
+                    "defaultModelId": "GigaChat-2",
+                    "raw": {"id": "gigachat"},
+                }
+            ],
+            "total": 1,
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_models(self, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "items": [
+                {
+                    "id": "GigaChat-2",
+                    "providerId": "gigachat",
+                    "name": "GigaChat Lite",
+                    "status": "active",
+                    "limit": {"context": 32768, "output": 8192},
+                    "capabilities": {},
+                    "raw": {"id": "GigaChat-2"},
+                }
+            ],
+            "total": 1,
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_tools(self, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "items": [{"id": "read", "name": "read", "description": "Read files", "raw": {"id": "read"}}],
+            "total": 1,
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_resources(self, kind: str, *, project_root: str | None = None) -> dict[str, object]:
+        _ = project_root
+        return {
+            "kind": kind,
+            "items": [
+                {
+                    "kind": kind,
+                    "name": f"sample-{kind}",
+                    "path": f"/tmp/{kind}/sample",
+                    "entryType": "directory",
+                    "description": f"Sample {kind}",
+                    "sourceRoot": "/tmp",
+                    "metadata": {},
+                }
+            ],
+            "total": 1,
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def get_config_snapshot(self, *, project_root: str | None = None) -> dict[str, object]:
+        return {
+            "activeProjectRoot": project_root or "/tmp/project",
+            "activeConfigFile": f"{project_root or '/tmp/project'}/opencode.json",
+            "activeConfigDir": f"{project_root or '/tmp/project'}/.opencode",
+            "resolvedProviders": ["gigachat"],
+            "resolvedModel": "gigachat/GigaChat-2",
+            "rawConfig": {"model": "gigachat/GigaChat-2"},
+            "configError": None,
+            "serverRunning": False,
+            "serverReady": False,
+            "baseUrl": "",
+        }
+
+    def get_session_details(self, external_session_id: str, *, project_root: str | None = None) -> dict[str, object]:
+        session = self.sessions[external_session_id]
+        _ = project_root
+        return {
+            "session": dict(session),
+            "agentId": "build",
+            "providerId": "gigachat",
+            "modelId": "GigaChat-2",
+            "pendingApprovalsCount": 0,
+            "mcpCount": 1,
+            "commandCatalog": {"total": len(self.command_items), "names": ["init", "review"], "updatedAt": "2026-03-09T00:00:03+00:00"},
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
+
+    def list_session_events(self, external_session_id: str, *, after: int | None = None, limit: int | None = None) -> dict[str, object]:
+        session = self.sessions[external_session_id]
+        backend_run_id = str(session.get("lastBackendRunId") or "")
+        if not backend_run_id:
+            return {
+                "externalSessionId": external_session_id,
+                "items": [],
+                "nextCursor": int(after or 0),
+                "hasMore": False,
+                "updatedAt": "2026-03-09T00:00:03+00:00",
+            }
+        payload = self.list_events(backend_run_id, after=after, limit=limit)
+        return {
+            "externalSessionId": external_session_id,
+            "items": payload["items"],
+            "nextCursor": payload["nextCursor"],
+            "hasMore": payload["hasMore"],
+            "updatedAt": "2026-03-09T00:00:03+00:00",
+        }
 
     def create_run(self, payload: dict[str, object]) -> dict[str, object]:
         backend_run_id = f"oc-{len(self.runs) + 1}"
@@ -278,6 +469,7 @@ def _build_app(adapter: _FakeOpenCodeAdapter | None = None) -> FastAPI:
     app.state.session_runtime_registry = registry
     app.state.opencode_adapter_client = adapter
     app.include_router(sessions_router)
+    app.include_router(opencode_router)
     app.include_router(policy_router)
     app.include_router(runs_router)
     return app
@@ -482,3 +674,90 @@ def test_terminal_message_falls_back_to_current_action_error() -> None:
     message = OpenCodeRunDriver._build_terminal_message(run, status_payload)
 
     assert message == "Error: self signed certificate in certificate chain"
+
+
+def test_opencode_agent_api_lists_catalog_and_alias_help() -> None:
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    commands = client.get("/opencode/commands", params={"projectRoot": "/tmp/project"})
+    assert commands.status_code == 200
+    assert {item["name"] for item in commands.json()["items"]} == {"init", "review"}
+
+    help_payload = client.post(
+        "/opencode/commands/help/execute",
+        json={"sessionId": session_id, "projectRoot": "/tmp/project"},
+    )
+    assert help_payload.status_code == 200
+    names = {item["name"] for item in help_payload.json()["result"]["commands"]}
+    assert {"help", "review", "init", "models", "status", "agents"}.issubset(names)
+
+
+def test_opencode_agent_api_status_aggregates_runtime_and_adapter_details() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.get(f"/opencode/sessions/{session_id}/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["backendSessionId"].startswith("session-")
+    assert payload["agentId"] == "build"
+    assert payload["providerId"] == "gigachat"
+    assert payload["modelId"] == "GigaChat-2"
+    assert payload["config"]["resolvedModel"] == "gigachat/GigaChat-2"
+    assert payload["commandCatalog"]["total"] == 2
+
+
+def test_opencode_agent_api_execute_review_dispatches_run_and_preserves_slash_text() -> None:
+    app = _build_app()
+    client = TestClient(app)
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.post(
+        "/opencode/commands/review/execute",
+        json={"sessionId": session_id, "projectRoot": "/tmp/project", "rawInput": "focus on tests"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "run"
+    run_id = payload["runId"]
+    _wait_until(lambda: client.get(f"/sessions/{session_id}/status").json().get("activeRunStatus") == "succeeded")
+
+    history = client.get(f"/sessions/{session_id}/history").json()
+    assert any(item["content"] == "/review focus on tests" for item in history["messages"])
+    enriched_events = [
+        item for item in history["events"]
+        if item["eventType"] == "opencode.run.progress" and item["payload"].get("source") == "opencode-adapter"
+    ]
+    assert enriched_events
+    assert any(item["payload"].get("rawType") == "run.progress" for item in enriched_events)
+    assert any(item["payload"].get("commandId") == "review" for item in history["events"] if item["eventType"].startswith("opencode."))
+
+    run_payload = app.state.run_state_store.get_job(run_id)
+    assert run_payload is not None
+    assert run_payload["input"]["commandId"] == "review"
+
+
+def test_opencode_agent_api_resource_and_native_aliases_are_exposed() -> None:
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    models = client.post(
+        "/opencode/commands/models/execute",
+        json={"sessionId": session_id, "projectRoot": "/tmp/project"},
+    )
+    assert models.status_code == 200
+    assert models.json()["kind"] == "resource"
+    assert models.json()["result"]["resourceKind"] == "model"
+    assert models.json()["result"]["items"][0]["id"] == "GigaChat-2"
+
+    native_action = client.post(
+        "/opencode/commands/new/execute",
+        json={"sessionId": session_id, "projectRoot": "/tmp/project"},
+    )
+    assert native_action.status_code == 200
+    assert native_action.json()["kind"] == "native_action"
+    assert native_action.json()["nativeAction"] == "new_session"

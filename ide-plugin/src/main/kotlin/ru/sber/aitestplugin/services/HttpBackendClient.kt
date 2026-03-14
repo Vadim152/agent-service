@@ -37,6 +37,18 @@ import ru.sber.aitestplugin.model.GenerationRuleListResponseDto
 import ru.sber.aitestplugin.model.GenerationRulePatchRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewRequestDto
 import ru.sber.aitestplugin.model.GenerationResolvePreviewResponseDto
+import ru.sber.aitestplugin.model.OpenCodeAgentsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeCommandExecutionRequestDto
+import ru.sber.aitestplugin.model.OpenCodeCommandExecutionResponseDto
+import ru.sber.aitestplugin.model.OpenCodeCommandsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeConfigSnapshotDto
+import ru.sber.aitestplugin.model.OpenCodeMcpsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeModelsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeProvidersResponseDto
+import ru.sber.aitestplugin.model.OpenCodeResourcesResponseDto
+import ru.sber.aitestplugin.model.OpenCodeSessionEventsResponseDto
+import ru.sber.aitestplugin.model.OpenCodeSessionStatusDto
+import ru.sber.aitestplugin.model.OpenCodeToolsResponseDto
 import ru.sber.aitestplugin.model.ReviewLearningRequestDto
 import ru.sber.aitestplugin.model.ReviewLearningResponseDto
 import ru.sber.aitestplugin.model.ScanStepsRequestDto
@@ -234,6 +246,65 @@ class HttpBackendClient(
         "/policy/approvals/${request.permissionId}/decision",
         mapOf("decision" to if (request.decision.lowercase() == "reject") "deny" else "approve")
     )
+
+    override fun listOpenCodeCommands(projectRoot: String): OpenCodeCommandsResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/commands?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listOpenCodeAgents(projectRoot: String): OpenCodeAgentsResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/agents?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listOpenCodeMcps(projectRoot: String): OpenCodeMcpsResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/mcps?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listOpenCodeProviders(projectRoot: String): OpenCodeProvidersResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/providers?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listOpenCodeModels(projectRoot: String): OpenCodeModelsResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/models?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listOpenCodeTools(projectRoot: String): OpenCodeToolsResponseDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/tools?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun listOpenCodeResources(kind: String, projectRoot: String): OpenCodeResourcesResponseDto {
+        val encodedKind = URLEncoder.encode(kind, StandardCharsets.UTF_8)
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/resources/$encodedKind?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun getOpenCodeConfig(projectRoot: String): OpenCodeConfigSnapshotDto {
+        val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)
+        return get("/opencode/config?projectRoot=$encodedProjectRoot")
+    }
+
+    override fun getOpenCodeSessionStatus(sessionId: String): OpenCodeSessionStatusDto =
+        get("/opencode/sessions/$sessionId/status")
+
+    override fun getOpenCodeSessionEvents(
+        sessionId: String,
+        after: Int,
+        limit: Int
+    ): OpenCodeSessionEventsResponseDto =
+        get("/opencode/sessions/$sessionId/events?after=${after.coerceAtLeast(0)}&limit=${limit.coerceIn(1, 5000)}")
+
+    override fun executeOpenCodeCommand(
+        commandId: String,
+        request: OpenCodeCommandExecutionRequestDto
+    ): OpenCodeCommandExecutionResponseDto {
+        val encodedCommandId = URLEncoder.encode(commandId, StandardCharsets.UTF_8)
+        return post("/opencode/commands/$encodedCommandId/execute", request)
+    }
 
     override fun listGenerationRules(projectRoot: String): GenerationRuleListResponseDto {
         val encodedProjectRoot = URLEncoder.encode(projectRoot, StandardCharsets.UTF_8)

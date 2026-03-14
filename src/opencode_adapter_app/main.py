@@ -24,7 +24,12 @@ def create_app(settings: AdapterSettings | None = None) -> FastAPI:
     state_store = OpenCodeAdapterStateStore.from_settings(resolved)
     headless_server = OpenCodeHeadlessServer(settings=resolved)
     supervisor = OpenCodeProcessSupervisor(settings=resolved, state_store=state_store, headless_server=headless_server)
-    service = OpenCodeAdapterService(settings=resolved, state_store=state_store, process_supervisor=supervisor)
+    service = OpenCodeAdapterService(
+        settings=resolved,
+        state_store=state_store,
+        process_supervisor=supervisor,
+        headless_server=headless_server,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "gigachat/GigaChat-Max",
+  "model": "gigachat/GigaChat-2",
   "small_model": "gigachat/GigaChat",
   "default_agent": "build",
   "provider": {
@@ -14,6 +14,13 @@
       "models": {
         "GigaChat": {
           "name": "GigaChat",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          }
+        },
+        "GigaChat-2": {
+          "name": "GigaChat Lite",
           "limit": {
             "context": 32768,
             "output": 8192

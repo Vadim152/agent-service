@@ -154,4 +154,26 @@ class AgentEventLogFormatterTest {
         assertEquals(1, lines.size)
         assertTrue(lines.first().text.contains("Running gradle test for PurchaseTest"))
     }
+
+    @Test
+    fun `buildAgentEventLines reads rawPayload details from enriched session events`() {
+        val now = Instant.parse("2026-03-05T10:00:00Z")
+        val events = listOf(
+            ChatEventDto(
+                "opencode.run.progress",
+                mapOf(
+                    "source" to "opencode-adapter",
+                    "rawType" to "run.progress",
+                    "rawPayload" to mapOf("message" to "Applying patch to src/App.kt")
+                ),
+                now,
+                0
+            )
+        )
+
+        val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
+
+        assertEquals(1, lines.size)
+        assertTrue(lines.first().text.contains("Applying patch to src/App.kt"))
+    }
 }

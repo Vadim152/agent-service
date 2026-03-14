@@ -135,3 +135,56 @@ class HttpOpenCodeAdapterClient:
             f"/v1/sessions/{external_session_id}/commands",
             json_payload={"command": command},
         )
+
+    def list_commands(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/commands", params=params)
+
+    def execute_command(self, command_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", f"/v1/commands/{command_id}/execute", json_payload=payload)
+
+    def list_agents(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/agents", params=params)
+
+    def list_mcps(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/mcps", params=params)
+
+    def list_providers(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/providers", params=params)
+
+    def list_models(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/models", params=params)
+
+    def list_tools(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/tools", params=params)
+
+    def list_resources(self, kind: str, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", f"/v1/resources/{kind}", params=params)
+
+    def get_config_snapshot(self, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", "/v1/config", params=params)
+
+    def get_session_details(self, external_session_id: str, *, project_root: str | None = None) -> dict[str, Any]:
+        params = {"projectRoot": project_root} if project_root else None
+        return self._request("GET", f"/v1/sessions/{external_session_id}/details", params=params)
+
+    def list_session_events(
+        self,
+        external_session_id: str,
+        *,
+        after: int | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if after is not None:
+            params["after"] = after
+        if limit is not None:
+            params["limit"] = limit
+        return self._request("GET", f"/v1/sessions/{external_session_id}/events", params=params or None)

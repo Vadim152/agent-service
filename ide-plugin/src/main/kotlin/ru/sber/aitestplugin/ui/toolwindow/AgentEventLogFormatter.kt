@@ -143,20 +143,26 @@ internal object AgentEventLogFormatter {
     )
 
     private fun artifactMessage(payload: Map<String, Any?>): String {
-        val artifact = payload["artifact"] as? Map<*, *>
+        val artifact = payload["artifact"] as? Map<*, *> ?: ((payload["rawPayload"] as? Map<*, *>)?.get("artifact") as? Map<*, *>)
         val artifactName = artifact?.get("name")?.toString()?.trim().orEmpty()
         return if (artifactName.isNotBlank()) "Updated $artifactName" else "Published changes"
     }
 
     private fun commandMessage(payload: Map<String, Any?>): String {
+        val rawPayload = payload["rawPayload"] as? Map<*, *>
         val command = payload["command"]?.toString()?.trim().orEmpty()
+            .ifBlank { rawPayload?.get("command")?.toString()?.trim().orEmpty() }
+            .ifBlank { payload["commandId"]?.toString()?.trim().orEmpty() }
         return if (command.isNotBlank()) "/$command" else "Tool command executed"
     }
 
     private fun resolveDetail(payload: Map<String, Any?>): String {
         val message = payload["message"]?.toString()?.trim().orEmpty()
         val currentAction = payload["currentAction"]?.toString()?.trim().orEmpty()
-        val nestedPayload = payload["payload"] as? Map<*, *>
+        val rawPayload = payload["rawPayload"] as? Map<*, *>
+        val rawMessage = rawPayload?.get("message")?.toString()?.trim().orEmpty()
+        val rawCurrentAction = rawPayload?.get("currentAction")?.toString()?.trim().orEmpty()
+        val nestedPayload = payload["payload"] as? Map<*, *> ?: rawPayload
         val nestedType = nestedPayload?.get("type")?.toString()?.trim().orEmpty()
         val nestedProperties = nestedPayload?.get("properties") as? Map<*, *>
         val nestedStatus = nestedProperties?.get("status") as? Map<*, *>
@@ -174,6 +180,8 @@ internal object AgentEventLogFormatter {
             nestedStatusMessage.isNotBlank() -> nestedStatusMessage
             message.isNotBlank() -> message
             currentAction.isNotBlank() -> currentAction
+            rawMessage.isNotBlank() -> rawMessage
+            rawCurrentAction.isNotBlank() -> rawCurrentAction
             nestedPartType.isNotBlank() -> nestedPartType
             else -> nestedType
         }
