@@ -12,11 +12,20 @@ This repository ships local OpenCode-compatible skills in [`.opencode/skills`](C
 
 Use normal agent-mode prompts. Examples:
 
-- `Сгенерируй cucumber feature для нового сценария авторизации`
-- `Добавь java step definitions для этих шагов cucumber`
-- `Почини undefined cucumber steps в этом feature`
+- `generate a cucumber feature for a new login scenario`
+- `create a cucumber autotest from this testcase`
+- `assemble a feature from these cucumber steps`
+- `add java step definitions for these cucumber steps`
+- `repair undefined cucumber steps in this feature`
 
 The skills are descriptive guidance for the OpenCode agent. They are not separate slash commands.
+
+`cucumber-feature-author` follows the repository's current non-agent feature-generation pipeline:
+
+- inspect existing features and step definitions first;
+- reconstruct testcase intent before drafting;
+- ask for clarification on blocking ambiguity;
+- produce a `.feature` draft only and surface unmapped steps explicitly.
 
 ## Source Policy
 
