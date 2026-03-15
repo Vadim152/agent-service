@@ -1352,14 +1352,7 @@ class AiToolWindowPanel(
             override fun onChosen(selectedValue: String?, finalChoice: Boolean): PopupStep<*> {
                 val selectedIndex = labels.indexOf(selectedValue)
                 val item = items.getOrNull(selectedIndex) ?: return FINAL_CHOICE
-                val details = buildString {
-                    item["name"]?.let { appendLine("Name: $it") }
-                    item["path"]?.let { appendLine("Path: $it") }
-                    item["providerId"]?.let { appendLine("Provider: $it") }
-                    item["id"]?.let { appendLine("Id: $it") }
-                    item["transport"]?.let { appendLine("Transport: $it") }
-                    item["description"]?.let { appendLine("Description: $it") }
-                }.trim()
+                val details = buildOpenCodeResourceDetails(item)
                 if (details.isNotBlank()) {
                     showTextPopup(resourceKind, details)
                 }
@@ -1746,6 +1739,19 @@ internal fun buildStatusLabelText(
     details?.takeIf { it.isNotBlank() }?.let { chunks += it }
     return chunks.joinToString(" | ")
 }
+
+internal fun buildOpenCodeResourceDetails(item: Map<*, *>): String = buildString {
+    item["name"]?.let { appendLine("Name: $it") }
+    item["path"]?.let { appendLine("Path: $it") }
+    item["providerId"]?.let { appendLine("Provider: $it") }
+    item["id"]?.let { appendLine("Id: $it") }
+    item["transport"]?.let { appendLine("Transport: $it") }
+    item["description"]?.let { appendLine("Description: $it") }
+    val metadata = item["metadata"] as? Map<*, *>
+    metadata?.get("compatibility")?.let { appendLine("Compatibility: $it") }
+    metadata?.get("sourceRepo")?.let { appendLine("Source repo: $it") }
+    metadata?.get("sourceRef")?.let { appendLine("Source ref: $it") }
+}.trim()
 
 
 

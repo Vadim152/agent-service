@@ -195,7 +195,20 @@ def _write_project_config(project_root: Path) -> None:
     project_root.joinpath("opencode.json").write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     project_root.joinpath(".opencode", "skills", "demo-skill").mkdir(parents=True, exist_ok=True)
     project_root.joinpath(".opencode", "skills", "demo-skill", "SKILL.md").write_text(
-        "# Demo skill\nPerforms a useful thing.\n",
+        textwrap.dedent(
+            """\
+            ---
+            name: demo-skill
+            description: Performs a useful thing.
+            compatibility: opencode
+            sourceRepo: https://example.com/demo
+            sourceRef: main
+            ---
+
+            # Demo skill
+            Fallback body.
+            """
+        ),
         encoding="utf-8",
     )
     project_root.joinpath(".opencode", "plugins").mkdir(parents=True, exist_ok=True)
@@ -713,6 +726,10 @@ def test_resource_catalog_and_config_snapshot_are_exposed(tmp_path: Path) -> Non
     skills = client.get("/v1/resources/skill", params={"projectRoot": str(project_root)})
     assert skills.status_code == 200
     assert skills.json()["items"][0]["name"] == "demo-skill"
+    assert skills.json()["items"][0]["description"] == "Performs a useful thing."
+    assert skills.json()["items"][0]["metadata"]["compatibility"] == "opencode"
+    assert skills.json()["items"][0]["metadata"]["sourceRepo"] == "https://example.com/demo"
+    assert skills.json()["items"][0]["metadata"]["sourceRef"] == "main"
 
     plugins = client.get("/v1/resources/plugin", params={"projectRoot": str(project_root)})
     assert plugins.status_code == 200

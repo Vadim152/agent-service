@@ -244,7 +244,11 @@ class _FakeOpenCodeAdapter:
                     "entryType": "directory",
                     "description": f"Sample {kind}",
                     "sourceRoot": "/tmp",
-                    "metadata": {},
+                    "metadata": {
+                        "compatibility": "opencode" if kind == "skill" else None,
+                        "sourceRepo": "https://github.com/openai/skills" if kind == "skill" else None,
+                        "sourceRef": "local-v1" if kind == "skill" else None,
+                    },
                 }
             ],
             "total": 1,
@@ -895,3 +899,23 @@ def test_opencode_agent_api_resource_and_native_aliases_are_exposed() -> None:
     assert native_action.status_code == 200
     assert native_action.json()["kind"] == "native_action"
     assert native_action.json()["nativeAction"] == "new_session"
+
+
+def test_opencode_agent_api_skills_resource_preserves_metadata() -> None:
+    client = TestClient(_build_app())
+    session_id = client.post("/sessions", json={"projectRoot": "/tmp/project", "runtime": "opencode"}).json()["sessionId"]
+
+    response = client.post(
+        "/opencode/commands/skills/execute",
+        json={"sessionId": session_id, "projectRoot": "/tmp/project"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["kind"] == "resource"
+    assert payload["result"]["resourceKind"] == "skill"
+    item = payload["result"]["items"][0]
+    assert item["name"] == "sample-skill"
+    assert item["metadata"]["compatibility"] == "opencode"
+    assert item["metadata"]["sourceRepo"] == "https://github.com/openai/skills"
+    assert item["metadata"]["sourceRef"] == "local-v1"

@@ -63,15 +63,23 @@ def discover_resource_entries(kind: str, *, roots: list[Path]) -> list[dict[str,
                     if key in seen:
                         continue
                     seen.add(key)
+                    skill_meta = _extract_skill_metadata(skill_file)
                     results.append(
                         {
                             "kind": normalized_kind,
                             "name": entry_path.name,
                             "path": str(entry_path.resolve(strict=False)),
                             "entryType": "directory",
-                            "description": _extract_skill_description(skill_file),
+                            "description": skill_meta.get("description"),
                             "sourceRoot": str(root.resolve(strict=False)),
-                            "metadata": {"file": str(skill_file.resolve(strict=False))},
+                            "metadata": {
+                                "file": str(skill_file.resolve(strict=False)),
+                                **{
+                                    key: value
+                                    for key, value in skill_meta.items()
+                                    if key != "description" and value is not None
+                                },
+                            },
                         }
                     )
                 continue
@@ -314,14 +322,48 @@ def _extract_named_object_entries(raw_config: dict[str, Any] | None, key: str) -
 
 
 def _extract_skill_description(skill_file: Path) -> str | None:
+    return _extract_skill_metadata(skill_file).get("description")
+
+
+def _extract_skill_metadata(skill_file: Path) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "description": None,
+        "compatibility": None,
+        "sourceRepo": None,
+        "sourceRef": None,
+    }
     try:
-        for line in skill_file.read_text(encoding="utf-8").splitlines():
+        lines = skill_file.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return metadata
+
+    body_lines = lines
+    if lines and lines[0].strip() == "---":
+        frontmatter: dict[str, str] = {}
+        for index in range(1, len(lines)):
+            raw_line = lines[index]
+            if raw_line.strip() == "---":
+                body_lines = lines[index + 1 :]
+                break
+            key, separator, value = raw_line.partition(":")
+            if not separator:
+                continue
+            normalized_key = key.strip()
+            if not normalized_key:
+                continue
+            frontmatter[normalized_key] = value.strip().strip("'\"") or ""
+        metadata["description"] = frontmatter.get("description") or None
+        metadata["compatibility"] = frontmatter.get("compatibility") or None
+        metadata["sourceRepo"] = frontmatter.get("sourceRepo") or None
+        metadata["sourceRef"] = frontmatter.get("sourceRef") or None
+
+    if metadata["description"] is None:
+        for line in body_lines:
             stripped = line.strip().lstrip("#").strip()
             if stripped:
-                return stripped
-    except Exception:
-        return None
-    return None
+                metadata["description"] = stripped
+                break
+    return metadata
 
 
 def _extract_item_description(path: Path) -> str | None:

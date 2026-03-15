@@ -231,4 +231,25 @@ class AiToolWindowPanelProjectRootTest {
             )
         )
     }
+
+    @Test
+    fun `buildOpenCodeResourceDetails includes skill metadata`() {
+        val result = buildOpenCodeResourceDetails(
+            mapOf(
+                "name" to "cucumber-feature-author",
+                "path" to "C:/repo/.opencode/skills/cucumber-feature-author",
+                "description" to "Author valid feature files",
+                "metadata" to mapOf(
+                    "compatibility" to "opencode",
+                    "sourceRepo" to "https://github.com/openai/skills",
+                    "sourceRef" to "local-v1"
+                )
+            )
+        )
+
+        assertTrue(result.contains("Name: cucumber-feature-author"))
+        assertTrue(result.contains("Compatibility: opencode"))
+        assertTrue(result.contains("Source repo: https://github.com/openai/skills"))
+        assertTrue(result.contains("Source ref: local-v1"))
+    }
 }
