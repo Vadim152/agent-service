@@ -141,6 +141,8 @@ class AiToolWindowPanel(
     private var timelineScrollPane: JBScrollPane? = null
     private var pendingHistoryForRender: ChatHistoryResponseDto? = null
     private var pendingStatusForRender: ChatSessionStatusResponseDto? = null
+    private var pendingRefreshSessionId: String? = null
+    private var suppressRuntimeSelectionListener: Boolean = false
     @Volatile
     private var initialSessionRequested: Boolean = false
     @Volatile
@@ -334,7 +336,9 @@ class AiToolWindowPanel(
         runtimeSelector.renderer = RuntimeModeRenderer()
         runtimeSelector.addActionListener {
             val target = runtimeSelector.selectedItem as? RuntimeMode ?: return@addActionListener
-            if (target == selectedRuntime) return@addActionListener
+            if (!shouldProcessRuntimeSelectionChange(suppressRuntimeSelectionListener, target, selectedRuntime)) {
+                return@addActionListener
+            }
             selectedRuntime = target
             sessionId = sessionIdsByRuntime[target]
             latestActivity = "idle"
@@ -584,8 +588,7 @@ class AiToolWindowPanel(
                 if (forceNew || !created.reused) {
                     SwingUtilities.invokeLater {
                         uiApplyTimer.stop()
-                        pendingHistoryForRender = null
-                        pendingStatusForRender = null
+                        clearPendingUiRefresh()
                         forceScrollToBottom = false
                         timelineLines.clear()
                         lastRenderedServerTailKey = null
@@ -607,7 +610,12 @@ class AiToolWindowPanel(
 
     private fun activateSession(targetSession: ChatSessionListItemDto) {
         selectedRuntime = runtimeModeFromBackend(targetSession.runtime)
-        runtimeSelector.selectedItem = selectedRuntime
+        suppressRuntimeSelectionListener = true
+        try {
+            runtimeSelector.selectedItem = selectedRuntime
+        } finally {
+            suppressRuntimeSelectionListener = false
+        }
         sessionId = targetSession.sessionId
         sessionIdsByRuntime[selectedRuntime] = targetSession.sessionId
         syncPlanModeCheckboxFromSession()
@@ -616,8 +624,7 @@ class AiToolWindowPanel(
         latestActivity = "idle"
         forceScrollToBottom = false
         uiApplyTimer.stop()
-        pendingHistoryForRender = null
-        pendingStatusForRender = null
+        clearPendingUiRefresh()
         timelineLines.clear()
         lastRenderedServerTailKey = null
         renderTimeline()
@@ -658,7 +665,7 @@ class AiToolWindowPanel(
                 val history = backendClient.getChatHistory(active)
                 val status = backendClient.getChatStatus(active)
                 SwingUtilities.invokeLater {
-                    enqueueUiRefresh(history, status)
+                    enqueueUiRefresh(active, history, status)
                 }
             } catch (ex: Exception) {
                 if (logger.isDebugEnabled) logger.debug("Refresh failed", ex)
@@ -668,17 +675,29 @@ class AiToolWindowPanel(
         }
     }
 
-    private fun enqueueUiRefresh(history: ChatHistoryResponseDto, status: ChatSessionStatusResponseDto) {
+    private fun enqueueUiRefresh(
+        requestedSessionId: String,
+        history: ChatHistoryResponseDto,
+        status: ChatSessionStatusResponseDto
+    ) {
+        if (!shouldApplyUiRefresh(requestedSessionId, history.sessionId, status.sessionId, sessionId)) {
+            return
+        }
+        pendingRefreshSessionId = requestedSessionId
         pendingHistoryForRender = history
         pendingStatusForRender = status
         uiApplyTimer.restart()
     }
 
     private fun applyPendingUiRefresh() {
+        val requestedSessionId = pendingRefreshSessionId ?: return
         val history = pendingHistoryForRender ?: return
         val status = pendingStatusForRender ?: return
-        pendingHistoryForRender = null
-        pendingStatusForRender = null
+        if (!shouldApplyUiRefresh(requestedSessionId, history.sessionId, status.sessionId, sessionId)) {
+            clearPendingUiRefresh()
+            return
+        }
+        clearPendingUiRefresh()
         renderHistory(history)
         renderStatus(status)
     }
@@ -868,7 +887,12 @@ class AiToolWindowPanel(
             row.add(
                 JPanel(FlowLayout(FlowLayout.RIGHT, 6, 0)).apply {
                     isOpaque = false
-                    question.choices.forEach { choice ->
+                    val buttonChoices = if (question.kind == "plan_confirmation") {
+                        listOf("Продолжить", "Уточнить план")
+                    } else {
+                        question.choices
+                    }
+                    buttonChoices.forEach { choice ->
                         add(actionButton(choice) { submitMessage(choice) })
                     }
                     if (question.allowCustomAnswer) {
@@ -1066,6 +1090,12 @@ class AiToolWindowPanel(
         )
         renderTimeline()
         scrollToBottomIfNeeded(shouldStickToBottom)
+    }
+
+    private fun clearPendingUiRefresh() {
+        pendingRefreshSessionId = null
+        pendingHistoryForRender = null
+        pendingStatusForRender = null
     }
 
     private fun upsertProgressLine(text: String) {
@@ -1606,8 +1636,32 @@ class AiToolWindowPanel(
 internal data class AgentQuestionCard(
     val title: String,
     val choices: List<String>,
-    val allowCustomAnswer: Boolean
+    val allowCustomAnswer: Boolean,
+    val kind: String = "clarification"
 )
+
+internal fun shouldProcessRuntimeSelectionChange(
+    suppressListener: Boolean,
+    target: Any?,
+    selectedRuntime: Any?
+): Boolean {
+    if (suppressListener) return false
+    return target != null && target != selectedRuntime
+}
+
+internal fun shouldApplyUiRefresh(
+    requestedSessionId: String?,
+    historySessionId: String?,
+    statusSessionId: String?,
+    activeSessionId: String?
+): Boolean {
+    val active = activeSessionId?.trim().orEmpty()
+    val requested = requestedSessionId?.trim().orEmpty()
+    val history = historySessionId?.trim().orEmpty()
+    val status = statusSessionId?.trim().orEmpty()
+    if (active.isBlank() || requested.isBlank() || history.isBlank() || status.isBlank()) return false
+    return requested == active && history == active && status == active
+}
 
 internal fun buildStatusDetails(connectionDetails: String?, planModeEnabled: Boolean): String? {
     val chunks = mutableListOf<String>()
@@ -1631,6 +1685,9 @@ internal fun extractQuestionChoices(metadata: Map<String, Any?>): List<String> {
         .distinctBy { it.lowercase() }
 }
 
+internal fun extractQuestionKind(metadata: Map<String, Any?>): String =
+    metadata["questionKind"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: "clarification"
+
 internal fun extractLatestPendingQuestion(messages: List<ru.sber.aitestplugin.model.ChatMessageDto>): AgentQuestionCard? {
     val indexedQuestion = messages.withIndex().lastOrNull { (_, message) ->
         message.role.equals("assistant", ignoreCase = true) && message.metadata["question"] == true
@@ -1641,11 +1698,17 @@ internal fun extractLatestPendingQuestion(messages: List<ru.sber.aitestplugin.mo
     if (hasUserReplyAfter) {
         return null
     }
-    val choices = extractQuestionChoices(indexedQuestion.value.metadata)
+    val kind = extractQuestionKind(indexedQuestion.value.metadata)
+    val choices = if (kind == "plan_confirmation") {
+        listOf("Продолжить", "Уточнить план")
+    } else {
+        extractQuestionChoices(indexedQuestion.value.metadata)
+    }
     return AgentQuestionCard(
-        title = indexedQuestion.value.content,
+        title = if (kind == "plan_confirmation") "Подтвердите план" else indexedQuestion.value.content,
         choices = choices,
-        allowCustomAnswer = indexedQuestion.value.metadata["allowCustomAnswer"] != false
+        allowCustomAnswer = indexedQuestion.value.metadata["allowCustomAnswer"] != false,
+        kind = kind
     )
 }
 

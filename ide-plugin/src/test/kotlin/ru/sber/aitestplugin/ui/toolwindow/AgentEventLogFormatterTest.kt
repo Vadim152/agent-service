@@ -178,7 +178,7 @@ class AgentEventLogFormatterTest {
     }
 
     @Test
-    fun `buildAgentEventLines surfaces clarification question as readable bubble`() {
+    fun `buildAgentEventLines hides question event when message bubble already exists`() {
         val now = Instant.parse("2026-03-05T10:00:00Z")
         val events = listOf(
             ChatEventDto(
@@ -191,7 +191,6 @@ class AgentEventLogFormatterTest {
 
         val lines = AgentEventLogFormatter.buildAgentEventLines(events, maxLines = 20)
 
-        assertEquals(1, lines.size)
-        assertEquals("Which variant should I use?", lines.first().text)
+        assertTrue(lines.isEmpty())
     }
 }

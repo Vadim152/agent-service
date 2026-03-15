@@ -121,6 +121,32 @@ class AiToolWindowPanelProjectRootTest {
         assertEquals("Which variant should I use?", question?.title)
         assertEquals(listOf("Variant A", "Variant B"), question?.choices)
         assertTrue(question?.allowCustomAnswer == true)
+        assertEquals("clarification", question?.kind)
+    }
+
+    @Test
+    fun `extractLatestPendingQuestion maps plan confirmation to fixed actions and short title`() {
+        val question = extractLatestPendingQuestion(
+            listOf(
+                ChatMessageDto(
+                    messageId = "m1",
+                    role = "assistant",
+                    content = "<proposed_plan>\nplan\n</proposed_plan>\n\nПродолжить?",
+                    metadata = mapOf(
+                        "question" to true,
+                        "questionKind" to "plan_confirmation",
+                        "choices" to listOf("1. Read code", "2. Run tests"),
+                        "allowCustomAnswer" to true
+                    ),
+                    createdAt = Instant.parse("2026-03-15T10:00:00Z")
+                )
+            )
+        )
+
+        assertNotNull(question)
+        assertEquals("Подтвердите план", question?.title)
+        assertEquals(listOf("Продолжить", "Уточнить план"), question?.choices)
+        assertEquals("plan_confirmation", question?.kind)
     }
 
     @Test
@@ -145,5 +171,64 @@ class AiToolWindowPanelProjectRootTest {
         )
 
         assertEquals(null, question)
+    }
+
+    @Test
+    fun `shouldApplyUiRefresh accepts only matching active session payloads`() {
+        assertTrue(
+            shouldApplyUiRefresh(
+                requestedSessionId = "session-1",
+                historySessionId = "session-1",
+                statusSessionId = "session-1",
+                activeSessionId = "session-1"
+            )
+        )
+        assertEquals(
+            false,
+            shouldApplyUiRefresh(
+                requestedSessionId = "session-1",
+                historySessionId = "session-1",
+                statusSessionId = "session-1",
+                activeSessionId = "session-2"
+            )
+        )
+        assertEquals(
+            false,
+            shouldApplyUiRefresh(
+                requestedSessionId = "session-1",
+                historySessionId = "session-2",
+                statusSessionId = "session-1",
+                activeSessionId = "session-1"
+            )
+        )
+    }
+
+    @Test
+    fun `shouldProcessRuntimeSelectionChange ignores suppressed and duplicate selections`() {
+        val chat = "chat"
+        val agent = "agent"
+        assertEquals(
+            false,
+            shouldProcessRuntimeSelectionChange(
+                suppressListener = true,
+                target = agent,
+                selectedRuntime = chat
+            )
+        )
+        assertEquals(
+            false,
+            shouldProcessRuntimeSelectionChange(
+                suppressListener = false,
+                target = agent,
+                selectedRuntime = agent
+            )
+        )
+        assertTrue(
+            shouldProcessRuntimeSelectionChange(
+                suppressListener = false,
+                target = agent,
+                selectedRuntime = chat
+            )
+        )
     }
 }

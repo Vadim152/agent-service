@@ -125,8 +125,7 @@ internal object AgentEventLogFormatter {
                 compact(EventCategory.CHANGE, artifactMessage(event.payload), event)
             "command.executed", "opencode.command.executed" ->
                 compact(EventCategory.COMMAND, commandMessage(event.payload), event)
-            "opencode.question.asked" ->
-                compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Waiting for your answer", event)
+            "opencode.question.asked" -> null
             "opencode.run.progress", "run.progress" ->
                 compact(EventCategory.STEP, if (detail.isNotBlank()) detail else "Working", event)
             "opencode.run.failed", "run.failed" ->

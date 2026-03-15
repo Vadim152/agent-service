@@ -16,7 +16,12 @@ from chat.runtime import ChatAgentRuntime
 from infrastructure.run_state_store import RunStateStore
 from policy import InMemoryPolicyStore, PolicyService
 from runtime.opencode_adapter import OpenCodeAdapterError
-from runtime.opencode_runtime import OpenCodeRunDriver, OpenCodeSessionRuntime
+from runtime.opencode_runtime import (
+    OpenCodeRunDriver,
+    OpenCodeSessionRuntime,
+    _dedupe_history_messages,
+    _extract_question_metadata,
+)
 from runtime.run_service import RunService
 from runtime.session_runtime import SessionRuntimeRegistry
 
@@ -617,6 +622,59 @@ def test_opencode_question_completion_sets_waiting_input_and_choice_metadata() -
 
     follow_up = client.post(f"/sessions/{session_id}/messages", json={"content": "Variant B"})
     assert follow_up.status_code == 200
+
+
+def test_plan_confirmation_metadata_uses_fixed_actions() -> None:
+    metadata = _extract_question_metadata(
+        "<proposed_plan>\n## Plan\n1. Read code\n2. Run tests\n</proposed_plan>\n\nПодтвердите готовность начать обзор. Продолжить?"
+    )
+
+    assert metadata is not None
+    assert metadata["question"] is True
+    assert metadata["questionKind"] == "plan_confirmation"
+    assert metadata["choices"] == ["Продолжить", "Уточнить план"]
+    assert metadata["allowCustomAnswer"] is True
+
+
+def test_proposed_plan_without_confirmation_does_not_extract_numbered_choices() -> None:
+    metadata = _extract_question_metadata(
+        "<proposed_plan>\n## Plan\n1. Read code\n2. Run tests\n3. Review architecture\n</proposed_plan>"
+    )
+
+    assert metadata is None
+
+
+def test_dedupe_history_messages_removes_adjacent_duplicate_assistant_message_for_same_run() -> None:
+    messages = [
+        {
+            "message_id": "m1",
+            "role": "assistant",
+            "content": "Plan ready",
+            "run_id": "run-1",
+            "metadata": {},
+            "created_at": "2026-03-15T10:00:00+00:00",
+        },
+        {
+            "message_id": "m2",
+            "role": "assistant",
+            "content": "Plan ready",
+            "run_id": "run-1",
+            "metadata": {},
+            "created_at": "2026-03-15T10:00:01+00:00",
+        },
+        {
+            "message_id": "m3",
+            "role": "assistant",
+            "content": "Plan ready",
+            "run_id": "run-2",
+            "metadata": {},
+            "created_at": "2026-03-15T10:00:02+00:00",
+        },
+    ]
+
+    deduped = _dedupe_history_messages(messages)
+
+    assert [item["message_id"] for item in deduped] == ["m1", "m3"]
 
 
 def test_opencode_approval_flow_uses_policy_endpoint() -> None:

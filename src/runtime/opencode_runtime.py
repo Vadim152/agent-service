@@ -19,6 +19,8 @@ def _utcnow() -> str:
 
 TERMINAL_RUN_STATUSES = {"succeeded", "failed", "needs_attention", "cancelled"}
 WAITING_INPUT_STATUSES = {"needs_attention", "waiting_input"}
+QUESTION_KIND_CLARIFICATION = "clarification"
+QUESTION_KIND_PLAN_CONFIRMATION = "plan_confirmation"
 _QUESTION_HINTS = (
     "choose",
     "select",
@@ -36,6 +38,22 @@ _QUESTION_HINTS = (
     "свой вариант",
 )
 _CHOICE_PREFIXES = ("- ", "* ", "• ", "1. ", "2. ", "3. ", "4. ", "a) ", "b) ", "c) ", "a. ", "b. ", "c. ")
+
+
+_PLAN_CONFIRMATION_CHOICES = ["Продолжить", "Уточнить план"]
+_PLAN_CONFIRMATION_HINTS = (
+    "continue?",
+    "should i continue",
+    "proceed?",
+    "shall i continue",
+    "confirm to continue",
+    "подтвердите готовность",
+    "подтвердите, что можно продолжить",
+    "продолжить?",
+    "продолжать?",
+    "продолжить работу?",
+    "уточнить план",
+)
 
 
 def _empty_usage_totals() -> dict[str, Any]:
@@ -100,6 +118,18 @@ def _extract_choices_from_text(text: str) -> list[str]:
     return deduped[:6]
 
 
+def _contains_proposed_plan(text: str) -> bool:
+    lowered = str(text or "").lower()
+    return "<proposed_plan>" in lowered and "</proposed_plan>" in lowered
+
+
+def _is_plan_confirmation_text(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    return any(hint in lowered for hint in _PLAN_CONFIRMATION_HINTS)
+
+
 def _extract_choices_from_payload(payload: Any) -> list[str]:
     if isinstance(payload, dict):
         for key in ("choices", "options", "variants", "suggestions"):
@@ -142,17 +172,25 @@ def _extract_question_metadata(message: str, *payloads: Any) -> dict[str, Any] |
     text = str(message or "").strip()
     if not text:
         return None
+    if _is_plan_confirmation_text(text):
+        return {
+            "question": True,
+            "questionKind": QUESTION_KIND_PLAN_CONFIRMATION,
+            "choices": list(_PLAN_CONFIRMATION_CHOICES),
+            "allowCustomAnswer": True,
+        }
     choices: list[str] = []
     for payload in payloads:
         choices = _extract_choices_from_payload(payload)
         if choices:
             break
-    if not choices:
+    if not choices and not _contains_proposed_plan(text):
         choices = _extract_choices_from_text(text)
     if not _is_question_text(text) and not choices:
         return None
     return {
         "question": True,
+        "questionKind": QUESTION_KIND_CLARIFICATION,
         "choices": choices,
         "allowCustomAnswer": True,
     }
@@ -182,6 +220,22 @@ def _build_plan_mode_prompt(prompt: str) -> str:
         "or apply patches until the user explicitly asks you to proceed.\n\n"
         f"User request:\n{normalized}"
     )
+
+
+def _dedupe_history_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    for item in messages:
+        if deduped:
+            previous = deduped[-1]
+            if (
+                str(previous.get("role") or "").lower() == "assistant"
+                and str(item.get("role") or "").lower() == "assistant"
+                and str(previous.get("run_id") or "") == str(item.get("run_id") or "")
+                and str(previous.get("content") or "").strip() == str(item.get("content") or "").strip()
+            ):
+                continue
+        deduped.append(item)
+    return deduped
 
 
 class OpenCodeRunDriver:
@@ -1007,6 +1061,7 @@ class OpenCodeSessionRuntime:
         history = self.state_store.history(session["session_id"], limit=limit)
         if not history:
             raise ChatRuntimeError(f"Session not found: {session_id}", status_code=404)
+        messages = _dedupe_history_messages(list(history.get("messages", [])))
         return {
             "sessionId": history["session_id"],
             "projectRoot": history["project_root"],
@@ -1014,7 +1069,7 @@ class OpenCodeSessionRuntime:
             "profile": history.get("profile", "quick"),
             "runtime": history.get("runtime", self.name),
             "status": history.get("status", "active"),
-            "messages": [{"messageId": item["message_id"], "role": item["role"], "content": item["content"], "runId": item.get("run_id"), "metadata": item.get("metadata", {}), "createdAt": item["created_at"]} for item in history.get("messages", [])],
+            "messages": [{"messageId": item["message_id"], "role": item["role"], "content": item["content"], "runId": item.get("run_id"), "metadata": item.get("metadata", {}), "createdAt": item["created_at"]} for item in messages],
             "events": [{"eventType": event["event_type"], "payload": event["payload"], "createdAt": event["created_at"], "index": event["index"]} for event in history.get("events", [])],
             "pendingPermissions": [{"permissionId": item["tool_call_id"], "title": item.get("title", item["tool_name"]), "kind": item.get("kind", "tool"), "callId": item["tool_call_id"], "messageId": item.get("message_id"), "metadata": {"risk": item.get("risk_level", "read"), **item.get("args", {})}, "createdAt": item["created_at"]} for item in history.get("pending_tool_calls", [])],
             "memorySnapshot": history.get("memory_snapshot", {}),
